@@ -1,0 +1,7 @@
+// Testa todos os tipos literais que o runtime Sprint 1 suporta
+print("string ok")
+print(42)
+print(3.14)
+print(true)
+print(false)
+print(len("fluxa"))
