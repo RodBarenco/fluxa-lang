@@ -3,9 +3,8 @@ CC      = gcc
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -g \
            -Isrc -Ivendor
 
-# Serão ativados nos próximos commits:
-# SRCS    = src/main.c src/lexer.c src/parser.c src/runtime.c
-SRCS    = 
+# Agora o Lexer entrou no jogo (parser, runtime e main virão depois)
+SRCS    = src/lexer.c
 
 TARGET  = fluxa
 
@@ -14,9 +13,9 @@ TARGET  = fluxa
 all: build
 
 build:
-	@echo "✓ Makefile setup ok. Aguardando arquivos fonte..."
-#	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET)
-#	@echo "✓ build ok → ./$(TARGET)"
+	@echo "✓ Compilando os módulos disponíveis..."
+	$(CC) $(CFLAGS) -c $(SRCS)
+	@echo "✓ Lexer compilado com sucesso (.o). (Executável aguardando main.c)"
 
 test: build
 	@echo "── Testes serão ativados na conclusão da Sprint 1 ──"
@@ -27,4 +26,4 @@ test: build
 #	@echo "── all tests passed ───────────────────────────"
 
 clean:
-	rm -f $(TARGET)
+	rm -f *.o $(TARGET)
