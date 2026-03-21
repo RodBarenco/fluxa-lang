@@ -1,0 +1,70 @@
+/* scope.c — Fluxa Variable Scope implementation */
+#define _POSIX_C_SOURCE 200809L
+#include "scope.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ── Internal: free a single value's heap data ───────────────────────────── */
+static void value_free_data(Value *v) {
+    if (v->type == VAL_STRING && v->as.string) {
+        free(v->as.string);
+        v->as.string = NULL;
+    }
+}
+
+/* ── Public API ──────────────────────────────────────────────────────────── */
+
+Scope scope_new(void) {
+    Scope s;
+    s.table = NULL;
+    return s;
+}
+
+void scope_set(Scope *s, const char *name, Value value) {
+    ScopeEntry *entry = NULL;
+    HASH_FIND_STR(s->table, name, entry);
+
+    if (entry) {
+        /* variable exists — update value, free old string if needed */
+        value_free_data(&entry->value);
+        /* if new value is a string, copy it */
+        if (value.type == VAL_STRING && value.as.string)
+            value.as.string = strdup(value.as.string);
+        entry->value = value;
+    } else {
+        /* new variable */
+        entry = (ScopeEntry*)calloc(1, sizeof(ScopeEntry));
+        strncpy(entry->name, name, sizeof(entry->name) - 1);
+        entry->persistent = 0;
+        /* copy string if needed */
+        if (value.type == VAL_STRING && value.as.string)
+            value.as.string = strdup(value.as.string);
+        entry->value = value;
+        HASH_ADD_STR(s->table, name, entry);
+    }
+}
+
+int scope_get(Scope *s, const char *name, Value *out) {
+    ScopeEntry *entry = NULL;
+    HASH_FIND_STR(s->table, name, entry);
+    if (!entry) return 0;
+    *out = entry->value;
+    return 1;
+}
+
+int scope_has(Scope *s, const char *name) {
+    ScopeEntry *entry = NULL;
+    HASH_FIND_STR(s->table, name, entry);
+    return entry != NULL;
+}
+
+void scope_free(Scope *s) {
+    ScopeEntry *entry, *tmp;
+    HASH_ITER(hh, s->table, entry, tmp) {
+        HASH_DEL(s->table, entry);
+        value_free_data(&entry->value);
+        free(entry);
+    }
+    s->table = NULL;
+}
