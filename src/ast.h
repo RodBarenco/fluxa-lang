@@ -15,6 +15,9 @@ typedef enum {
     NODE_FLOAT_LIT,     /* 3.14                                    */
     NODE_BOOL_LIT,      /* true / false                            */
     NODE_IDENTIFIER,    /* variable or function name               */
+    NODE_VAR_DECL,      /* int a = 10                              */
+    NODE_ASSIGN,        /* a = 99                                  */
+    NODE_BINARY_EXPR,   /* a + b                                   */
 } NodeType;
 
 /* ── Forward declaration ─────────────────────────────────────────────────── */
@@ -51,6 +54,27 @@ struct ASTNode {
         struct {
             int value; /* 1 = true, 0 = false */
         } boolean;
+
+        /* NODE_VAR_DECL */
+        struct {
+            char    *type_name;   /* "int", "float", "str", "bool", "char" */
+            char    *var_name;
+            ASTNode *initializer;
+            int      persistent;  /* prst flag — Sprint 6 */
+        } var_decl;
+
+        /* NODE_ASSIGN */
+        struct {
+            char    *var_name;
+            ASTNode *value;
+        } assign;
+
+        /* NODE_BINARY_EXPR */
+        struct {
+            char    *op;    /* "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=" */
+            ASTNode *left;
+            ASTNode *right;
+        } binary;
     } as;
 };
 
@@ -110,7 +134,36 @@ static inline ASTNode *ast_bool(int value) {
     return n;
 }
 
+static inline ASTNode *ast_var_decl(char *type_name, char *var_name,
+                                     ASTNode *initializer, int persistent) {
+    ASTNode *n = ast_new(NODE_VAR_DECL);
+    n->as.var_decl.type_name   = type_name;
+    n->as.var_decl.var_name    = var_name;
+    n->as.var_decl.initializer = initializer;
+    n->as.var_decl.persistent  = persistent;
+    return n;
+}
+
+static inline ASTNode *ast_assign(char *var_name, ASTNode *value) {
+    ASTNode *n = ast_new(NODE_ASSIGN);
+    n->as.assign.var_name = var_name;
+    n->as.assign.value    = value;
+    return n;
+}
+
+static inline ASTNode *ast_binary(char *op, ASTNode *left, ASTNode *right) {
+    ASTNode *n = ast_new(NODE_BINARY_EXPR);
+    n->as.binary.op    = op;
+    n->as.binary.left  = left;
+    n->as.binary.right = right;
+    return n;
+}
+
 /* ── Free ────────────────────────────────────────────────────────────────── */
+/* NOTE: When using ASTPool, node memory is owned by the pool — do NOT call
+ * free(n) on individual nodes. ast_free() only releases heap-allocated
+ * children arrays (from ast_list_push / realloc). Node structs themselves
+ * are left in place; pool_free() discards the entire arena at once.        */
 static inline void ast_free(ASTNode *n) {
     if (!n) return;
     switch (n->type) {
@@ -118,17 +171,22 @@ static inline void ast_free(ASTNode *n) {
         case NODE_FUNC_CALL:
             for (int i = 0; i < n->as.list.count; i++)
                 ast_free(n->as.list.children[i]);
-            free(n->as.list.children);
-            /* name is owned by the lexer token — do not free here */
+            free(n->as.list.children);   /* this array is heap-allocated */
             break;
-        case NODE_STRING_LIT:
-        case NODE_IDENTIFIER:
-            /* value is owned by the lexer token — do not free here */
+        case NODE_VAR_DECL:
+            ast_free(n->as.var_decl.initializer);
+            break;
+        case NODE_ASSIGN:
+            ast_free(n->as.assign.value);
+            break;
+        case NODE_BINARY_EXPR:
+            ast_free(n->as.binary.left);
+            ast_free(n->as.binary.right);
             break;
         default:
             break;
     }
-    free(n);
+    /* do NOT free(n) — node lives in the pool arena */
 }
 
 #endif /* FLUXA_AST_H */

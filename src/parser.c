@@ -5,147 +5,271 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Internal helpers ────────────────────────────────────────────────────── */
+/* ── Allocation wrappers (use pool) ──────────────────────────────────────── */
+#define P_NODE()       pool_alloc_node(p->pool)
+#define P_STR(s)       pool_strdup(p->pool, s)
 
+/* ── AST constructors using pool ─────────────────────────────────────────── */
+static ASTNode *p_string(Parser *p, const char *v) {
+    ASTNode *n = P_NODE(); n->type = NODE_STRING_LIT;
+    n->as.str.value = P_STR(v); return n;
+}
+static ASTNode *p_integer(Parser *p, long v) {
+    ASTNode *n = P_NODE(); n->type = NODE_INT_LIT;
+    n->as.integer.value = v; return n;
+}
+static ASTNode *p_float(Parser *p, double v) {
+    ASTNode *n = P_NODE(); n->type = NODE_FLOAT_LIT;
+    n->as.real.value = v; return n;
+}
+static ASTNode *p_bool(Parser *p, int v) {
+    ASTNode *n = P_NODE(); n->type = NODE_BOOL_LIT;
+    n->as.boolean.value = v; return n;
+}
+static ASTNode *p_ident(Parser *p, const char *name) {
+    ASTNode *n = P_NODE(); n->type = NODE_IDENTIFIER;
+    n->as.str.value = P_STR(name); return n;
+}
+static ASTNode *p_func_call(Parser *p, const char *name) {
+    ASTNode *n = P_NODE(); n->type = NODE_FUNC_CALL;
+    n->as.list.name = P_STR(name);
+    n->as.list.children = NULL; n->as.list.count = 0; return n;
+}
+static ASTNode *p_program(Parser *p) {
+    ASTNode *n = P_NODE(); n->type = NODE_PROGRAM;
+    n->as.list.children = NULL; n->as.list.count = 0; return n;
+}
+static ASTNode *p_var_decl(Parser *p, const char *type_name,
+                            const char *var_name, ASTNode *init, int prst) {
+    ASTNode *n = P_NODE(); n->type = NODE_VAR_DECL;
+    n->as.var_decl.type_name   = P_STR(type_name);
+    n->as.var_decl.var_name    = P_STR(var_name);
+    n->as.var_decl.initializer = init;
+    n->as.var_decl.persistent  = prst; return n;
+}
+static ASTNode *p_assign(Parser *p, const char *name, ASTNode *val) {
+    ASTNode *n = P_NODE(); n->type = NODE_ASSIGN;
+    n->as.assign.var_name = P_STR(name);
+    n->as.assign.value    = val; return n;
+}
+static ASTNode *p_binary(Parser *p, const char *op,
+                          ASTNode *left, ASTNode *right) {
+    ASTNode *n = P_NODE(); n->type = NODE_BINARY_EXPR;
+    n->as.binary.op    = P_STR(op);
+    n->as.binary.left  = left;
+    n->as.binary.right = right; return n;
+}
+
+/* ── Internal helpers ────────────────────────────────────────────────────── */
 static void parser_advance(Parser *p) {
     token_free(&p->current);
     p->current = p->next;
     p->next    = lexer_next(&p->lexer);
 }
-
 static int check(Parser *p, TokenType t) { return p->current.type == t; }
-
 static int match(Parser *p, TokenType t) {
     if (!check(p, t)) return 0;
     parser_advance(p);
     return 1;
 }
-
 static void parse_error(Parser *p, const char *msg) {
     fprintf(stderr, "[fluxa] Parse error (line %d): %s (got '%s')\n",
             p->current.line, msg, p->current.value);
     p->had_error = 1;
 }
-
 static int expect(Parser *p, TokenType t, const char *ctx) {
     if (check(p, t)) { parser_advance(p); return 1; }
     char buf[128];
     snprintf(buf, sizeof(buf), "expected '%s' %s", token_type_name(t), ctx);
-    parse_error(p, buf);
-    return 0;
+    parse_error(p, buf); return 0;
 }
 
 /* ── Expression parsing ──────────────────────────────────────────────────── */
-
 static ASTNode *parse_expr(Parser *p);
 
-/* literal or identifier */
 static ASTNode *parse_primary(Parser *p) {
     if (check(p, TOK_STRING)) {
-        ASTNode *n = ast_string(strdup(p->current.value));
-        parser_advance(p);
-        return n;
+        ASTNode *n = p_string(p, p->current.value);
+        parser_advance(p); return n;
     }
     if (check(p, TOK_INT)) {
-        ASTNode *n = ast_integer(atol(p->current.value));
-        parser_advance(p);
-        return n;
+        ASTNode *n = p_integer(p, atol(p->current.value));
+        parser_advance(p); return n;
     }
     if (check(p, TOK_FLOAT)) {
-        ASTNode *n = ast_float(atof(p->current.value));
-        parser_advance(p);
-        return n;
+        ASTNode *n = p_float(p, atof(p->current.value));
+        parser_advance(p); return n;
     }
     if (check(p, TOK_BOOL)) {
-        ASTNode *n = ast_bool(strcmp(p->current.value, "true") == 0 ? 1 : 0);
-        parser_advance(p);
-        return n;
+        ASTNode *n = p_bool(p, strcmp(p->current.value,"true")==0 ? 1 : 0);
+        parser_advance(p); return n;
     }
     if (check(p, TOK_NIL)) {
-        ASTNode *n = ast_new(NODE_IDENTIFIER);
-        n->as.str.value = strdup("nil");
-        parser_advance(p);
-        return n;
+        ASTNode *n = p_ident(p, "nil");
+        parser_advance(p); return n;
     }
-    /* identifier — may be a function call */
     if (check(p, TOK_IDENT) || check(p, TOK_ERR)) {
-        char *name = strdup(p->current.value);
+        char name[256];
+        strncpy(name, p->current.value, sizeof(name)-1);
+        name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
-        /* function call: name(...) */
         if (check(p, TOK_LPAREN)) {
-            parser_advance(p); /* consume '(' */
-            ASTNode *call = ast_func_call(name);
-
-            /* arguments */
+            parser_advance(p);
+            ASTNode *call = p_func_call(p, name);
             while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
                 ASTNode *arg = parse_expr(p);
-                if (!arg) { ast_free(call); free(name); return NULL; }
+                if (!arg) return NULL;
                 ast_list_push(call, arg);
                 if (!match(p, TOK_COMMA)) break;
             }
-            if (!expect(p, TOK_RPAREN, "after function arguments")) {
-                ast_free(call);
-                free(name);
-                return NULL;
-            }
+            if (!expect(p, TOK_RPAREN, "after function arguments")) return NULL;
             return call;
         }
-
-        /* plain identifier */
-        ASTNode *n = ast_new(NODE_IDENTIFIER);
-        n->as.str.value = name;
-        return n;
+        return p_ident(p, name);
     }
-
+    if (check(p, TOK_LPAREN)) {
+        parser_advance(p);
+        ASTNode *inner = parse_expr(p);
+        if (!expect(p, TOK_RPAREN, "after expression")) return NULL;
+        return inner;
+    }
     parse_error(p, "unexpected token in expression");
     return NULL;
 }
 
+static int is_multiplicative(Parser *p) {
+    TokenType t = p->current.type;
+    return t == TOK_STAR || t == TOK_SLASH || t == TOK_PERCENT;
+}
+static int is_additive(Parser *p) {
+    TokenType t = p->current.type;
+    return t == TOK_PLUS || t == TOK_MINUS;
+}
+static int is_comparison(Parser *p) {
+    TokenType t = p->current.type;
+    return t==TOK_EQEQ||t==TOK_NEQ||t==TOK_LT||t==TOK_GT||t==TOK_LTE||t==TOK_GTE;
+}
+
+static ASTNode *parse_term(Parser *p) {
+    ASTNode *left = parse_primary(p);
+    while (left && is_multiplicative(p)) {
+        char op[4]; strncpy(op, p->current.value, 3); op[3]='\0';
+        parser_advance(p);
+        ASTNode *right = parse_primary(p);
+        if (!right) return NULL;
+        left = p_binary(p, op, left, right);
+    }
+    return left;
+}
+static ASTNode *parse_arith(Parser *p) {
+    ASTNode *left = parse_term(p);
+    while (left && is_additive(p)) {
+        char op[4]; strncpy(op, p->current.value, 3); op[3]='\0';
+        parser_advance(p);
+        ASTNode *right = parse_term(p);
+        if (!right) return NULL;
+        left = p_binary(p, op, left, right);
+    }
+    return left;
+}
 static ASTNode *parse_expr(Parser *p) {
-    return parse_primary(p);
+    ASTNode *left = parse_arith(p);
+    if (left && is_comparison(p)) {
+        char op[4]; strncpy(op, p->current.value, 3); op[3]='\0';
+        parser_advance(p);
+        ASTNode *right = parse_arith(p);
+        if (!right) return NULL;
+        left = p_binary(p, op, left, right);
+    }
+    return left;
 }
 
 /* ── Statement parsing ───────────────────────────────────────────────────── */
+static int is_type_token(Parser *p) {
+    TokenType t = p->current.type;
+    return t==TOK_TYPE_INT||t==TOK_TYPE_FLOAT||t==TOK_TYPE_STR||
+           t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN;
+}
 
 static ASTNode *parse_statement(Parser *p) {
-    /* Sprint 1: top-level function calls only */
-    if (check(p, TOK_IDENT)) {
-        return parse_expr(p);
+    int persistent = 0;
+    if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
+
+    if (is_type_token(p)) {
+        char type_name[32];
+        strncpy(type_name, p->current.value, sizeof(type_name)-1);
+        type_name[sizeof(type_name)-1] = '\0';
+        parser_advance(p);
+
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected variable name after type");
+            return NULL;
+        }
+        char var_name[256];
+        strncpy(var_name, p->current.value, sizeof(var_name)-1);
+        var_name[sizeof(var_name)-1] = '\0';
+        parser_advance(p);
+
+        if (!expect(p, TOK_EQ, "after variable name")) return NULL;
+        ASTNode *init = parse_expr(p);
+        if (!init) return NULL;
+        return p_var_decl(p, type_name, var_name, init, persistent);
     }
-    /* built-in print / len */
+
+    if (persistent) { parse_error(p, "expected type after 'prst'"); return NULL; }
+
     if (check(p, TOK_IDENT)) {
-        return parse_expr(p);
+        char name[256];
+        strncpy(name, p->current.value, sizeof(name)-1);
+        name[sizeof(name)-1] = '\0';
+        parser_advance(p);
+
+        if (check(p, TOK_EQ)) {
+            parser_advance(p);
+            ASTNode *val = parse_expr(p);
+            if (!val) return NULL;
+            return p_assign(p, name, val);
+        }
+        if (check(p, TOK_LPAREN)) {
+            parser_advance(p);
+            ASTNode *call = p_func_call(p, name);
+            while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+                ASTNode *arg = parse_expr(p);
+                if (!arg) return NULL;
+                ast_list_push(call, arg);
+                if (!match(p, TOK_COMMA)) break;
+            }
+            if (!expect(p, TOK_RPAREN, "after function arguments")) return NULL;
+            return call;
+        }
+        parse_error(p, "expected '=' or '(' after identifier");
+        return NULL;
     }
+
     parse_error(p, "expected statement");
-    parser_advance(p); /* skip bad token to avoid infinite loop */
+    parser_advance(p);
     return NULL;
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
-
-Parser parser_new(const char *source) {
+Parser parser_new(const char *source, ASTPool *pool) {
     Parser p;
     p.lexer     = lexer_new(source);
     p.had_error = 0;
-    /* prime the two-token lookahead */
+    p.pool      = pool;
     p.current   = lexer_next(&p.lexer);
     p.next      = lexer_next(&p.lexer);
     return p;
 }
 
 ASTNode *parser_parse(Parser *p) {
-    ASTNode *program = ast_program();
-
+    ASTNode *program = p_program(p);
     while (!check(p, TOK_EOF) && !p->had_error) {
         ASTNode *stmt = parse_statement(p);
         if (stmt) ast_list_push(program, stmt);
     }
-
-    if (p->had_error) {
-        ast_free(program);
-        return NULL;
-    }
+    if (p->had_error) return NULL;
     return program;
 }
 
