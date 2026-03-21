@@ -3,8 +3,7 @@ CC      = gcc
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -g \
            -Isrc -Ivendor
 
-# Agora o Lexer entrou no jogo (parser, runtime e main virão depois)
-SRCS    = src/lexer.c
+SRCS    = src/lexer.c src/parser.c
 
 TARGET  = fluxa
 
