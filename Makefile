@@ -3,7 +3,7 @@ CC      = gcc
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -g \
            -Isrc -Ivendor
 
-SRCS    = src/lexer.c src/parser.c
+SRCS    = src/lexer.c src/parser.c src/runtime.c
 
 TARGET  = fluxa
 
