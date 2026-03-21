@@ -8,57 +8,54 @@
 #include "lexer.h"
 #include "parser.h"
 #include "ast.h"
+#include "pool.h"
 #include "runtime.h"
 
-/* ── File loading ────────────────────────────────────────────────────────── */
 static char *load_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "[fluxa] cannot open file: %s\n", path); return NULL; }
-
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     rewind(f);
-
     char *buf = (char*)malloc(size + 1);
     if (!buf) { fclose(f); return NULL; }
-
     fread(buf, 1, size, f);
     buf[size] = '\0';
     fclose(f);
     return buf;
 }
 
-/* ── CLI ─────────────────────────────────────────────────────────────────── */
-static void usage(void) {
-    fprintf(stderr, "usage: fluxa run <file.flx>\n");
-}
+static void usage(void) { fprintf(stderr, "usage: fluxa run <file.flx>\n"); }
 
 int main(int argc, char **argv) {
     if (argc < 3) { usage(); return 1; }
     if (strcmp(argv[1], "run") != 0) {
         fprintf(stderr, "[fluxa] unknown command: %s\n", argv[1]);
-        usage();
-        return 1;
+        usage(); return 1;
     }
 
-    const char *path = argv[2];
-    char *source = load_file(path);
+    char *source = load_file(argv[2]);
     if (!source) return 1;
 
-    /* Lex → Parse → Run */
-    Parser   parser  = parser_new(source);
+    /* Arena — stack allocated, zero-initialised */
+    static ASTPool pool;
+    pool_init(&pool);
+
+    Parser   parser  = parser_new(source, &pool);
     ASTNode *program = parser_parse(&parser);
     free(source);
 
     if (!program) {
         fprintf(stderr, "[fluxa] aborting due to parse errors.\n");
         parser_free(&parser);
+        pool_free(&pool);
         return 1;
     }
 
     int result = runtime_exec(program);
 
-    ast_free(program);
+    /* pool owns all nodes — single release */
     parser_free(&parser);
+    pool_free(&pool);
     return result;
 }

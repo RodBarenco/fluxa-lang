@@ -222,9 +222,9 @@ const char *token_type_name(TokenType t) {
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";
         case TOK_SLASH:     return "/";
+        case TOK_PERCENT:   return "%";
         case TOK_EOF:       return "EOF";
         case TOK_ERROR:     return "ERROR";
-        case TOK_PERCENT: return "%";
         default:            return "?";
     }
 }
