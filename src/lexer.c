@@ -6,7 +6,6 @@
 #include <string.h>
 #include <ctype.h>
 
-/* ── Keyword table ───────────────────────────────────────────────────────── */
 typedef struct { const char *word; TokenType type; } Keyword;
 
 static const Keyword KEYWORDS[] = {
@@ -26,7 +25,6 @@ static const Keyword KEYWORDS[] = {
     {"err",     TOK_ERR},
     {"true",    TOK_BOOL},
     {"false",   TOK_BOOL},
-    /* types */
     {"int",     TOK_TYPE_INT},
     {"float",   TOK_TYPE_FLOAT},
     {"str",     TOK_TYPE_STR},
@@ -37,7 +35,6 @@ static const Keyword KEYWORDS[] = {
     {NULL,      TOK_ERROR},
 };
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
 static char peek(Lexer *l)      { return l->pos < l->len ? l->src[l->pos] : '\0'; }
 static char advance(Lexer *l)   { char c = l->src[l->pos++]; if (c=='\n') l->line++; return c; }
 
@@ -54,7 +51,6 @@ static Token make_err(const char *msg, int line) {
     return make_tok(TOK_ERROR, msg, line);
 }
 
-/* ── Public API ──────────────────────────────────────────────────────────── */
 Lexer lexer_new(const char *source) {
     Lexer l;
     l.src  = source;
@@ -65,23 +61,20 @@ Lexer lexer_new(const char *source) {
 }
 
 Token lexer_next(Lexer *l) {
-    /* skip whitespace */
     while (l->pos < l->len && isspace((unsigned char)peek(l)))
         advance(l);
 
     if (l->pos >= l->len)
         return make_tok(TOK_EOF, "", l->line);
 
-    int    line = l->line;
-    char   c    = advance(l);
+    int  line = l->line;
+    char c    = advance(l);
 
-    /* ── comments ──────────────────────────────────────────────────────── */
     if (c == '/' && peek(l) == '/') {
         while (l->pos < l->len && peek(l) != '\n') advance(l);
-        return lexer_next(l); /* recurse to next real token */
+        return lexer_next(l);
     }
 
-    /* ── string literal ────────────────────────────────────────────────── */
     if (c == '"') {
         char buf[4096];
         int  i = 0;
@@ -99,13 +92,12 @@ Token lexer_next(Lexer *l) {
             }
             if (i < (int)sizeof(buf)-1) buf[i++] = ch;
         }
-        if (peek(l) == '"') advance(l); /* consume closing " */
+        if (peek(l) == '"') advance(l);
         else return make_err("unterminated string literal", line);
         buf[i] = '\0';
         return make_tok(TOK_STRING, buf, line);
     }
 
-    /* ── number ────────────────────────────────────────────────────────── */
     if (isdigit((unsigned char)c)) {
         char buf[64];
         int  i = 0;
@@ -120,7 +112,6 @@ Token lexer_next(Lexer *l) {
         return make_tok(is_float ? TOK_FLOAT : TOK_INT, buf, line);
     }
 
-    /* ── identifier / keyword ──────────────────────────────────────────── */
     if (isalpha((unsigned char)c) || c == '_') {
         char buf[256];
         int  i = 0;
@@ -131,8 +122,6 @@ Token lexer_next(Lexer *l) {
             else advance(l);
         }
         buf[i] = '\0';
-
-        /* keyword lookup */
         for (int k = 0; KEYWORDS[k].word != NULL; k++) {
             if (strcmp(buf, KEYWORDS[k].word) == 0)
                 return make_tok(KEYWORDS[k].type, buf, line);
@@ -140,13 +129,11 @@ Token lexer_next(Lexer *l) {
         return make_tok(TOK_IDENT, buf, line);
     }
 
-    /* ── two-character symbols ─────────────────────────────────────────── */
     if (c == '!' && peek(l) == '=') { advance(l); return make_tok(TOK_NEQ,  "!=", line); }
     if (c == '=' && peek(l) == '=') { advance(l); return make_tok(TOK_EQEQ, "==", line); }
     if (c == '<' && peek(l) == '=') { advance(l); return make_tok(TOK_LTE,  "<=", line); }
     if (c == '>' && peek(l) == '=') { advance(l); return make_tok(TOK_GTE,  ">=", line); }
 
-    /* ── single-character symbols ──────────────────────────────────────── */
     switch (c) {
         case '(': return make_tok(TOK_LPAREN,   "(", line);
         case ')': return make_tok(TOK_RPAREN,   ")", line);

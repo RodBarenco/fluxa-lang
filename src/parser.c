@@ -1,15 +1,17 @@
-/* parser.c — Fluxa Parser implementation */
+/* parser.c — Fluxa Parser implementation
+ * Sprint 5: Block declaration, typeof instance, member access/call/assign (#37)
+ */
 #define _POSIX_C_SOURCE 200809L
 #include "parser.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Allocation wrappers (use pool) ──────────────────────────────────────── */
-#define P_NODE()       pool_alloc_node(p->pool)
-#define P_STR(s)       pool_strdup(p->pool, s)
+/* ── Pool wrappers ───────────────────────────────────────────────────────── */
+#define P_NODE()   pool_alloc_node(p->pool)
+#define P_STR(s)   pool_strdup(p->pool, s)
 
-/* ── AST constructors using pool ─────────────────────────────────────────── */
+/* ── AST constructors ────────────────────────────────────────────────────── */
 static ASTNode *p_string(Parser *p, const char *v) {
     ASTNode *n = P_NODE(); n->type = NODE_STRING_LIT;
     n->as.str.value = P_STR(v); return n;
@@ -60,7 +62,7 @@ static ASTNode *p_binary(Parser *p, const char *op,
     n->as.binary.right = right; return n;
 }
 
-/* ── Internal helpers ────────────────────────────────────────────────────── */
+/* ── Token helpers ───────────────────────────────────────────────────────── */
 static void parser_advance(Parser *p) {
     token_free(&p->current);
     p->current = p->next;
@@ -69,8 +71,7 @@ static void parser_advance(Parser *p) {
 static int check(Parser *p, TokenType t) { return p->current.type == t; }
 static int match(Parser *p, TokenType t) {
     if (!check(p, t)) return 0;
-    parser_advance(p);
-    return 1;
+    parser_advance(p); return 1;
 }
 static void parse_error(Parser *p, const char *msg) {
     fprintf(stderr, "[fluxa] Parse error (line %d): %s (got '%s')\n",
@@ -84,9 +85,34 @@ static int expect(Parser *p, TokenType t, const char *ctx) {
     parse_error(p, buf); return 0;
 }
 
-/* ── Expression parsing ──────────────────────────────────────────────────── */
-static ASTNode *parse_expr(Parser *p);
+static int is_type_token(Parser *p) {
+    TokenType t = p->current.type;
+    return t==TOK_TYPE_INT||t==TOK_TYPE_FLOAT||t==TOK_TYPE_STR||
+           t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN;
+}
 
+/* ── Forward declarations ────────────────────────────────────────────────── */
+static ASTNode *parse_expr(Parser *p);
+static ASTNode *parse_statement(Parser *p);
+
+/* ── Parse argument list: ( expr, expr, ... ) ────────────────────────────── */
+/* caller has already consumed the '(' */
+static void parse_args_into(Parser *p, ASTNode ***args_out, int *count_out) {
+    ASTNode **args = NULL;
+    int count = 0;
+    while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+        ASTNode *arg = parse_expr(p);
+        if (!arg) { free(args); *args_out = NULL; *count_out = 0; return; }
+        count++;
+        args = (ASTNode**)realloc(args, sizeof(ASTNode*) * count);
+        args[count-1] = arg;
+        if (!match(p, TOK_COMMA)) break;
+    }
+    *args_out  = args;
+    *count_out = count;
+}
+
+/* ── Expression parsing ──────────────────────────────────────────────────── */
 static ASTNode *parse_primary(Parser *p) {
     if (check(p, TOK_STRING)) {
         ASTNode *n = p_string(p, p->current.value);
@@ -114,7 +140,7 @@ static ASTNode *parse_primary(Parser *p) {
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
-        /* Issue #16 — array access in expression: name[i] */
+        /* arr[i] in expression */
         if (check(p, TOK_LBRACKET)) {
             parser_advance(p);
             ASTNode *idx = parse_expr(p);
@@ -126,6 +152,44 @@ static ASTNode *parse_primary(Parser *p) {
             return n;
         }
 
+        /* inst.field or inst.method(args) */
+        if (check(p, TOK_DOT)) {
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected member name after '.'");
+                return NULL;
+            }
+            char member[256];
+            strncpy(member, p->current.value, sizeof(member)-1);
+            member[sizeof(member)-1] = '\0';
+            parser_advance(p);
+
+            if (check(p, TOK_LPAREN)) {
+                /* inst.method(args) */
+                parser_advance(p);
+                ASTNode **args = NULL; int argc = 0;
+                parse_args_into(p, &args, &argc);
+                if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                    free(args); return NULL;
+                }
+                ASTNode *n = P_NODE();
+                n->type                      = NODE_MEMBER_CALL;
+                n->as.member_call.owner      = P_STR(name);
+                n->as.member_call.method     = P_STR(member);
+                n->as.member_call.args       = args;
+                n->as.member_call.arg_count  = argc;
+                return n;
+            } else {
+                /* inst.field (rvalue) */
+                ASTNode *n = P_NODE();
+                n->type                    = NODE_MEMBER_ACCESS;
+                n->as.member_access.owner  = P_STR(name);
+                n->as.member_access.field  = P_STR(member);
+                return n;
+            }
+        }
+
+        /* plain function call */
         if (check(p, TOK_LPAREN)) {
             parser_advance(p);
             ASTNode *call = p_func_call(p, name);
@@ -152,11 +216,11 @@ static ASTNode *parse_primary(Parser *p) {
 
 static int is_multiplicative(Parser *p) {
     TokenType t = p->current.type;
-    return t == TOK_STAR || t == TOK_SLASH || t == TOK_PERCENT;
+    return t==TOK_STAR||t==TOK_SLASH||t==TOK_PERCENT;
 }
 static int is_additive(Parser *p) {
     TokenType t = p->current.type;
-    return t == TOK_PLUS || t == TOK_MINUS;
+    return t==TOK_PLUS||t==TOK_MINUS;
 }
 static int is_comparison(Parser *p) {
     TokenType t = p->current.type;
@@ -197,16 +261,165 @@ static ASTNode *parse_expr(Parser *p) {
     return left;
 }
 
-/* ── Statement parsing ───────────────────────────────────────────────────── */
-static int is_type_token(Parser *p) {
-    TokenType t = p->current.type;
-    return t==TOK_TYPE_INT||t==TOK_TYPE_FLOAT||t==TOK_TYPE_STR||
-           t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN;
+/* ── Block body: { var_decl | func_decl }* ───────────────────────────────── */
+static ASTNode *parse_block_decl(Parser *p) {
+    /* 'Block' already consumed — parse: Name { members } */
+    if (!check(p, TOK_IDENT)) {
+        parse_error(p, "expected Block name after 'Block'");
+        return NULL;
+    }
+    char block_name[256];
+    strncpy(block_name, p->current.value, sizeof(block_name)-1);
+    block_name[sizeof(block_name)-1] = '\0';
+    parser_advance(p);
+
+    /* 'typeof' branch: Block b1 typeof Foo */
+    if (check(p, TOK_TYPEOF)) {
+        parser_advance(p);
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected Block name after 'typeof'");
+            return NULL;
+        }
+        char origin[256];
+        strncpy(origin, p->current.value, sizeof(origin)-1);
+        origin[sizeof(origin)-1] = '\0';
+        parser_advance(p);
+
+        ASTNode *n = P_NODE();
+        n->type                        = NODE_TYPEOF_INST;
+        n->as.typeof_inst.inst_name    = P_STR(block_name);
+        n->as.typeof_inst.origin_name  = P_STR(origin);
+        return n;
+    }
+
+    /* Block declaration: Block Name { ... } */
+    if (!expect(p, TOK_LBRACE, "after Block name")) return NULL;
+
+    ASTNode *n = P_NODE();
+    n->type                    = NODE_BLOCK_DECL;
+    n->as.block_decl.name      = P_STR(block_name);
+    n->as.block_decl.members   = NULL;
+    n->as.block_decl.count     = 0;
+
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF) && !p->had_error) {
+        ASTNode *member = NULL;
+        int persistent = 0;
+
+        if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
+
+        if (check(p, TOK_FN)) {
+            /* parse func_decl inside Block */
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected function name after 'fn'");
+                return NULL;
+            }
+            char fn_name[256];
+            strncpy(fn_name, p->current.value, sizeof(fn_name)-1);
+            fn_name[sizeof(fn_name)-1] = '\0';
+            parser_advance(p);
+
+            if (!expect(p, TOK_LPAREN, "after function name")) return NULL;
+
+            char **param_names = NULL, **param_types = NULL;
+            int    param_count = 0;
+            while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+                if (!is_type_token(p)) {
+                    parse_error(p, "expected type in parameter list");
+                    free(param_names); free(param_types); return NULL;
+                }
+                param_count++;
+                param_types = (char**)realloc(param_types, sizeof(char*)*param_count);
+                param_names = (char**)realloc(param_names, sizeof(char*)*param_count);
+                param_types[param_count-1] = P_STR(p->current.value);
+                parser_advance(p);
+                if (!check(p, TOK_IDENT)) {
+                    parse_error(p, "expected parameter name after type");
+                    free(param_names); free(param_types); return NULL;
+                }
+                param_names[param_count-1] = P_STR(p->current.value);
+                parser_advance(p);
+                if (!match(p, TOK_COMMA)) break;
+            }
+            if (!expect(p, TOK_RPAREN, "after parameter list")) {
+                free(param_names); free(param_types); return NULL;
+            }
+
+            char ret_type[32] = "nil";
+            if (check(p, TOK_NIL)) {
+                parser_advance(p);
+            } else if (is_type_token(p)) {
+                strncpy(ret_type, p->current.value, sizeof(ret_type)-1);
+                ret_type[sizeof(ret_type)-1] = '\0';
+                parser_advance(p);
+            } else {
+                parse_error(p, "expected return type after parameter list");
+                free(param_names); free(param_types); return NULL;
+            }
+
+            /* parse body { ... } */
+            if (!expect(p, TOK_LBRACE, "expected '{' to open function body")) {
+                free(param_names); free(param_types); return NULL;
+            }
+            ASTNode *body = P_NODE();
+            body->type = NODE_BLOCK_STMT;
+            body->as.list.children = NULL;
+            body->as.list.count    = 0;
+            while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF) && !p->had_error) {
+                ASTNode *stmt = parse_statement(p);
+                if (stmt) ast_list_push(body, stmt);
+            }
+            if (!expect(p, TOK_RBRACE, "expected '}' to close function body")) {
+                free(param_names); free(param_types); return NULL;
+            }
+
+            member = P_NODE();
+            member->type = NODE_FUNC_DECL;
+            member->as.func_decl.name        = P_STR(fn_name);
+            member->as.func_decl.param_names = param_names;
+            member->as.func_decl.param_types = param_types;
+            member->as.func_decl.param_count = param_count;
+            member->as.func_decl.return_type = P_STR(ret_type);
+            member->as.func_decl.body        = body;
+
+        } else if (is_type_token(p)) {
+            /* var_decl inside Block */
+            char type_name[32];
+            strncpy(type_name, p->current.value, sizeof(type_name)-1);
+            type_name[sizeof(type_name)-1] = '\0';
+            parser_advance(p);
+
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected variable name after type in Block");
+                return NULL;
+            }
+            char var_name[256];
+            strncpy(var_name, p->current.value, sizeof(var_name)-1);
+            var_name[sizeof(var_name)-1] = '\0';
+            parser_advance(p);
+
+            if (!expect(p, TOK_EQ, "after variable name in Block")) return NULL;
+            ASTNode *init = parse_expr(p);
+            if (!init) return NULL;
+            member = p_var_decl(p, type_name, var_name, init, persistent);
+        } else {
+            parse_error(p, "expected 'fn' or type declaration inside Block");
+            return NULL;
+        }
+
+        if (member) {
+            n->as.block_decl.count++;
+            n->as.block_decl.members = (ASTNode**)realloc(
+                n->as.block_decl.members,
+                sizeof(ASTNode*) * n->as.block_decl.count);
+            n->as.block_decl.members[n->as.block_decl.count-1] = member;
+        }
+    }
+    if (!expect(p, TOK_RBRACE, "expected '}' to close Block")) return NULL;
+    return n;
 }
 
-static ASTNode *parse_statement(Parser *p);
-
-/* Issue #16 — parse { stmt* } into NODE_BLOCK_STMT */
+/* ── Block body for if/while/for/fn ─────────────────────────────────────── */
 static ASTNode *parse_body(Parser *p) {
     if (!expect(p, TOK_LBRACE, "expected '{' to open block")) return NULL;
     ASTNode *block = P_NODE();
@@ -221,14 +434,20 @@ static ASTNode *parse_body(Parser *p) {
     return block;
 }
 
+/* ── Statement parsing ───────────────────────────────────────────────────── */
 static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
 
-    /* Issue #20 — fn declaration */
+    /* Sprint 5: Block declaration or typeof instance */
+    if (check(p, TOK_BLOCK)) {
+        parser_advance(p);
+        return parse_block_decl(p);
+    }
+
+    /* fn declaration */
     if (check(p, TOK_FN)) {
         parser_advance(p);
-
         if (!check(p, TOK_IDENT)) {
             parse_error(p, "expected function name after 'fn'");
             return NULL;
@@ -240,41 +459,30 @@ static ASTNode *parse_statement(Parser *p) {
 
         if (!expect(p, TOK_LPAREN, "after function name")) return NULL;
 
-        /* parse parameters */
-        char **param_names = NULL;
-        char **param_types = NULL;
+        char **param_names = NULL, **param_types = NULL;
         int    param_count = 0;
-
         while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
             if (!is_type_token(p)) {
                 parse_error(p, "expected type in parameter list");
-                free(param_names); free(param_types);
-                return NULL;
+                free(param_names); free(param_types); return NULL;
             }
             param_count++;
-            param_types = (char**)realloc(param_types,
-                sizeof(char*) * param_count);
-            param_names = (char**)realloc(param_names,
-                sizeof(char*) * param_count);
+            param_types = (char**)realloc(param_types, sizeof(char*)*param_count);
+            param_names = (char**)realloc(param_names, sizeof(char*)*param_count);
             param_types[param_count-1] = P_STR(p->current.value);
             parser_advance(p);
-
             if (!check(p, TOK_IDENT)) {
                 parse_error(p, "expected parameter name after type");
-                free(param_names); free(param_types);
-                return NULL;
+                free(param_names); free(param_types); return NULL;
             }
             param_names[param_count-1] = P_STR(p->current.value);
             parser_advance(p);
-
             if (!match(p, TOK_COMMA)) break;
         }
         if (!expect(p, TOK_RPAREN, "after parameter list")) {
-            free(param_names); free(param_types);
-            return NULL;
+            free(param_names); free(param_types); return NULL;
         }
 
-        /* return type */
         char ret_type[32] = "nil";
         if (check(p, TOK_NIL)) {
             parser_advance(p);
@@ -284,8 +492,7 @@ static ASTNode *parse_statement(Parser *p) {
             parser_advance(p);
         } else {
             parse_error(p, "expected return type after parameter list");
-            free(param_names); free(param_types);
-            return NULL;
+            free(param_names); free(param_types); return NULL;
         }
 
         ASTNode *body = parse_body(p);
@@ -293,21 +500,20 @@ static ASTNode *parse_statement(Parser *p) {
 
         ASTNode *n = P_NODE();
         n->type = NODE_FUNC_DECL;
-        n->as.func_decl.name         = P_STR(fn_name);
-        n->as.func_decl.param_names  = param_names;
-        n->as.func_decl.param_types  = param_types;
-        n->as.func_decl.param_count  = param_count;
-        n->as.func_decl.return_type  = P_STR(ret_type);
-        n->as.func_decl.body         = body;
+        n->as.func_decl.name        = P_STR(fn_name);
+        n->as.func_decl.param_names = param_names;
+        n->as.func_decl.param_types = param_types;
+        n->as.func_decl.param_count = param_count;
+        n->as.func_decl.return_type = P_STR(ret_type);
+        n->as.func_decl.body        = body;
         return n;
     }
 
-    /* Issue #20 — return statement */
+    /* return statement */
     if (check(p, TOK_RETURN)) {
         parser_advance(p);
         ASTNode *n = P_NODE();
         n->type = NODE_RETURN;
-        /* bare return (nil functions) vs return <expr> */
         if (check(p, TOK_RBRACE) || check(p, TOK_EOF))
             n->as.ret.value = NULL;
         else
@@ -315,7 +521,7 @@ static ASTNode *parse_statement(Parser *p) {
         return n;
     }
 
-    /* Issue #16 — if statement */
+    /* if statement */
     if (check(p, TOK_IF)) {
         parser_advance(p);
         ASTNode *cond = parse_expr(p);
@@ -336,7 +542,7 @@ static ASTNode *parse_statement(Parser *p) {
         return n;
     }
 
-    /* Issue #16 — while statement */
+    /* while statement */
     if (check(p, TOK_WHILE)) {
         parser_advance(p);
         ASTNode *cond = parse_expr(p);
@@ -344,13 +550,13 @@ static ASTNode *parse_statement(Parser *p) {
         ASTNode *body = parse_body(p);
         if (!body) return NULL;
         ASTNode *n = P_NODE();
-        n->type                   = NODE_WHILE;
+        n->type                    = NODE_WHILE;
         n->as.while_stmt.condition = cond;
         n->as.while_stmt.body      = body;
         return n;
     }
 
-    /* Issue #16 — for statement: for <ident> in <ident> { } */
+    /* for statement */
     if (check(p, TOK_FOR)) {
         parser_advance(p);
         if (!check(p, TOK_IDENT)) {
@@ -362,7 +568,6 @@ static ASTNode *parse_statement(Parser *p) {
         var_name[sizeof(var_name)-1] = '\0';
         parser_advance(p);
 
-        /* 'in' is not a keyword — parsed as identifier */
         if (!check(p, TOK_IDENT) || strcmp(p->current.value, "in") != 0) {
             parse_error(p, "expected 'in' after loop variable");
             return NULL;
@@ -380,7 +585,6 @@ static ASTNode *parse_statement(Parser *p) {
 
         ASTNode *body = parse_body(p);
         if (!body) return NULL;
-
         ASTNode *n = P_NODE();
         n->type                = NODE_FOR;
         n->as.for_stmt.var_name = P_STR(var_name);
@@ -389,14 +593,14 @@ static ASTNode *parse_statement(Parser *p) {
         return n;
     }
 
-    /* var/arr declaration: [prst] <type> [arr] <name> ... */
+    /* var/arr declaration */
     if (is_type_token(p)) {
         char type_name[32];
         strncpy(type_name, p->current.value, sizeof(type_name)-1);
         type_name[sizeof(type_name)-1] = '\0';
         parser_advance(p);
 
-        /* Issue #16 — arr declaration: <type> arr <name>[<size>] = [elems] */
+        /* arr declaration */
         if (check(p, TOK_TYPE_ARR)) {
             parser_advance(p);
             if (!check(p, TOK_IDENT)) {
@@ -423,7 +627,7 @@ static ASTNode *parse_statement(Parser *p) {
             int count = 0;
             while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
                 if (count < size) elems[count++] = parse_expr(p);
-                else { parse_expr(p); } /* consume extra */
+                else parse_expr(p);
                 if (!match(p, TOK_COMMA)) break;
             }
             if (!expect(p, TOK_RBRACKET, "to close array literal")) {
@@ -458,13 +662,14 @@ static ASTNode *parse_statement(Parser *p) {
 
     if (persistent) { parse_error(p, "expected type after 'prst'"); return NULL; }
 
+    /* identifier-started statements */
     if (check(p, TOK_IDENT)) {
         char name[256];
         strncpy(name, p->current.value, sizeof(name)-1);
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
-        /* Issue #16 — arr[i] = val */
+        /* arr[i] = val */
         if (check(p, TOK_LBRACKET)) {
             parser_advance(p);
             ASTNode *idx = parse_expr(p);
@@ -473,19 +678,68 @@ static ASTNode *parse_statement(Parser *p) {
             ASTNode *val = parse_expr(p);
             if (!val) return NULL;
             ASTNode *n = P_NODE();
-            n->type               = NODE_ARR_ASSIGN;
+            n->type                   = NODE_ARR_ASSIGN;
             n->as.arr_assign.arr_name = P_STR(name);
             n->as.arr_assign.index    = idx;
             n->as.arr_assign.value    = val;
             return n;
         }
 
+        /* Sprint 5: inst.field = val  or  inst.method(args) as statement */
+        if (check(p, TOK_DOT)) {
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected member name after '.'");
+                return NULL;
+            }
+            char member[256];
+            strncpy(member, p->current.value, sizeof(member)-1);
+            member[sizeof(member)-1] = '\0';
+            parser_advance(p);
+
+            if (check(p, TOK_LPAREN)) {
+                /* inst.method(args) as statement */
+                parser_advance(p);
+                ASTNode **args = NULL; int argc = 0;
+                parse_args_into(p, &args, &argc);
+                if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                    free(args); return NULL;
+                }
+                ASTNode *n = P_NODE();
+                n->type                     = NODE_MEMBER_CALL;
+                n->as.member_call.owner     = P_STR(name);
+                n->as.member_call.method    = P_STR(member);
+                n->as.member_call.args      = args;
+                n->as.member_call.arg_count = argc;
+                return n;
+            }
+
+            if (check(p, TOK_EQ)) {
+                /* inst.field = val */
+                parser_advance(p);
+                ASTNode *val = parse_expr(p);
+                if (!val) return NULL;
+                ASTNode *n = P_NODE();
+                n->type                    = NODE_MEMBER_ASSIGN;
+                n->as.member_assign.owner  = P_STR(name);
+                n->as.member_assign.field  = P_STR(member);
+                n->as.member_assign.value  = val;
+                return n;
+            }
+
+            parse_error(p, "expected '(' or '=' after member name");
+            return NULL;
+        }
+
+        /* plain assignment */
         if (check(p, TOK_EQ)) {
             parser_advance(p);
             ASTNode *val = parse_expr(p);
             if (!val) return NULL;
             return p_assign(p, name, val);
         }
+
+        /* function call as statement */
         if (check(p, TOK_LPAREN)) {
             parser_advance(p);
             ASTNode *call = p_func_call(p, name);
@@ -498,7 +752,8 @@ static ASTNode *parse_statement(Parser *p) {
             if (!expect(p, TOK_RPAREN, "after function arguments")) return NULL;
             return call;
         }
-        parse_error(p, "expected '=', '[' or '(' after identifier");
+
+        parse_error(p, "expected '=', '[', '.' or '(' after identifier");
         return NULL;
     }
 
