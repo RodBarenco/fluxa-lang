@@ -1,31 +1,18 @@
-// Sprint 2 — critério de aceite
-// declaração, aritmética, comparação e atribuição
-
 int a = 10
 int b = 20
 print(a + b)
-
 float pi = 3.14
 print(pi)
-
 str nome = "fluxa"
 print(nome)
-
 bool ativo = true
 print(ativo)
-
-// aritmética
 int c = a * b
 print(c)
-
 int resto = 7 % 3
 print(resto)
-
-// atribuição após declaração
 a = 99
 print(a)
-
-// comparação
 print(a == 99)
 print(b != 20)
 print(a > b)

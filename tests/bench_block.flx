@@ -1,0 +1,40 @@
+// bench_block.flx — não-regressão de performance (Sprint 5)
+// Dois cenários:
+// 1. Loop sobre variáveis locais dentro de método (sem acesso a campo) — deve usar VM
+// 2. Loop com acesso a campo de instância — usa AST slow path (esperado)
+
+Block Somador {
+    int total = 0
+
+    // Cenário 1: loop puramente local — deve compilar para bytecode
+    fn contar() int {
+        int i = 0
+        int acc = 0
+        while i < 10000000 {
+            acc = acc + i
+            i = i + 1
+        }
+        return acc
+    }
+
+    fn acumular(int n) nil {
+        total = total + n
+    }
+
+    fn resultado() int {
+        return total
+    }
+}
+
+// Cenário 1: loop local dentro de método
+int r = Somador.contar()
+print(r)      // 49999995000000
+
+// Cenário 2: acesso a campo de instância via chamadas de método
+Block c1 typeof Somador
+int i = 0
+while i < 1000000 {
+    c1.acumular(1)
+    i = i + 1
+}
+print(c1.resultado())  // 1000000

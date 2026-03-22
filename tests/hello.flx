@@ -1,3 +1,2 @@
 // Sprint 1 — critério de aceite
-// fluxa run tests/hello.flx deve imprimir: hello world
 print("hello world")

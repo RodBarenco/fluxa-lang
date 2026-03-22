@@ -1,0 +1,45 @@
+// block_methods.flx — métodos com parâmetros, return, chamadas internas
+
+Block Calc {
+    int acumulador = 0
+
+    fn somar(int a, int b) int {
+        return a + b
+    }
+
+    fn acumular(int n) nil {
+        acumulador = acumulador + n
+    }
+
+    fn resultado() int {
+        return acumulador
+    }
+
+    fn resetar() nil {
+        acumulador = 0
+    }
+
+    fn fatorial(int n) int {
+        if n <= 1 {
+            return 1
+        }
+        return n * Calc.fatorial(n - 1)
+    }
+}
+
+// métodos com parâmetros e return
+print(Calc.somar(3, 7))       // 10
+print(Calc.somar(100, 200))   // 300
+
+// acumulação de estado
+Calc.acumular(10)
+Calc.acumular(20)
+Calc.acumular(30)
+print(Calc.resultado())        // 60
+
+Calc.resetar()
+print(Calc.resultado())        // 0
+
+// fatorial via Block raiz (recursão dentro de método)
+print(Calc.fatorial(5))        // 120
+print(Calc.fatorial(6))        // 720

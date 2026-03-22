@@ -1,0 +1,23 @@
+// block_isolation.flx — dois typeof do mesmo Block, estado completamente independente
+
+Block Caixa {
+    int valor = 100
+
+    fn dobrar() nil {
+        valor = valor * 2
+    }
+
+    fn get() int {
+        return valor
+    }
+}
+
+Block caixa1 typeof Caixa
+Block caixa2 typeof Caixa
+
+caixa1.dobrar()
+caixa1.dobrar()
+
+print(caixa1.get())   // 400
+print(caixa2.get())   // 100 — não foi afetada
+print(Caixa.get())    // 100 — Block raiz intocado

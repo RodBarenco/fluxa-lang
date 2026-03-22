@@ -1,0 +1,18 @@
+// block_root.flx — Block raiz acessível diretamente sem typeof
+
+Block Config {
+    str nome = "fluxa"
+    int versao = 5
+
+    fn info() nil {
+        print(nome)
+        print(versao)
+    }
+}
+
+// Acesso direto ao Block raiz
+Config.info()            // fluxa \n 5
+Config.nome = "fluxa-lang"
+Config.versao = 99
+Config.info()            // fluxa-lang \n 99
+print(Config.versao)     // 99

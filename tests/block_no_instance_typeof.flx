@@ -1,0 +1,13 @@
+// block_no_instance_typeof.flx
+// Teste de erro: typeof de instância deve falhar explicitamente
+// Saída esperada: erro do runtime mencionando "typeof" e "instance"
+
+Block Foo {
+    int x = 1
+}
+
+Block inst1 typeof Foo
+
+// Isto deve gerar erro explícito:
+// "typeof: 'inst1' is a Block instance — only Block definitions can be used..."
+Block inst2 typeof inst1
