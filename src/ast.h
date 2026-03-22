@@ -43,6 +43,7 @@ typedef struct ASTNode ASTNode;
 /* ── Node structure ──────────────────────────────────────────────────────── */
 struct ASTNode {
     NodeType type;
+    int      resolved_offset;  /* set by resolver — -1 = unresolved */
 
     union {
         /* NODE_PROGRAM / NODE_FUNC_CALL: list of child nodes */
@@ -100,10 +101,13 @@ struct ASTNode {
             ASTNode *else_body;  /* NODE_BLOCK_STMT or NULL */
         } if_stmt;
 
-        /* NODE_WHILE (Issue #15) */
+        /* NODE_WHILE (Issue #15, extended Issue #22) */
         struct {
             ASTNode *condition;
-            ASTNode *body;       /* NODE_BLOCK_STMT */
+            ASTNode *body;           /* NODE_BLOCK_STMT */
+            /* Issue #22 — pre-computed by resolver, used by fast path */
+            struct { char *name; int offset; } *seed_vars;
+            int seed_count;          /* number of stack vars to seed */
         } while_stmt;
 
         /* NODE_FOR (Issue #15) */
@@ -270,6 +274,8 @@ static inline void ast_free(ASTNode *n) {
         case NODE_WHILE:
             ast_free(n->as.while_stmt.condition);
             ast_free(n->as.while_stmt.body);
+            if (n->as.while_stmt.seed_vars)
+                free(n->as.while_stmt.seed_vars);
             break;
         case NODE_FOR:
             ast_free(n->as.for_stmt.body);
