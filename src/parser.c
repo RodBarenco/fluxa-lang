@@ -114,6 +114,18 @@ static ASTNode *parse_primary(Parser *p) {
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
+        /* Issue #16 — array access in expression: name[i] */
+        if (check(p, TOK_LBRACKET)) {
+            parser_advance(p);
+            ASTNode *idx = parse_expr(p);
+            if (!expect(p, TOK_RBRACKET, "after array index")) return NULL;
+            ASTNode *n = P_NODE();
+            n->type                   = NODE_ARR_ACCESS;
+            n->as.arr_access.arr_name = P_STR(name);
+            n->as.arr_access.index    = idx;
+            return n;
+        }
+
         if (check(p, TOK_LPAREN)) {
             parser_advance(p);
             ASTNode *call = p_func_call(p, name);
@@ -192,16 +204,153 @@ static int is_type_token(Parser *p) {
            t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN;
 }
 
+static ASTNode *parse_statement(Parser *p);
+
+/* Issue #16 — parse { stmt* } into NODE_BLOCK_STMT */
+static ASTNode *parse_body(Parser *p) {
+    if (!expect(p, TOK_LBRACE, "expected '{' to open block")) return NULL;
+    ASTNode *block = P_NODE();
+    block->type = NODE_BLOCK_STMT;
+    block->as.list.children = NULL;
+    block->as.list.count    = 0;
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF) && !p->had_error) {
+        ASTNode *stmt = parse_statement(p);
+        if (stmt) ast_list_push(block, stmt);
+    }
+    if (!expect(p, TOK_RBRACE, "expected '}' to close block")) return NULL;
+    return block;
+}
+
 static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
 
+    /* Issue #16 — if statement */
+    if (check(p, TOK_IF)) {
+        parser_advance(p);
+        ASTNode *cond = parse_expr(p);
+        if (!cond) return NULL;
+        ASTNode *then_body = parse_body(p);
+        if (!then_body) return NULL;
+        ASTNode *else_body = NULL;
+        if (check(p, TOK_ELSE)) {
+            parser_advance(p);
+            else_body = parse_body(p);
+            if (!else_body) return NULL;
+        }
+        ASTNode *n = P_NODE();
+        n->type                 = NODE_IF;
+        n->as.if_stmt.condition = cond;
+        n->as.if_stmt.then_body = then_body;
+        n->as.if_stmt.else_body = else_body;
+        return n;
+    }
+
+    /* Issue #16 — while statement */
+    if (check(p, TOK_WHILE)) {
+        parser_advance(p);
+        ASTNode *cond = parse_expr(p);
+        if (!cond) return NULL;
+        ASTNode *body = parse_body(p);
+        if (!body) return NULL;
+        ASTNode *n = P_NODE();
+        n->type                   = NODE_WHILE;
+        n->as.while_stmt.condition = cond;
+        n->as.while_stmt.body      = body;
+        return n;
+    }
+
+    /* Issue #16 — for statement: for <ident> in <ident> { } */
+    if (check(p, TOK_FOR)) {
+        parser_advance(p);
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected loop variable after 'for'");
+            return NULL;
+        }
+        char var_name[256];
+        strncpy(var_name, p->current.value, sizeof(var_name)-1);
+        var_name[sizeof(var_name)-1] = '\0';
+        parser_advance(p);
+
+        /* 'in' is not a keyword — parsed as identifier */
+        if (!check(p, TOK_IDENT) || strcmp(p->current.value, "in") != 0) {
+            parse_error(p, "expected 'in' after loop variable");
+            return NULL;
+        }
+        parser_advance(p);
+
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected array name after 'in'");
+            return NULL;
+        }
+        char arr_name[256];
+        strncpy(arr_name, p->current.value, sizeof(arr_name)-1);
+        arr_name[sizeof(arr_name)-1] = '\0';
+        parser_advance(p);
+
+        ASTNode *body = parse_body(p);
+        if (!body) return NULL;
+
+        ASTNode *n = P_NODE();
+        n->type                = NODE_FOR;
+        n->as.for_stmt.var_name = P_STR(var_name);
+        n->as.for_stmt.arr_name = P_STR(arr_name);
+        n->as.for_stmt.body     = body;
+        return n;
+    }
+
+    /* var/arr declaration: [prst] <type> [arr] <name> ... */
     if (is_type_token(p)) {
         char type_name[32];
         strncpy(type_name, p->current.value, sizeof(type_name)-1);
         type_name[sizeof(type_name)-1] = '\0';
         parser_advance(p);
 
+        /* Issue #16 — arr declaration: <type> arr <name>[<size>] = [elems] */
+        if (check(p, TOK_TYPE_ARR)) {
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected array name after 'arr'");
+                return NULL;
+            }
+            char arr_name[256];
+            strncpy(arr_name, p->current.value, sizeof(arr_name)-1);
+            arr_name[sizeof(arr_name)-1] = '\0';
+            parser_advance(p);
+
+            if (!expect(p, TOK_LBRACKET, "after array name")) return NULL;
+            if (!check(p, TOK_INT)) {
+                parse_error(p, "expected integer size in array declaration");
+                return NULL;
+            }
+            int size = (int)atol(p->current.value);
+            parser_advance(p);
+            if (!expect(p, TOK_RBRACKET, "after array size")) return NULL;
+            if (!expect(p, TOK_EQ, "after array declaration")) return NULL;
+            if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
+
+            ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*) * size);
+            int count = 0;
+            while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
+                if (count < size) elems[count++] = parse_expr(p);
+                else { parse_expr(p); } /* consume extra */
+                if (!match(p, TOK_COMMA)) break;
+            }
+            if (!expect(p, TOK_RBRACKET, "to close array literal")) {
+                free(elems); return NULL;
+            }
+
+            ASTNode *n = P_NODE();
+            n->type                  = NODE_ARR_DECL;
+            n->as.arr_decl.type_name = P_STR(type_name);
+            n->as.arr_decl.arr_name  = P_STR(arr_name);
+            n->as.arr_decl.size      = size;
+            n->as.arr_decl.elements  = elems;
+            n->as.arr_decl.persistent = persistent;
+            return n;
+        }
+
+        /* plain var declaration */
         if (!check(p, TOK_IDENT)) {
             parse_error(p, "expected variable name after type");
             return NULL;
@@ -225,6 +374,22 @@ static ASTNode *parse_statement(Parser *p) {
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
+        /* Issue #16 — arr[i] = val */
+        if (check(p, TOK_LBRACKET)) {
+            parser_advance(p);
+            ASTNode *idx = parse_expr(p);
+            if (!expect(p, TOK_RBRACKET, "after array index")) return NULL;
+            if (!expect(p, TOK_EQ, "after array access")) return NULL;
+            ASTNode *val = parse_expr(p);
+            if (!val) return NULL;
+            ASTNode *n = P_NODE();
+            n->type               = NODE_ARR_ASSIGN;
+            n->as.arr_assign.arr_name = P_STR(name);
+            n->as.arr_assign.index    = idx;
+            n->as.arr_assign.value    = val;
+            return n;
+        }
+
         if (check(p, TOK_EQ)) {
             parser_advance(p);
             ASTNode *val = parse_expr(p);
@@ -243,7 +408,7 @@ static ASTNode *parse_statement(Parser *p) {
             if (!expect(p, TOK_RPAREN, "after function arguments")) return NULL;
             return call;
         }
-        parse_error(p, "expected '=' or '(' after identifier");
+        parse_error(p, "expected '=', '[' or '(' after identifier");
         return NULL;
     }
 
