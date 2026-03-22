@@ -25,14 +25,20 @@ typedef enum {
     NODE_IF,            /* if cond { } else { }                    */
     NODE_WHILE,         /* while cond { }                          */
     NODE_FOR,           /* for x in arr { }                        */
-    NODE_BLOCK_STMT,    /* { stmt* }  — body of if/while/for       */
+    NODE_BLOCK_STMT,    /* { stmt* }  — body of if/while/for/fn    */
     NODE_ARR_DECL,      /* int arr nums[3] = [1,2,3]               */
     NODE_ARR_ACCESS,    /* nums[i]                                  */
     NODE_ARR_ASSIGN,    /* nums[i] = val                           */
+    /* Sprint 4 — Issue #19 */
+    NODE_FUNC_DECL,     /* fn name(params) type { body }           */
+    NODE_RETURN,        /* return expr?                             */
 } NodeType;
 
 /* ── Forward declaration ─────────────────────────────────────────────────── */
+#ifndef FLUXA_AST_NODE_DECLARED
+#define FLUXA_AST_NODE_DECLARED
 typedef struct ASTNode ASTNode;
+#endif
 
 /* ── Node structure ──────────────────────────────────────────────────────── */
 struct ASTNode {
@@ -128,6 +134,21 @@ struct ASTNode {
             ASTNode *index;
             ASTNode *value;
         } arr_assign;
+
+        /* NODE_FUNC_DECL (Issue #19) */
+        struct {
+            char     *name;
+            char    **param_names;   /* heap-allocated — parallel arrays */
+            char    **param_types;   /* heap-allocated */
+            int       param_count;
+            char     *return_type;   /* "int", "float", "str", "bool", "nil" */
+            ASTNode  *body;          /* NODE_BLOCK_STMT */
+        } func_decl;
+
+        /* NODE_RETURN (Issue #19) */
+        struct {
+            ASTNode *value;          /* NULL for bare return */
+        } ret;
     } as;
 };
 
@@ -266,6 +287,15 @@ static inline void ast_free(ASTNode *n) {
         case NODE_ARR_ASSIGN:
             ast_free(n->as.arr_assign.index);
             ast_free(n->as.arr_assign.value);
+            break;
+        /* Issue #19 */
+        case NODE_FUNC_DECL:
+            if (n->as.func_decl.param_names) free(n->as.func_decl.param_names);
+            if (n->as.func_decl.param_types) free(n->as.func_decl.param_types);
+            ast_free(n->as.func_decl.body);
+            break;
+        case NODE_RETURN:
+            ast_free(n->as.ret.value);
             break;
         default:
             break;

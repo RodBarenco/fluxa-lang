@@ -14,15 +14,23 @@ typedef enum {
     VAL_FLOAT,
     VAL_BOOL,
     VAL_STRING,
+    VAL_FUNC,       /* Issue #21 — pointer to NODE_FUNC_DECL ASTNode */
 } ValType;
+
+/* forward declaration — avoids circular include with ast.h */
+#ifndef FLUXA_AST_NODE_DECLARED
+#define FLUXA_AST_NODE_DECLARED
+typedef struct ASTNode ASTNode;
+#endif
 
 typedef struct {
     ValType type;
     union {
-        long   integer;
-        double real;
-        int    boolean;
-        char  *string;   /* heap-allocated — owned by the scope entry */
+        long     integer;
+        double   real;
+        int      boolean;
+        char    *string;   /* heap-allocated — owned by the scope entry */
+        ASTNode *func;     /* Issue #21 — points to NODE_FUNC_DECL node */
     } as;
 } Value;
 
