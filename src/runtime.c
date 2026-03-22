@@ -339,87 +339,24 @@ static Value eval(Runtime *rt, ASTNode *node) {
         }
 
         case NODE_WHILE: {
-            Chunk body_chunk, cond_chunk;
-            int use_bc = chunk_compile_body(&body_chunk,
-                             node->as.while_stmt.body);
-            int use_cc = 0;
-            if (use_bc) {
-                chunk_init(&cond_chunk);
-                compile_expr(&cond_chunk, node->as.while_stmt.condition);
-                if (cond_chunk.ok) {
-                    Instruction r2; r2.op = OP_RETURN;
-                    chunk_emit(&cond_chunk, r2);
-                    use_cc = 1;
-                } else {
-                    chunk_free(&cond_chunk);
-                    chunk_free(&body_chunk);
-                    use_bc = 0;
-                }
-            }
-
-            if (use_bc) {
-                /* Issue #22 — O(1) seeding: use pre-computed list */
-                int sc = node->as.while_stmt.seed_count;
-                for (int k = 0; k < sc; k++) {
-                    const char *name = node->as.while_stmt.seed_vars[k].name;
-                    int off          = node->as.while_stmt.seed_vars[k].offset;
-                    if (off >= 0 && off < rt->stack_size)
-                        scope_set(&rt->scope, name, rt->stack[off]);
-                }
-
-                /* ── FAST PATH: bytecode loop with computed gotos ── */
-                while (1) {
-                    VMStack cvs; cvs.top = 0;
-                    for (int ip = 0; ip < cond_chunk.count; ip++) {
-                        Instruction *ins = &cond_chunk.code[ip];
-                        if (ins->op == OP_RETURN) break;
-                        switch (ins->op) {
-                            case OP_PUSH_INT: vs_push(&cvs,val_int(ins->arg.ival)); break;
-                            case OP_LOAD: {
-                                if (!ins->cached_entry)
-                                    HASH_FIND_STR(rt->scope.table,ins->arg.sval,ins->cached_entry);
-                                vs_push(&cvs,ins->cached_entry?ins->cached_entry->value:val_nil());
-                                break;
-                            }
-                            case OP_LT:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_LT));  break;}
-                            case OP_GT:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_GT));  break;}
-                            case OP_LTE: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_LTE)); break;}
-                            case OP_GTE: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_GTE)); break;}
-                            case OP_EQ:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_EQ));  break;}
-                            case OP_NEQ: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_NEQ)); break;}
-                            case OP_ADD: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_arith(l,r2,OP_ADD)); break;}
-                            case OP_SUB: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_arith(l,r2,OP_SUB)); break;}
-                            default: break;
-                        }
-                    }
-                    if (cvs.top==0 || !vm_truthy(vs_pop(&cvs))) break;
-                    vm_run(&body_chunk, &rt->scope, rt->stack, rt->stack_size);
-                    if (rt->had_error || rt->ret.active) break;
-                }
-
-                /* Issue #22 — O(1) sync back: scope → stack */
-                for (int k = 0; k < sc; k++) {
-                    const char *name = node->as.while_stmt.seed_vars[k].name;
-                    int off          = node->as.while_stmt.seed_vars[k].offset;
-                    Value v; v.type = VAL_NIL;
-                    scope_get(&rt->scope, name, &v);
-                    if (off >= 0 && off < FLUXA_STACK_SIZE)
-                        rt->stack[off] = v;
-                }
-
-                chunk_free(&body_chunk);
-                chunk_free(&cond_chunk);
+            Chunk chunk;
+            if (chunk_compile_loop(&chunk, node)) {
+                vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size);
+                chunk_free(&chunk);
             } else {
                 /* ── SLOW PATH: AST walk ── */
                 int limit = 100000000;
                 while (limit-- > 0) {
                     Value cond = eval(rt, node->as.while_stmt.condition);
                     if (rt->had_error || rt->ret.active) break;
+                    
                     int truthy = 0;
                     if      (cond.type==VAL_BOOL)  truthy = cond.as.boolean;
                     else if (cond.type==VAL_INT)   truthy = cond.as.integer != 0;
                     else if (cond.type==VAL_FLOAT) truthy = cond.as.real    != 0.0;
+                    else if (cond.type==VAL_STRING) truthy = cond.as.string && cond.as.string[0];
                     if (!truthy) break;
+                    
                     eval(rt, node->as.while_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
                 }
