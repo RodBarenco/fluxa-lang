@@ -1,87 +1,70 @@
 /* bytecode.h — Fluxa Bytecode VM for hot paths
  * Sprint 4 Performance — Issue backlog
  *
- * Instead of walking the AST on every loop iteration, the NODE_WHILE
- * body is compiled once to a flat array of instructions. The VM then
- * executes those instructions directly — no tree traversal, no function
- * call overhead per node, no branch on node type per iteration.
- *
- * Scope integration: variables are accessed by NAME (string key) via
- * the existing uthash scope. Name Resolution (offset-based stack) is a
- * later step that will replace this with O(1) array access.
+ * Emits register-based instructions. The VMStack has been completely
+ * replaced by direct access to local frame slots (registers).
+ * Execution is perfectly linear with zero indirections or pushes/pops.
  */
 #ifndef FLUXA_BYTECODE_H
 #define FLUXA_BYTECODE_H
 
 #define _POSIX_C_SOURCE 200809L
 #include "scope.h"
+#include <stdint.h> /* Correção: para reconhecer uint8_t */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-/* ── Opcodes ─────────────────────────────────────────────────────────────── */
+/* ── Opcodes (Register-based) ────────────────────────────────────────────── */
 typedef enum {
-    /* literals */
-    OP_PUSH_INT,      /* operand: long                */
-    OP_PUSH_FLOAT,    /* operand: double              */
-    OP_PUSH_BOOL,     /* operand: int                 */
-    OP_PUSH_STR,      /* operand: char*               */
-    OP_PUSH_NIL,
-
-    /* variables */
-    OP_LOAD,          /* operand: char* name          */
-    OP_STORE,         /* operand: char* name          */
-
-    /* arithmetic */
-    OP_ADD,
-    OP_SUB,
-    OP_MUL,
-    OP_DIV,
-    OP_MOD,
-
-    /* comparison */
-    OP_EQ,
-    OP_NEQ,
-    OP_LT,
-    OP_GT,
-    OP_LTE,
-    OP_GTE,
-
-    /* control */
-    OP_JUMP_IF_FALSE, /* operand: int offset (relative) */
-    OP_JUMP,          /* operand: int offset (relative) */
-
-    OP_RETURN,        /* signals end of chunk         */
+    OP_LOADK,         /* R[a] = constants[b]          */
+    OP_MOVE,          /* R[a] = R[b]                  */
+    OP_ADD,           /* R[a] = R[b] + R[c]           */
+    OP_SUB,           /* R[a] = R[b] - R[c]           */
+    OP_MUL,           /* R[a] = R[b] * R[c]           */
+    OP_DIV,           /* R[a] = R[b] / R[c]           */
+    OP_MOD,           /* R[a] = R[b] % R[c]           */
+    OP_EQ,            /* R[a] = R[b] == R[c]          */
+    OP_NEQ,           /* R[a] = R[b] != R[c]          */
+    OP_LT,            /* R[a] = R[b] < R[c]           */
+    OP_GT,            /* R[a] = R[b] > R[c]           */
+    OP_LTE,           /* R[a] = R[b] <= R[c]          */
+    OP_GTE,           /* R[a] = R[b] >= R[c]          */
+    OP_JUMP_IF_FALSE, /* if (!R[a]) ip = offset       */
+    OP_JUMP,          /* ip = offset                  */
+    OP_RETURN         /* signals end of chunk         */
 } Opcode;
 
-/* ── Instruction ─────────────────────────────────────────────────────────── */
+/* ── Instruction (3 Addresses) ───────────────────────────────────────────── */
 typedef struct {
-    Opcode       op;
-    int          stack_offset;  /* Issue #23: -1 = use sval/scope, >=0 = direct stack */
-    ScopeEntry  *cached_entry;  /* inline cache — NULL until first access */
-    union {
-        long    ival;
-        double  fval;
-        char   *sval;   /* interned — not owned by instruction */
-        int     offset; /* jump target */
-    } arg;
+    Opcode  op;
+    uint8_t a;        /* dest register */
+    uint8_t b;        /* src1 register or const index */
+    uint8_t c;        /* src2 register */
+    int     offset;   /* jump target */
 } Instruction;
 
 /* ── Chunk — compiled bytecode ───────────────────────────────────────────── */
 #define CHUNK_INIT_CAP 64
+#define CHUNK_MAX_CONST 128
 
 typedef struct {
     Instruction *code;
     int          count;
     int          cap;
-    int          ok;    /* 0 = compile error */
+    Value        constants[CHUNK_MAX_CONST];
+    int          const_count;
+    int          ok;       /* 0 = compile error */
+    uint8_t      next_reg; /* register allocator state */
 } Chunk;
 
 static inline void chunk_init(Chunk *c) {
     c->code  = (Instruction*)malloc(sizeof(Instruction) * CHUNK_INIT_CAP);
     c->count = 0;
     c->cap   = CHUNK_INIT_CAP;
+    c->const_count = 0;
     c->ok    = 1;
+    c->next_reg = 128;     /* temporaries start above 127 */
 }
 
 static inline void chunk_free(Chunk *c) {
@@ -96,66 +79,84 @@ static inline int chunk_emit(Chunk *c, Instruction instr) {
         c->code  = (Instruction*)realloc(c->code,
                        sizeof(Instruction) * c->cap);
     }
-    instr.cached_entry = NULL;   /* inline cache starts empty */
-    instr.stack_offset = -1;     /* -1 = use scope/sval, set by resolver */
     c->code[c->count++] = instr;
     return c->count - 1;
 }
 
 static inline void chunk_patch(Chunk *c, int idx, int offset) {
-    c->code[idx].arg.offset = offset;
+    c->code[idx].offset = offset;
 }
 
-/* ── Value stack for VM ──────────────────────────────────────────────────── */
-#define VM_STACK_MAX 256
-
-typedef struct {
-    Value stack[VM_STACK_MAX];
-    int   top;
-} VMStack;
-
-static inline void vs_push(VMStack *vs, Value v) {
-    if (vs->top < VM_STACK_MAX) vs->stack[vs->top++] = v;
+/* ── Constants Helpers ───────────────────────────────────────────────────── */
+static inline int chunk_add_const_int(Chunk *c, long ival) {
+    if (c->const_count >= CHUNK_MAX_CONST) { c->ok = 0; return 0; }
+    Value v; v.type = VAL_INT; v.as.integer = ival;
+    c->constants[c->const_count] = v;
+    return c->const_count++;
 }
-static inline Value vs_pop(VMStack *vs) {
-    if (vs->top > 0) return vs->stack[--vs->top];
-    Value n; n.type = VAL_NIL; return n;
+static inline int chunk_add_const_float(Chunk *c, double fval) {
+    if (c->const_count >= CHUNK_MAX_CONST) { c->ok = 0; return 0; }
+    Value v; v.type = VAL_FLOAT; v.as.real = fval;
+    c->constants[c->const_count] = v;
+    return c->const_count++;
+}
+static inline int chunk_add_const_bool(Chunk *c, int bval) {
+    if (c->const_count >= CHUNK_MAX_CONST) { c->ok = 0; return 0; }
+    Value v; v.type = VAL_BOOL; v.as.boolean = bval;
+    c->constants[c->const_count] = v;
+    return c->const_count++;
 }
 
 /* ── Compiler: ASTNode → Chunk ───────────────────────────────────────────── */
 #include "ast.h"
 
+extern Value val_string(const char*); /* ensure available for constants */
+
+static inline int chunk_add_const_str(Chunk *c, const char *sval) {
+    if (c->const_count >= CHUNK_MAX_CONST) { c->ok = 0; return 0; }
+    c->constants[c->const_count] = val_string(sval);
+    return c->const_count++;
+}
+
 static void compile_node(Chunk *c, ASTNode *node);
 
-static void compile_expr(Chunk *c, ASTNode *node) {
-    if (!node || !c->ok) return;
+static uint8_t compile_expr(Chunk *c, ASTNode *node) {
+    if (!node || !c->ok) return 0;
     switch (node->type) {
         case NODE_INT_LIT: {
-            Instruction i; i.op = OP_PUSH_INT; i.arg.ival = node->as.integer.value;
-            chunk_emit(c, i); break;
+            int k = chunk_add_const_int(c, node->as.integer.value);
+            uint8_t dst = c->next_reg++;
+            Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint8_t)k; i.c=0; i.offset=0;
+            chunk_emit(c, i); return dst;
         }
         case NODE_FLOAT_LIT: {
-            Instruction i; i.op = OP_PUSH_FLOAT; i.arg.fval = node->as.real.value;
-            chunk_emit(c, i); break;
+            int k = chunk_add_const_float(c, node->as.real.value);
+            uint8_t dst = c->next_reg++;
+            Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint8_t)k; i.c=0; i.offset=0;
+            chunk_emit(c, i); return dst;
         }
         case NODE_BOOL_LIT: {
-            Instruction i; i.op = OP_PUSH_BOOL; i.arg.ival = node->as.boolean.value;
-            chunk_emit(c, i); break;
+            int k = chunk_add_const_bool(c, node->as.boolean.value);
+            uint8_t dst = c->next_reg++;
+            Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint8_t)k; i.c=0; i.offset=0;
+            chunk_emit(c, i); return dst;
         }
         case NODE_STRING_LIT: {
-            Instruction i; i.op = OP_PUSH_STR; i.arg.sval = node->as.str.value;
-            chunk_emit(c, i); break;
+            int k = chunk_add_const_str(c, node->as.str.value);
+            uint8_t dst = c->next_reg++;
+            Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint8_t)k; i.c=0; i.offset=0;
+            chunk_emit(c, i); return dst;
         }
         case NODE_IDENTIFIER: {
-            Instruction i; i.op = OP_LOAD; i.arg.sval = node->as.str.value;
-            i.stack_offset = node->resolved_offset;  /* -1 if unresolved */
-            chunk_emit(c, i); break;
+            if (node->resolved_offset < 0) { c->ok = 0; return 0; }
+            return (uint8_t)node->resolved_offset;
         }
         case NODE_BINARY_EXPR: {
-            compile_expr(c, node->as.binary.left);
-            compile_expr(c, node->as.binary.right);
+            uint8_t r1 = compile_expr(c, node->as.binary.left);
+            uint8_t r2 = compile_expr(c, node->as.binary.right);
+            uint8_t dst = c->next_reg++;
+            Instruction i; i.a=dst; i.b=r1; i.c=r2; i.offset=0;
             const char *op = node->as.binary.op;
-            Instruction i;
             if      (!strcmp(op,"+"))  i.op = OP_ADD;
             else if (!strcmp(op,"-"))  i.op = OP_SUB;
             else if (!strcmp(op,"*"))  i.op = OP_MUL;
@@ -167,70 +168,98 @@ static void compile_expr(Chunk *c, ASTNode *node) {
             else if (!strcmp(op,">"))  i.op = OP_GT;
             else if (!strcmp(op,"<=")) i.op = OP_LTE;
             else if (!strcmp(op,">=")) i.op = OP_GTE;
-            else { c->ok = 0; return; }
+            else { c->ok = 0; return 0; }
             chunk_emit(c, i);
-            break;
+            return dst;
         }
         default:
-            /* complex expr — not compilable to bytecode yet */
             c->ok = 0;
-            break;
+            return 0;
     }
 }
 
 static void compile_node(Chunk *c, ASTNode *node) {
     if (!node || !c->ok) return;
+    uint8_t start_reg = c->next_reg;
     switch (node->type) {
         case NODE_VAR_DECL:
         case NODE_ASSIGN: {
             ASTNode *val  = (node->type == NODE_VAR_DECL)
                           ? node->as.var_decl.initializer
                           : node->as.assign.value;
-            const char *name = (node->type == NODE_VAR_DECL)
-                          ? node->as.var_decl.var_name
-                          : node->as.assign.var_name;
-            compile_expr(c, val);
-            Instruction i; i.op = OP_STORE; i.arg.sval = (char*)name;
-            i.stack_offset = node->resolved_offset;  /* set by resolver */
-            chunk_emit(c, i);
+            uint8_t src = compile_expr(c, val);
+            if (node->resolved_offset >= 0) {
+                Instruction i; i.op=OP_MOVE; i.a=(uint8_t)node->resolved_offset; i.b=src; i.c=0; i.offset=0;
+                chunk_emit(c, i);
+            } else {
+                c->ok = 0; /* Fallback required for unresolved vars */
+            }
             break;
         }
         case NODE_BLOCK_STMT:
-            for (int i = 0; i < node->as.list.count; i++)
+            for (int i = 0; i < node->as.list.count; i++) {
                 compile_node(c, node->as.list.children[i]);
+                c->next_reg = start_reg; /* reset temp vars */
+            }
             break;
         case NODE_IF: {
-            compile_expr(c, node->as.if_stmt.condition);
-            Instruction jf; jf.op = OP_JUMP_IF_FALSE; jf.arg.offset = 0;
+            uint8_t cond_reg = compile_expr(c, node->as.if_stmt.condition);
+            Instruction jf; jf.op=OP_JUMP_IF_FALSE; jf.a=cond_reg; jf.b=0; jf.c=0; jf.offset=0;
             int jf_idx = chunk_emit(c, jf);
+            
+            c->next_reg = start_reg;
             compile_node(c, node->as.if_stmt.then_body);
+            
             if (node->as.if_stmt.else_body) {
-                Instruction jmp; jmp.op = OP_JUMP; jmp.arg.offset = 0;
+                Instruction jmp; jmp.op=OP_JUMP; jmp.a=0; jmp.b=0; jmp.c=0; jmp.offset=0;
                 int jmp_idx = chunk_emit(c, jmp);
                 chunk_patch(c, jf_idx, c->count);
+                
+                c->next_reg = start_reg;
                 compile_node(c, node->as.if_stmt.else_body);
+                
                 chunk_patch(c, jmp_idx, c->count);
             } else {
                 chunk_patch(c, jf_idx, c->count);
             }
             break;
         }
+        /* Correção: Compilação do loop integrada */
+        case NODE_WHILE: {
+            int start_ip = c->count;
+            
+            uint8_t cond_reg = compile_expr(c, node->as.while_stmt.condition);
+            if (!c->ok) return;
+
+            Instruction jf; jf.op = OP_JUMP_IF_FALSE; jf.a = cond_reg; jf.b = 0; jf.c = 0; jf.offset = 0;
+            int jf_idx = chunk_emit(c, jf);
+
+            c->next_reg = start_reg;
+            compile_node(c, node->as.while_stmt.body);
+            if (!c->ok) return;
+
+            Instruction jmp; jmp.op = OP_JUMP; jmp.a = 0; jmp.b = 0; jmp.c = 0; jmp.offset = start_ip;
+            chunk_emit(c, jmp);
+
+            chunk_patch(c, jf_idx, c->count);
+            break;
+        }
         case NODE_FUNC_CALL:
-            /* function calls inside while body — fall back to AST walk */
             c->ok = 0;
             break;
         default:
             c->ok = 0;
             break;
     }
+    c->next_reg = start_reg;
 }
 
-/* compile a while body — returns 0 if not fully compilable */
-static inline int chunk_compile_body(Chunk *c, ASTNode *body) {
+/* Correção: Função que compila o loop inteiro e assinala o retorno */
+static inline int chunk_compile_loop(Chunk *c, ASTNode *loop_node) {
     chunk_init(c);
-    compile_node(c, body);
+    compile_node(c, loop_node);
     if (!c->ok) { chunk_free(c); return 0; }
-    Instruction ret; ret.op = OP_RETURN;
+    Instruction ret; ret.op = OP_RETURN; ret.a = 0; ret.b = 0; ret.c = 0; ret.offset = 0;
     chunk_emit(c, ret);
     return 1;
 }
@@ -289,138 +318,152 @@ static inline Value vm_compare(Value l, Value r, Opcode op) {
     return val_bool(0);
 }
 
-/* run compiled chunk with direct stack access ─────────────────────────────
- * Issue #23: stack_ptr/stack_size enable O(1) variable access by offset.
- * Falls back to uthash inline cache when stack_offset == -1.            */
+/* run compiled chunk with strict linear register model ───────────────────── */
+/* run compiled chunk with strict linear register model ───────────────────── */
 static inline int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size) {
-    VMStack vs; vs.top = 0;
-    int ip = 0;
+    (void)scope;
+    (void)stack_size;
+    
+    /* Usar ponteiros em vez de índices de array economiza ciclos de CPU */
+    Instruction *ip = c->code;
+    Instruction *end = c->code + c->count;
+    Value *R = stack_ptr; 
 
 #ifdef __GNUC__
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wpedantic"
     static const void *dispatch[] = {
-        &&L_PUSH_INT, &&L_PUSH_FLOAT, &&L_PUSH_BOOL, &&L_PUSH_STR, &&L_PUSH_NIL,
-        &&L_LOAD, &&L_STORE,
+        &&L_LOADK, &&L_MOVE,
         &&L_ADD, &&L_SUB, &&L_MUL, &&L_DIV, &&L_MOD,
         &&L_EQ, &&L_NEQ, &&L_LT, &&L_GT, &&L_LTE, &&L_GTE,
         &&L_JUMP_IF_FALSE, &&L_JUMP, &&L_RETURN
     };
-    #define NEXT() do { if (ip >= c->count) goto L_RETURN; \
-                        goto *dispatch[c->code[ip++].op]; } while(0)
-    #define CUR()  (c->code[ip-1])
+    
+    #define NEXT() do { if (ip >= end) goto L_RETURN; \
+                        goto *dispatch[(ip++)->op]; } while(0)
+
+    /* Acessa a instrução atual (que já foi incrementada no NEXT) */
+    #define i_a   ((ip-1)->a)
+    #define i_b   ((ip-1)->b)
+    #define i_c   ((ip-1)->c)
+    #define i_off ((ip-1)->offset)
 
     NEXT();
 
-    L_PUSH_INT:   { Value v; v.type=VAL_INT;   v.as.integer=CUR().arg.ival; vs_push(&vs,v); NEXT(); }
-    L_PUSH_FLOAT: { Value v; v.type=VAL_FLOAT; v.as.real=CUR().arg.fval;    vs_push(&vs,v); NEXT(); }
-    L_PUSH_BOOL:  { Value v; v.type=VAL_BOOL;  v.as.boolean=(int)CUR().arg.ival; vs_push(&vs,v); NEXT(); }
-    L_PUSH_STR:   { Value v=val_string(CUR().arg.sval); vs_push(&vs,v); NEXT(); }
-    L_PUSH_NIL:   { Value v; v.type=VAL_NIL; vs_push(&vs,v); NEXT(); }
+    L_LOADK: { R[i_a] = c->constants[i_b]; NEXT(); }
+    L_MOVE:  { R[i_a] = R[i_b]; NEXT(); }
 
-    L_LOAD: {
-        Instruction *instr = &c->code[ip-1];
-        Value v;
-        /* Issue #23 — direct stack access */
-        if (instr->stack_offset >= 0 && instr->stack_offset < stack_size) {
-            v = stack_ptr[instr->stack_offset];
+    /* Fast paths usando ponteiros (sem cópia de structs) */
+    L_ADD: { 
+        Value *l = &R[i_b];
+        Value *r = &R[i_c];
+        if (l->type == VAL_INT && r->type == VAL_INT) {
+            R[i_a].type = VAL_INT; 
+            R[i_a].as.integer = l->as.integer + r->as.integer;
         } else {
-            if (!instr->cached_entry)
-                HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry);
-            v = instr->cached_entry ? instr->cached_entry->value : val_nil();
+            R[i_a] = vm_arith(*l, *r, OP_ADD); 
         }
-        vs_push(&vs, v);
-        NEXT();
+        NEXT(); 
     }
-
-    L_STORE: {
-        Instruction *instr = &c->code[ip-1];
-        Value v = vs_pop(&vs);
-        /* Issue #23 — direct stack access */
-        if (instr->stack_offset >= 0 && instr->stack_offset < stack_size) {
-            stack_ptr[instr->stack_offset] = v;
-            /* also update scope entry if cached — keeps scope in sync */
-            if (instr->cached_entry) instr->cached_entry->value = v;
+    L_SUB: { 
+        Value *l = &R[i_b];
+        Value *r = &R[i_c];
+        if (l->type == VAL_INT && r->type == VAL_INT) {
+            R[i_a].type = VAL_INT; 
+            R[i_a].as.integer = l->as.integer - r->as.integer;
         } else {
-            if (!instr->cached_entry)
-                HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry);
-            if (instr->cached_entry) instr->cached_entry->value = v;
-            else { scope_set(scope, instr->arg.sval, v);
-                   HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry); }
+            R[i_a] = vm_arith(*l, *r, OP_SUB); 
         }
-        NEXT();
+        NEXT(); 
     }
+    
+    L_MUL: { R[i_a] = vm_arith(R[i_b], R[i_c], OP_MUL); NEXT(); }
+    L_DIV: { R[i_a] = vm_arith(R[i_b], R[i_c], OP_DIV); NEXT(); }
+    L_MOD: { R[i_a] = vm_arith(R[i_b], R[i_c], OP_MOD); NEXT(); }
 
-    L_ADD: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_arith(l,r,OP_ADD)); NEXT(); }
-    L_SUB: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_arith(l,r,OP_SUB)); NEXT(); }
-    L_MUL: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_arith(l,r,OP_MUL)); NEXT(); }
-    L_DIV: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_arith(l,r,OP_DIV)); NEXT(); }
-    L_MOD: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_arith(l,r,OP_MOD)); NEXT(); }
-    L_EQ:  { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_EQ));  NEXT(); }
-    L_NEQ: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_NEQ)); NEXT(); }
-    L_LT:  { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_LT));  NEXT(); }
-    L_GT:  { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_GT));  NEXT(); }
-    L_LTE: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_LTE)); NEXT(); }
-    L_GTE: { Value r=vs_pop(&vs); Value l=vs_pop(&vs); vs_push(&vs,vm_compare(l,r,OP_GTE)); NEXT(); }
+    L_LT:  { 
+        Value *l = &R[i_b];
+        Value *r = &R[i_c];
+        if (l->type == VAL_INT && r->type == VAL_INT) {
+            R[i_a].type = VAL_BOOL; 
+            R[i_a].as.boolean = l->as.integer < r->as.integer;
+        } else {
+            R[i_a] = vm_compare(*l, *r, OP_LT);  
+        }
+        NEXT(); 
+    }
+    
+    L_EQ:  { R[i_a] = vm_compare(R[i_b], R[i_c], OP_EQ);  NEXT(); }
+    L_NEQ: { R[i_a] = vm_compare(R[i_b], R[i_c], OP_NEQ); NEXT(); }
+    L_GT:  { R[i_a] = vm_compare(R[i_b], R[i_c], OP_GT);  NEXT(); }
+    L_LTE: { R[i_a] = vm_compare(R[i_b], R[i_c], OP_LTE); NEXT(); }
+    L_GTE: { R[i_a] = vm_compare(R[i_b], R[i_c], OP_GTE); NEXT(); }
+
     L_JUMP_IF_FALSE: {
-        Value cond = vs_pop(&vs);
-        if (!vm_truthy(cond)) ip = c->code[ip-1].arg.offset;
+        Value *cond = &R[i_a];
+        int truthy = 0;
+        if (cond->type == VAL_BOOL) truthy = cond->as.boolean;
+        else if (cond->type == VAL_INT) truthy = cond->as.integer != 0;
+        else truthy = vm_truthy(*cond);
+
+        if (!truthy) ip = c->code + i_off;
         NEXT();
     }
-    L_JUMP: ip = c->code[ip-1].arg.offset; NEXT();
+    
+    L_JUMP: { ip = c->code + i_off; NEXT(); }
     L_RETURN: return 1;
 
+    #pragma GCC diagnostic pop
     #undef NEXT
-    #undef CUR
+    #undef i_a
+    #undef i_b
+    #undef i_c
+    #undef i_off
 
 #else
-    while (ip < c->count) {
-        Instruction *instr = &c->code[ip++];
+    /* Fallback pointer-based simplificado */
+    Instruction *ip = c->code;
+    Instruction *end = c->code + c->count;
+    Value *R = stack_ptr;
+
+    while (ip < end) {
+        Instruction *instr = ip++;
         switch (instr->op) {
-            case OP_PUSH_INT:   { Value v; v.type=VAL_INT;   v.as.integer=instr->arg.ival; vs_push(&vs,v); break; }
-            case OP_PUSH_FLOAT: { Value v; v.type=VAL_FLOAT; v.as.real=instr->arg.fval;    vs_push(&vs,v); break; }
-            case OP_PUSH_BOOL:  { Value v; v.type=VAL_BOOL;  v.as.boolean=(int)instr->arg.ival; vs_push(&vs,v); break; }
-            case OP_PUSH_STR:   { Value v=val_string(instr->arg.sval); vs_push(&vs,v); break; }
-            case OP_PUSH_NIL:   { Value v; v.type=VAL_NIL; vs_push(&vs,v); break; }
-            case OP_LOAD: {
-                Value v;
-                if (instr->stack_offset >= 0 && instr->stack_offset < stack_size)
-                    v = stack_ptr[instr->stack_offset];
-                else {
-                    if (!instr->cached_entry)
-                        HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry);
-                    v = instr->cached_entry ? instr->cached_entry->value : val_nil();
-                }
-                vs_push(&vs, v); break;
-            }
-            case OP_STORE: {
-                Value v = vs_pop(&vs);
-                if (instr->stack_offset >= 0 && instr->stack_offset < stack_size) {
-                    stack_ptr[instr->stack_offset] = v;
-                    if (instr->cached_entry) instr->cached_entry->value = v;
-                } else {
-                    if (!instr->cached_entry)
-                        HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry);
-                    if (instr->cached_entry) instr->cached_entry->value = v;
-                    else { scope_set(scope, instr->arg.sval, v);
-                           HASH_FIND_STR(scope->table, instr->arg.sval, instr->cached_entry); }
-                }
+            case OP_LOADK: R[instr->a] = c->constants[instr->b]; break;
+            case OP_MOVE:  R[instr->a] = R[instr->b]; break;
+            case OP_ADD:   {
+                Value *l = &R[instr->b], *r = &R[instr->c];
+                if (l->type == VAL_INT && r->type == VAL_INT) {
+                    R[instr->a].type = VAL_INT; R[instr->a].as.integer = l->as.integer + r->as.integer;
+                } else R[instr->a] = vm_arith(*l, *r, OP_ADD);
                 break;
             }
-            case OP_ADD: case OP_SUB: case OP_MUL:
-            case OP_DIV: case OP_MOD: {
-                Value r=vs_pop(&vs); Value l=vs_pop(&vs);
-                vs_push(&vs, vm_arith(l,r,instr->op)); break;
+            case OP_SUB:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_SUB); break;
+            case OP_MUL:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_MUL); break;
+            case OP_DIV:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_DIV); break;
+            case OP_MOD:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_MOD); break;
+            case OP_EQ:    R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_EQ); break;
+            case OP_NEQ:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_NEQ); break;
+            case OP_LT:    {
+                Value *l = &R[instr->b], *r = &R[instr->c];
+                if (l->type == VAL_INT && r->type == VAL_INT) {
+                    R[instr->a].type = VAL_BOOL; R[instr->a].as.boolean = l->as.integer < r->as.integer;
+                } else R[instr->a] = vm_compare(*l, *r, OP_LT);
+                break;
             }
-            case OP_EQ: case OP_NEQ: case OP_LT:
-            case OP_GT: case OP_LTE: case OP_GTE: {
-                Value r=vs_pop(&vs); Value l=vs_pop(&vs);
-                vs_push(&vs, vm_compare(l,r,instr->op)); break;
-            }
+            case OP_GT:    R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_GT); break;
+            case OP_LTE:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_LTE); break;
+            case OP_GTE:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_GTE); break;
             case OP_JUMP_IF_FALSE: {
-                Value cond=vs_pop(&vs);
-                if (!vm_truthy(cond)) ip=instr->arg.offset;
+                Value *cond = &R[instr->a];
+                int truthy = 0;
+                if (cond->type == VAL_BOOL) truthy = cond->as.boolean;
+                else if (cond->type == VAL_INT) truthy = cond->as.integer != 0;
+                else truthy = vm_truthy(*cond);
+                if (!truthy) ip = c->code + instr->offset;
                 break;
             }
-            case OP_JUMP: ip=instr->arg.offset; break;
+            case OP_JUMP:  ip = c->code + instr->offset; break;
             case OP_RETURN: return 1;
         }
     }
