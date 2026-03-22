@@ -1,6 +1,6 @@
 # Fluxa — Makefile
 CC      = gcc
-CFLAGS  = -std=c99 -Wall -Wextra -pedantic -g \
+CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
            -Isrc -Ivendor
 SRCS    = src/main.c src/lexer.c src/parser.c src/runtime.c src/scope.c
 TARGET  = fluxa

@@ -19,8 +19,8 @@ static char *load_file(const char *path) {
     rewind(f);
     char *buf = (char*)malloc(size + 1);
     if (!buf) { fclose(f); return NULL; }
-    fread(buf, 1, size, f);
-    buf[size] = '\0';
+    size_t nread = fread(buf, 1, size, f);
+    buf[nread] = '\0';
     fclose(f);
     return buf;
 }

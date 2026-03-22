@@ -1,0 +1,9 @@
+// benchmark — 10 milhões de iterações
+// baseline: ~2s
+int i = 0
+int total = 0
+while i < 10000000 {
+    total = total + i
+    i = i + 1
+}
+print(total)
