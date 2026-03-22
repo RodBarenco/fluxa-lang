@@ -1,0 +1,42 @@
+// Sprint 4 — critério de aceite
+// Issue #19, #20, #21: fn, return, call stack, recursão
+
+// função simples
+fn somar(int a, int b) int {
+    return a + b
+}
+
+int r = somar(3, 7)
+print(r)
+
+// função sem retorno
+fn saudar(str nome) nil {
+    print(nome)
+}
+
+saudar("fluxa")
+
+// função com lógica interna
+fn maximo(int a, int b) int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+print(maximo(10, 20))
+print(maximo(99, 3))
+
+// recursão
+fn fatorial(int n) int {
+    if n <= 1 {
+        return 1
+    }
+    return n * fatorial(n - 1)
+}
+
+print(fatorial(5))
+print(fatorial(10))
+
+// função chamada dentro de print
+print(somar(100, 200))
