@@ -225,6 +225,96 @@ static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
 
+    /* Issue #20 — fn declaration */
+    if (check(p, TOK_FN)) {
+        parser_advance(p);
+
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected function name after 'fn'");
+            return NULL;
+        }
+        char fn_name[256];
+        strncpy(fn_name, p->current.value, sizeof(fn_name)-1);
+        fn_name[sizeof(fn_name)-1] = '\0';
+        parser_advance(p);
+
+        if (!expect(p, TOK_LPAREN, "after function name")) return NULL;
+
+        /* parse parameters */
+        char **param_names = NULL;
+        char **param_types = NULL;
+        int    param_count = 0;
+
+        while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+            if (!is_type_token(p)) {
+                parse_error(p, "expected type in parameter list");
+                free(param_names); free(param_types);
+                return NULL;
+            }
+            param_count++;
+            param_types = (char**)realloc(param_types,
+                sizeof(char*) * param_count);
+            param_names = (char**)realloc(param_names,
+                sizeof(char*) * param_count);
+            param_types[param_count-1] = P_STR(p->current.value);
+            parser_advance(p);
+
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected parameter name after type");
+                free(param_names); free(param_types);
+                return NULL;
+            }
+            param_names[param_count-1] = P_STR(p->current.value);
+            parser_advance(p);
+
+            if (!match(p, TOK_COMMA)) break;
+        }
+        if (!expect(p, TOK_RPAREN, "after parameter list")) {
+            free(param_names); free(param_types);
+            return NULL;
+        }
+
+        /* return type */
+        char ret_type[32] = "nil";
+        if (check(p, TOK_NIL)) {
+            parser_advance(p);
+        } else if (is_type_token(p)) {
+            strncpy(ret_type, p->current.value, sizeof(ret_type)-1);
+            ret_type[sizeof(ret_type)-1] = '\0';
+            parser_advance(p);
+        } else {
+            parse_error(p, "expected return type after parameter list");
+            free(param_names); free(param_types);
+            return NULL;
+        }
+
+        ASTNode *body = parse_body(p);
+        if (!body) { free(param_names); free(param_types); return NULL; }
+
+        ASTNode *n = P_NODE();
+        n->type = NODE_FUNC_DECL;
+        n->as.func_decl.name         = P_STR(fn_name);
+        n->as.func_decl.param_names  = param_names;
+        n->as.func_decl.param_types  = param_types;
+        n->as.func_decl.param_count  = param_count;
+        n->as.func_decl.return_type  = P_STR(ret_type);
+        n->as.func_decl.body         = body;
+        return n;
+    }
+
+    /* Issue #20 — return statement */
+    if (check(p, TOK_RETURN)) {
+        parser_advance(p);
+        ASTNode *n = P_NODE();
+        n->type = NODE_RETURN;
+        /* bare return (nil functions) vs return <expr> */
+        if (check(p, TOK_RBRACE) || check(p, TOK_EOF))
+            n->as.ret.value = NULL;
+        else
+            n->as.ret.value = parse_expr(p);
+        return n;
+    }
+
     /* Issue #16 — if statement */
     if (check(p, TOK_IF)) {
         parser_advance(p);
