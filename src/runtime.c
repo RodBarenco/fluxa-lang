@@ -2,12 +2,15 @@
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
 #include "scope.h"
+#include "resolver.h"
+#include "bytecode.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ── Call stack ──────────────────────────────────────────────────────────── */
-#define FLUXA_MAX_DEPTH 1000
+#define FLUXA_MAX_DEPTH  1000
+#define FLUXA_STACK_SIZE 512   /* max local variables per frame */
 
 /* Issue #21: return signal — propagates value up through eval frames */
 typedef struct {
@@ -18,6 +21,8 @@ typedef struct {
 /* ── Runtime state ───────────────────────────────────────────────────────── */
 typedef struct {
     Scope        scope;
+    Value        stack[FLUXA_STACK_SIZE]; /* flat variable storage */
+    int          stack_size;              /* slots in use          */
     int          had_error;
     int          call_depth;
     ReturnSignal ret;
@@ -26,6 +31,32 @@ typedef struct {
 static void rt_error(Runtime *rt, const char *msg) {
     fprintf(stderr, "[fluxa] Runtime error: %s\n", msg);
     rt->had_error = 1;
+}
+
+/* ── Variable access — stack first, uthash fallback ─────────────────────── */
+static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
+    if (node->resolved_offset >= 0 &&
+        node->resolved_offset < rt->stack_size) {
+        return rt->stack[node->resolved_offset];
+    }
+    Value v; v.type = VAL_NIL;
+    if (!scope_get(&rt->scope, name, &v)) {
+        char buf[280];
+        snprintf(buf, sizeof(buf), "undefined variable: %s", name);
+        rt_error(rt, buf);
+    }
+    return v;
+}
+
+static inline void rt_set(Runtime *rt, ASTNode *node,
+                           const char *name, Value v) {
+    if (node->resolved_offset >= 0) {
+        if (node->resolved_offset >= rt->stack_size)
+            rt->stack_size = node->resolved_offset + 1;
+        rt->stack[node->resolved_offset] = v;
+        return;
+    }
+    scope_set(&rt->scope, name, v);
 }
 
 static Value eval(Runtime *rt, ASTNode *node);
@@ -127,7 +158,6 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
 
 /* ── Issue #21: call user-defined function ───────────────────────────────── */
 static Value call_function(Runtime *rt, ASTNode *fn_node, ASTNode *call_node) {
-    /* stack overflow guard */
     if (rt->call_depth >= FLUXA_MAX_DEPTH) {
         rt_error(rt, "stack overflow — max call depth reached");
         return val_nil();
@@ -154,38 +184,48 @@ static Value call_function(Runtime *rt, ASTNode *fn_node, ASTNode *call_node) {
     }
     if (rt->had_error) { free(args); return val_nil(); }
 
-    /* save caller scope, create new frame */
-    Scope caller_scope = rt->scope;
-    rt->scope = scope_new();
+    /* save caller state */
+    Scope  caller_scope      = rt->scope;
+    int    caller_stack_size = rt->stack_size;
+    Value  caller_stack[FLUXA_STACK_SIZE];
+    memcpy(caller_stack, rt->stack, sizeof(Value) * FLUXA_STACK_SIZE);
+
+    /* create new frame */
+    rt->scope      = scope_new();
+    rt->stack_size = 0;
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt->stack[i].type = VAL_NIL;
     rt->call_depth++;
 
-    /* bind parameters in new frame */
-    for (int i = 0; i < param_count; i++)
-        scope_set(&rt->scope, fn_node->as.func_decl.param_names[i], args[i]);
+    /* bind parameters — use stack offsets 0..N */
+    for (int i = 0; i < param_count; i++) {
+        rt->stack[i]       = args[i];
+        if (rt->stack_size <= i) rt->stack_size = i + 1;
+    }
     free(args);
 
-    /* register function itself in new frame — enables recursion */
+    /* register function itself for recursion */
     Value self; self.type = VAL_FUNC; self.as.func = fn_node;
     scope_set(&rt->scope, fn_node->as.func_decl.name, self);
 
-    /* clear any previous return signal */
+    /* clear return signal */
     rt->ret.active = 0;
     rt->ret.value  = val_nil();
 
-    /* execute function body */
+    /* execute body */
     ASTNode *body = fn_node->as.func_decl.body;
     for (int i = 0; i < body->as.list.count; i++) {
         eval(rt, body->as.list.children[i]);
         if (rt->had_error || rt->ret.active) break;
     }
 
-    /* capture return value */
     Value result = rt->ret.active ? rt->ret.value : val_nil();
     rt->ret.active = 0;
 
-    /* restore caller scope */
+    /* restore caller state */
     scope_free(&rt->scope);
-    rt->scope = caller_scope;
+    rt->scope      = caller_scope;
+    rt->stack_size = caller_stack_size;
+    memcpy(rt->stack, caller_stack, sizeof(Value) * FLUXA_STACK_SIZE);
     rt->call_depth--;
 
     return result;
@@ -204,35 +244,30 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_IDENTIFIER: {
             const char *name = node->as.str.value;
             if (strcmp(name, "nil") == 0) return val_nil();
-            Value v;
-            if (!scope_get(&rt->scope, name, &v)) {
-                char buf[280];
-                snprintf(buf, sizeof(buf), "undefined variable: %s", name);
-                rt_error(rt, buf);
-                return val_nil();
-            }
-            return v;
+            return rt_get(rt, node, name);
         }
 
         case NODE_VAR_DECL: {
             Value v = eval(rt, node->as.var_decl.initializer);
             if (rt->had_error) return val_nil();
-            scope_set(&rt->scope, node->as.var_decl.var_name, v);
+            rt_set(rt, node, node->as.var_decl.var_name, v);
             return val_nil();
         }
 
         case NODE_ASSIGN: {
-            const char *name = node->as.assign.var_name;
-            if (!scope_has(&rt->scope, name)) {
+            Value v = eval(rt, node->as.assign.value);
+            if (rt->had_error) return val_nil();
+            /* check declared if falling back to scope */
+            if (node->resolved_offset < 0 &&
+                !scope_has(&rt->scope, node->as.assign.var_name)) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
-                    "assignment to undeclared variable: %s", name);
+                    "assignment to undeclared variable: %s",
+                    node->as.assign.var_name);
                 rt_error(rt, buf);
                 return val_nil();
             }
-            Value v = eval(rt, node->as.assign.value);
-            if (rt->had_error) return val_nil();
-            scope_set(&rt->scope, name, v);
+            rt_set(rt, node, node->as.assign.var_name, v);
             return val_nil();
         }
 
@@ -304,17 +339,90 @@ static Value eval(Runtime *rt, ASTNode *node) {
         }
 
         case NODE_WHILE: {
-            int limit = 10000000;
-            while (limit-- > 0) {
-                Value cond = eval(rt, node->as.while_stmt.condition);
-                if (rt->had_error || rt->ret.active) break;
-                int truthy = 0;
-                if      (cond.type == VAL_BOOL)  truthy = cond.as.boolean;
-                else if (cond.type == VAL_INT)   truthy = cond.as.integer != 0;
-                else if (cond.type == VAL_FLOAT) truthy = cond.as.real    != 0.0;
-                if (!truthy) break;
-                eval(rt, node->as.while_stmt.body);
-                if (rt->had_error || rt->ret.active) break;
+            Chunk body_chunk, cond_chunk;
+            int use_bc = chunk_compile_body(&body_chunk,
+                             node->as.while_stmt.body);
+            int use_cc = 0;
+            if (use_bc) {
+                chunk_init(&cond_chunk);
+                compile_expr(&cond_chunk, node->as.while_stmt.condition);
+                if (cond_chunk.ok) {
+                    Instruction r2; r2.op = OP_RETURN;
+                    chunk_emit(&cond_chunk, r2);
+                    use_cc = 1;
+                } else {
+                    chunk_free(&cond_chunk);
+                    chunk_free(&body_chunk);
+                    use_bc = 0;
+                }
+            }
+
+            if (use_bc) {
+                /* Issue #22 — O(1) seeding: use pre-computed list */
+                int sc = node->as.while_stmt.seed_count;
+                for (int k = 0; k < sc; k++) {
+                    const char *name = node->as.while_stmt.seed_vars[k].name;
+                    int off          = node->as.while_stmt.seed_vars[k].offset;
+                    if (off >= 0 && off < rt->stack_size)
+                        scope_set(&rt->scope, name, rt->stack[off]);
+                }
+
+                /* ── FAST PATH: bytecode loop with computed gotos ── */
+                while (1) {
+                    VMStack cvs; cvs.top = 0;
+                    for (int ip = 0; ip < cond_chunk.count; ip++) {
+                        Instruction *ins = &cond_chunk.code[ip];
+                        if (ins->op == OP_RETURN) break;
+                        switch (ins->op) {
+                            case OP_PUSH_INT: vs_push(&cvs,val_int(ins->arg.ival)); break;
+                            case OP_LOAD: {
+                                if (!ins->cached_entry)
+                                    HASH_FIND_STR(rt->scope.table,ins->arg.sval,ins->cached_entry);
+                                vs_push(&cvs,ins->cached_entry?ins->cached_entry->value:val_nil());
+                                break;
+                            }
+                            case OP_LT:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_LT));  break;}
+                            case OP_GT:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_GT));  break;}
+                            case OP_LTE: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_LTE)); break;}
+                            case OP_GTE: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_GTE)); break;}
+                            case OP_EQ:  {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_EQ));  break;}
+                            case OP_NEQ: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_compare(l,r2,OP_NEQ)); break;}
+                            case OP_ADD: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_arith(l,r2,OP_ADD)); break;}
+                            case OP_SUB: {Value r2=vs_pop(&cvs);Value l=vs_pop(&cvs);vs_push(&cvs,vm_arith(l,r2,OP_SUB)); break;}
+                            default: break;
+                        }
+                    }
+                    if (cvs.top==0 || !vm_truthy(vs_pop(&cvs))) break;
+                    vm_run(&body_chunk, &rt->scope, rt->stack, rt->stack_size);
+                    if (rt->had_error || rt->ret.active) break;
+                }
+
+                /* Issue #22 — O(1) sync back: scope → stack */
+                for (int k = 0; k < sc; k++) {
+                    const char *name = node->as.while_stmt.seed_vars[k].name;
+                    int off          = node->as.while_stmt.seed_vars[k].offset;
+                    Value v; v.type = VAL_NIL;
+                    scope_get(&rt->scope, name, &v);
+                    if (off >= 0 && off < FLUXA_STACK_SIZE)
+                        rt->stack[off] = v;
+                }
+
+                chunk_free(&body_chunk);
+                chunk_free(&cond_chunk);
+            } else {
+                /* ── SLOW PATH: AST walk ── */
+                int limit = 100000000;
+                while (limit-- > 0) {
+                    Value cond = eval(rt, node->as.while_stmt.condition);
+                    if (rt->had_error || rt->ret.active) break;
+                    int truthy = 0;
+                    if      (cond.type==VAL_BOOL)  truthy = cond.as.boolean;
+                    else if (cond.type==VAL_INT)   truthy = cond.as.integer != 0;
+                    else if (cond.type==VAL_FLOAT) truthy = cond.as.real    != 0.0;
+                    if (!truthy) break;
+                    eval(rt, node->as.while_stmt.body);
+                    if (rt->had_error || rt->ret.active) break;
+                }
             }
             return val_nil();
         }
@@ -397,9 +505,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 char elem_key[280];
                 snprintf(elem_key, sizeof(elem_key), "%s[%d]",
                          node->as.for_stmt.arr_name, i);
-                Value elem;
+                Value elem; elem.type = VAL_NIL;
                 scope_get(&rt->scope, elem_key, &elem);
-                scope_set(&rt->scope, node->as.for_stmt.var_name, elem);
+                /* use rt_set — loop var may be on stack (resolver) */
+                rt_set(rt, node, node->as.for_stmt.var_name, elem);
                 eval(rt, node->as.for_stmt.body);
                 if (rt->had_error || rt->ret.active) break;
             }
@@ -418,12 +527,24 @@ int runtime_exec(ASTNode *program) {
         fprintf(stderr, "[fluxa] runtime: invalid program node\n");
         return 1;
     }
+
+    /* Step 3: run name resolver — converts var names to stack offsets */
+    int slots = resolver_run(program);
+    if (slots < 0) {
+        fprintf(stderr, "[fluxa] aborting due to resolver errors.\n");
+        return 1;
+    }
+
     Runtime rt;
     rt.scope      = scope_new();
+    rt.stack_size = slots;
     rt.had_error  = 0;
     rt.call_depth = 0;
     rt.ret.active = 0;
     rt.ret.value  = val_nil();
+
+    /* zero-initialise the value stack */
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
