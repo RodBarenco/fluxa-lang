@@ -2,7 +2,7 @@
  * Sprint 1: nodes sufficient to execute print("hello world")
  * Sprint 2: NODE_VAR_DECL, NODE_ASSIGN, NODE_BINARY_EXPR
  * Sprint 3 (Issue #15): NODE_IF, NODE_WHILE, NODE_FOR, NODE_ARR_DECL,
- *                       NODE_ARR_ACCESS, NODE_ARR_ASSIGN, NODE_BLOCK_STMT
+ * NODE_ARR_ACCESS, NODE_ARR_ASSIGN, NODE_BLOCK_STMT
  */
 #ifndef FLUXA_AST_H
 #define FLUXA_AST_H
@@ -101,13 +101,10 @@ struct ASTNode {
             ASTNode *else_body;  /* NODE_BLOCK_STMT or NULL */
         } if_stmt;
 
-        /* NODE_WHILE (Issue #15, extended Issue #22) */
+        /* NODE_WHILE (Issue #15) */
         struct {
             ASTNode *condition;
             ASTNode *body;           /* NODE_BLOCK_STMT */
-            /* Issue #22 — pre-computed by resolver, used by fast path */
-            struct { char *name; int offset; } *seed_vars;
-            int seed_count;          /* number of stack vars to seed */
         } while_stmt;
 
         /* NODE_FOR (Issue #15) */
@@ -274,8 +271,6 @@ static inline void ast_free(ASTNode *n) {
         case NODE_WHILE:
             ast_free(n->as.while_stmt.condition);
             ast_free(n->as.while_stmt.body);
-            if (n->as.while_stmt.seed_vars)
-                free(n->as.while_stmt.seed_vars);
             break;
         case NODE_FOR:
             ast_free(n->as.for_stmt.body);

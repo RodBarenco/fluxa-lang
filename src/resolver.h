@@ -156,72 +156,10 @@ static void resolve_node(Resolver *r, ASTNode *node) {
                 resolve_node(r, node->as.if_stmt.else_body);
             break;
 
-        case NODE_WHILE: {
+        case NODE_WHILE:
             resolve_expr(r, node->as.while_stmt.condition);
             resolve_node(r, node->as.while_stmt.body);
-
-            /* Issue #22 — pre-compute seed_vars list for fast path.
-             * Collect all (name, offset) pairs that are:
-             *   - referenced in the body or condition
-             *   - resolved to a stack slot (offset >= 0)
-             * The runtime uses this list for O(1) stack→scope seeding. */
-            ASTNode *body = node->as.while_stmt.body;
-            int cap = 16;
-            int cnt = 0;
-            typedef struct { char *name; int offset; } SeedVar;
-            SeedVar *seeds = (SeedVar*)malloc(sizeof(SeedVar) * cap);
-
-            /* collect from body statements */
-            for (int i = 0; i < body->as.list.count; i++) {
-                ASTNode *s = body->as.list.children[i];
-                if (!s) continue;
-                const char *n2 = NULL; int off = -1;
-                if (s->type == NODE_ASSIGN)
-                    { n2 = s->as.assign.var_name;   off = s->resolved_offset; }
-                else if (s->type == NODE_VAR_DECL)
-                    { n2 = s->as.var_decl.var_name; off = s->resolved_offset; }
-                if (!n2 || off < 0) continue;
-                /* dedup */
-                int found = 0;
-                for (int k = 0; k < cnt; k++)
-                    if (strcmp(seeds[k].name, n2) == 0) { found = 1; break; }
-                if (found) continue;
-                if (cnt >= cap) {
-                    cap *= 2;
-                    seeds = (SeedVar*)realloc(seeds, sizeof(SeedVar) * cap);
-                }
-                seeds[cnt].name   = (char*)n2;
-                seeds[cnt].offset = off;
-                cnt++;
-            }
-
-            /* collect from condition identifiers */
-            ASTNode *cond = node->as.while_stmt.condition;
-            if (cond && cond->type == NODE_BINARY_EXPR) {
-                ASTNode *sides[2] = { cond->as.binary.left, cond->as.binary.right };
-                for (int s = 0; s < 2; s++) {
-                    ASTNode *id = sides[s];
-                    if (!id || id->type != NODE_IDENTIFIER) continue;
-                    if (id->resolved_offset < 0) continue;
-                    int found = 0;
-                    for (int k = 0; k < cnt; k++)
-                        if (strcmp(seeds[k].name, id->as.str.value) == 0)
-                            { found = 1; break; }
-                    if (found) continue;
-                    if (cnt >= cap) {
-                        cap *= 2;
-                        seeds = (SeedVar*)realloc(seeds, sizeof(SeedVar) * cap);
-                    }
-                    seeds[cnt].name   = id->as.str.value;
-                    seeds[cnt].offset = id->resolved_offset;
-                    cnt++;
-                }
-            }
-
-            node->as.while_stmt.seed_vars  = (void*)seeds;
-            node->as.while_stmt.seed_count = cnt;
             break;
-        }
 
         case NODE_FOR: {
             /* declare loop variable in current scope */
