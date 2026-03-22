@@ -1,5 +1,8 @@
 /* ast.h — Abstract Syntax Tree node definitions for Fluxa
  * Sprint 1: nodes sufficient to execute print("hello world")
+ * Sprint 2: NODE_VAR_DECL, NODE_ASSIGN, NODE_BINARY_EXPR
+ * Sprint 3 (Issue #15): NODE_IF, NODE_WHILE, NODE_FOR, NODE_ARR_DECL,
+ *                       NODE_ARR_ACCESS, NODE_ARR_ASSIGN, NODE_BLOCK_STMT
  */
 #ifndef FLUXA_AST_H
 #define FLUXA_AST_H
@@ -18,6 +21,14 @@ typedef enum {
     NODE_VAR_DECL,      /* int a = 10                              */
     NODE_ASSIGN,        /* a = 99                                  */
     NODE_BINARY_EXPR,   /* a + b                                   */
+    /* Sprint 3 — Issue #15 */
+    NODE_IF,            /* if cond { } else { }                    */
+    NODE_WHILE,         /* while cond { }                          */
+    NODE_FOR,           /* for x in arr { }                        */
+    NODE_BLOCK_STMT,    /* { stmt* }  — body of if/while/for       */
+    NODE_ARR_DECL,      /* int arr nums[3] = [1,2,3]               */
+    NODE_ARR_ACCESS,    /* nums[i]                                  */
+    NODE_ARR_ASSIGN,    /* nums[i] = val                           */
 } NodeType;
 
 /* ── Forward declaration ─────────────────────────────────────────────────── */
@@ -75,6 +86,48 @@ struct ASTNode {
             ASTNode *left;
             ASTNode *right;
         } binary;
+
+        /* NODE_IF (Issue #15) */
+        struct {
+            ASTNode *condition;
+            ASTNode *then_body;  /* NODE_BLOCK_STMT */
+            ASTNode *else_body;  /* NODE_BLOCK_STMT or NULL */
+        } if_stmt;
+
+        /* NODE_WHILE (Issue #15) */
+        struct {
+            ASTNode *condition;
+            ASTNode *body;       /* NODE_BLOCK_STMT */
+        } while_stmt;
+
+        /* NODE_FOR (Issue #15) */
+        struct {
+            char    *var_name;   /* loop variable */
+            char    *arr_name;   /* array to iterate */
+            ASTNode *body;       /* NODE_BLOCK_STMT */
+        } for_stmt;
+
+        /* NODE_ARR_DECL (Issue #15) */
+        struct {
+            char    *type_name;
+            char    *arr_name;
+            int      size;
+            ASTNode **elements;  /* heap-allocated array of ASTNode* */
+            int      persistent;
+        } arr_decl;
+
+        /* NODE_ARR_ACCESS (Issue #15) */
+        struct {
+            char    *arr_name;
+            ASTNode *index;
+        } arr_access;
+
+        /* NODE_ARR_ASSIGN (Issue #15) */
+        struct {
+            char    *arr_name;
+            ASTNode *index;
+            ASTNode *value;
+        } arr_assign;
     } as;
 };
 
@@ -171,7 +224,12 @@ static inline void ast_free(ASTNode *n) {
         case NODE_FUNC_CALL:
             for (int i = 0; i < n->as.list.count; i++)
                 ast_free(n->as.list.children[i]);
-            free(n->as.list.children);   /* this array is heap-allocated */
+            free(n->as.list.children);
+            break;
+        case NODE_BLOCK_STMT:
+            for (int i = 0; i < n->as.list.count; i++)
+                ast_free(n->as.list.children[i]);
+            free(n->as.list.children);
             break;
         case NODE_VAR_DECL:
             ast_free(n->as.var_decl.initializer);
@@ -182,6 +240,32 @@ static inline void ast_free(ASTNode *n) {
         case NODE_BINARY_EXPR:
             ast_free(n->as.binary.left);
             ast_free(n->as.binary.right);
+            break;
+        case NODE_IF:
+            ast_free(n->as.if_stmt.condition);
+            ast_free(n->as.if_stmt.then_body);
+            ast_free(n->as.if_stmt.else_body);
+            break;
+        case NODE_WHILE:
+            ast_free(n->as.while_stmt.condition);
+            ast_free(n->as.while_stmt.body);
+            break;
+        case NODE_FOR:
+            ast_free(n->as.for_stmt.body);
+            break;
+        case NODE_ARR_DECL:
+            if (n->as.arr_decl.elements) {
+                for (int i = 0; i < n->as.arr_decl.size; i++)
+                    ast_free(n->as.arr_decl.elements[i]);
+                free(n->as.arr_decl.elements);
+            }
+            break;
+        case NODE_ARR_ACCESS:
+            ast_free(n->as.arr_access.index);
+            break;
+        case NODE_ARR_ASSIGN:
+            ast_free(n->as.arr_assign.index);
+            ast_free(n->as.arr_assign.value);
             break;
         default:
             break;
