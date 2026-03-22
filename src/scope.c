@@ -5,15 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Internal: free a single value's heap data ───────────────────────────── */
 static void value_free_data(Value *v) {
     if (v->type == VAL_STRING && v->as.string) {
         free(v->as.string);
         v->as.string = NULL;
     }
 }
-
-/* ── Public API ──────────────────────────────────────────────────────────── */
 
 Scope scope_new(void) {
     Scope s;
@@ -24,20 +21,15 @@ Scope scope_new(void) {
 void scope_set(Scope *s, const char *name, Value value) {
     ScopeEntry *entry = NULL;
     HASH_FIND_STR(s->table, name, entry);
-
     if (entry) {
-        /* variable exists — update value, free old string if needed */
         value_free_data(&entry->value);
-        /* if new value is a string, copy it */
         if (value.type == VAL_STRING && value.as.string)
             value.as.string = strdup(value.as.string);
         entry->value = value;
     } else {
-        /* new variable */
         entry = (ScopeEntry*)calloc(1, sizeof(ScopeEntry));
         strncpy(entry->name, name, sizeof(entry->name) - 1);
         entry->persistent = 0;
-        /* copy string if needed */
         if (value.type == VAL_STRING && value.as.string)
             value.as.string = strdup(value.as.string);
         entry->value = value;

@@ -1,6 +1,4 @@
-/* main.c — Fluxa CLI entry point
- * Usage: fluxa run <file.flx>
- */
+/* main.c — Fluxa CLI entry point */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +35,6 @@ int main(int argc, char **argv) {
     char *source = load_file(argv[2]);
     if (!source) return 1;
 
-    /* Arena — stack allocated, zero-initialised */
     static ASTPool pool;
     pool_init(&pool);
 
@@ -54,7 +51,6 @@ int main(int argc, char **argv) {
 
     int result = runtime_exec(program);
 
-    /* pool owns all nodes — single release */
     parser_free(&parser);
     pool_free(&pool);
     return result;
