@@ -20,6 +20,8 @@ test: build
 	@./$(TARGET) run tests/types.flx
 	@echo "── Sprint 2 test ──────────────────────────────"
 	@./$(TARGET) run tests/sprint2.flx
+	@echo "── Sprint 3 test ──────────────────────────────"
+	@./$(TARGET) run tests/sprint3.flx
 	@echo "── all tests passed ───────────────────────────"
 
 clean:

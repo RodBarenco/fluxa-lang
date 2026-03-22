@@ -167,6 +167,139 @@ static Value eval(Runtime *rt, ASTNode *node) {
             return val_nil();
         }
 
+        /* Issue #17 — block body */
+        case NODE_BLOCK_STMT:
+            for (int i = 0; i < node->as.list.count; i++) {
+                eval(rt, node->as.list.children[i]);
+                if (rt->had_error) break;
+            }
+            return val_nil();
+
+        /* Issue #17 — if / else */
+        case NODE_IF: {
+            Value cond = eval(rt, node->as.if_stmt.condition);
+            int truthy = 0;
+            if      (cond.type == VAL_BOOL)    truthy = cond.as.boolean;
+            else if (cond.type == VAL_INT)     truthy = cond.as.integer != 0;
+            else if (cond.type == VAL_FLOAT)   truthy = cond.as.real    != 0.0;
+            else if (cond.type == VAL_STRING)  truthy = cond.as.string && cond.as.string[0];
+            if (truthy)
+                eval(rt, node->as.if_stmt.then_body);
+            else if (node->as.if_stmt.else_body)
+                eval(rt, node->as.if_stmt.else_body);
+            return val_nil();
+        }
+
+        /* Issue #17 — while */
+        case NODE_WHILE: {
+            int limit = 10000000; /* safety — removed when prst lands */
+            while (limit-- > 0) {
+                Value cond = eval(rt, node->as.while_stmt.condition);
+                if (rt->had_error) break;
+                int truthy = 0;
+                if      (cond.type == VAL_BOOL)  truthy = cond.as.boolean;
+                else if (cond.type == VAL_INT)   truthy = cond.as.integer != 0;
+                else if (cond.type == VAL_FLOAT) truthy = cond.as.real    != 0.0;
+                if (!truthy) break;
+                eval(rt, node->as.while_stmt.body);
+                if (rt->had_error) break;
+            }
+            return val_nil();
+        }
+
+        /* Issue #17 — arr declaration */
+        case NODE_ARR_DECL: {
+            int size = node->as.arr_decl.size;
+            /* store each element as arr_name[0], arr_name[1], ... */
+            for (int i = 0; i < size; i++) {
+                char key[280];
+                snprintf(key, sizeof(key), "%s[%d]",
+                         node->as.arr_decl.arr_name, i);
+                Value v = eval(rt, node->as.arr_decl.elements[i]);
+                if (rt->had_error) return val_nil();
+                scope_set(&rt->scope, key, v);
+            }
+            /* store size as arr_name#size */
+            char size_key[280];
+            snprintf(size_key, sizeof(size_key), "%s#size",
+                     node->as.arr_decl.arr_name);
+            scope_set(&rt->scope, size_key, val_int(size));
+            return val_nil();
+        }
+
+        /* Issue #17 — arr[i] access */
+        case NODE_ARR_ACCESS: {
+            Value idx_val = eval(rt, node->as.arr_access.index);
+            if (rt->had_error) return val_nil();
+            if (idx_val.type != VAL_INT) {
+                rt_error(rt, "array index must be an integer");
+                return val_nil();
+            }
+            char key[280];
+            snprintf(key, sizeof(key), "%s[%ld]",
+                     node->as.arr_access.arr_name, idx_val.as.integer);
+            Value v;
+            if (!scope_get(&rt->scope, key, &v)) {
+                char buf[280];
+                snprintf(buf, sizeof(buf), "array index out of bounds: %s[%ld]",
+                         node->as.arr_access.arr_name, idx_val.as.integer);
+                rt_error(rt, buf);
+                return val_nil();
+            }
+            return v;
+        }
+
+        /* Issue #17 — arr[i] = val */
+        case NODE_ARR_ASSIGN: {
+            Value idx_val = eval(rt, node->as.arr_assign.index);
+            if (rt->had_error) return val_nil();
+            if (idx_val.type != VAL_INT) {
+                rt_error(rt, "array index must be an integer");
+                return val_nil();
+            }
+            char key[280];
+            snprintf(key, sizeof(key), "%s[%ld]",
+                     node->as.arr_assign.arr_name, idx_val.as.integer);
+            if (!scope_has(&rt->scope, key)) {
+                char buf[280];
+                snprintf(buf, sizeof(buf), "array index out of bounds: %s[%ld]",
+                         node->as.arr_assign.arr_name, idx_val.as.integer);
+                rt_error(rt, buf);
+                return val_nil();
+            }
+            Value v = eval(rt, node->as.arr_assign.value);
+            if (rt->had_error) return val_nil();
+            scope_set(&rt->scope, key, v);
+            return val_nil();
+        }
+
+        /* Issue #17 — for x in arr */
+        case NODE_FOR: {
+            char size_key[280];
+            snprintf(size_key, sizeof(size_key), "%s#size",
+                     node->as.for_stmt.arr_name);
+            Value size_val;
+            if (!scope_get(&rt->scope, size_key, &size_val)) {
+                char buf[280];
+                snprintf(buf, sizeof(buf), "undefined array: %s",
+                         node->as.for_stmt.arr_name);
+                rt_error(rt, buf);
+                return val_nil();
+            }
+            int size = (int)size_val.as.integer;
+            for (int i = 0; i < size; i++) {
+                char elem_key[280];
+                snprintf(elem_key, sizeof(elem_key), "%s[%d]",
+                         node->as.for_stmt.arr_name, i);
+                Value elem;
+                scope_get(&rt->scope, elem_key, &elem);
+                scope_set(&rt->scope, node->as.for_stmt.var_name, elem);
+                eval(rt, node->as.for_stmt.body);
+                if (rt->had_error) break;
+            }
+            return val_nil();
+        }
+
         case NODE_PROGRAM:
             return val_nil();
     }
@@ -190,3 +323,5 @@ int runtime_exec(ASTNode *program) {
     scope_free(&rt.scope);
     return rt.had_error ? 1 : 0;
 }
+
+/* ── Sprint 3 additions (Issue #17) ─────────────────────────────────────── */

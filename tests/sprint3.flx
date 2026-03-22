@@ -1,0 +1,46 @@
+// Sprint 3 — critério de aceite
+// Issue #15, #16, #17: if, while, for, arr
+
+// if / else
+int x = 10
+if x > 5 {
+    print("maior")
+} else {
+    print("menor ou igual")
+}
+
+// if sem else
+int y = 3
+if y == 3 {
+    print("y é três")
+}
+
+// while
+int i = 0
+while i < 3 {
+    print(i)
+    i = i + 1
+}
+
+// arr declaration e acesso
+int arr nums[3] = [10, 20, 30]
+print(nums[0])
+print(nums[2])
+
+// arr assignment
+nums[1] = 99
+print(nums[1])
+
+// for x in arr
+for n in nums {
+    print(n)
+}
+
+// nested if inside while
+int count = 0
+while count < 5 {
+    if count == 2 {
+        print("dois!")
+    }
+    count = count + 1
+}
