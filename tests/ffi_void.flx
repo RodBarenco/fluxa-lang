@@ -1,0 +1,10 @@
+// ffi_void.flx — FFI com funções void (sem retorno)
+// printf via libc — retorna void do ponto de vista Fluxa
+
+import c libc
+
+danger {
+    libc.puts("hello from libc")
+}
+print(err)    // nil — nenhum erro
+print("done")

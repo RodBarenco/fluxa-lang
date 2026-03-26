@@ -1,0 +1,53 @@
+// err_nil_check.flx — err != nil em todos os cenários relevantes
+
+// 1. Antes de qualquer danger — err é nil
+if err != nil {
+    print("FAIL 1")
+} else {
+    print("ok: nil antes de danger")
+}
+
+// 2. Danger limpo — err permanece nil
+danger {
+    int x = 1 + 1
+}
+if err != nil {
+    print("FAIL 2")
+} else {
+    print("ok: nil após danger limpo")
+}
+
+// 3. Após erro em danger — err != nil
+danger {
+    int bad = 1 / 0
+}
+if err != nil {
+    print("ok: err tem valor")
+    print(err[0])
+} else {
+    print("FAIL 3")
+}
+
+// 4. Próximo danger zera err
+danger {
+    int ok = 2 + 2
+}
+if err != nil {
+    print("FAIL 4")
+} else {
+    print("ok: err zerado")
+}
+
+// 5. nil == nil
+if nil == nil {
+    print("ok: nil == nil")
+} else {
+    print("FAIL 5")
+}
+
+// 6. nil != nil
+if nil != nil {
+    print("FAIL 6")
+} else {
+    print("ok: nil != nil é false")
+}

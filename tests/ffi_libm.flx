@@ -1,0 +1,20 @@
+// ffi_libm.flx — import c libm, funções matemáticas dentro de danger
+
+import c libm
+
+float result = 0.0
+
+danger {
+    result = libm.sqrt(16.0)
+}
+print(result)       // 4
+
+danger {
+    result = libm.sqrt(2.0)
+}
+print(result)       // 1.41421
+
+danger {
+    result = libm.fabs(-7.5)
+}
+print(result)       // 7.5

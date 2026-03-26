@@ -1,0 +1,19 @@
+// ffi_portability.flx — verifica que import c funciona via dlopen portável
+// sem hardcode de path x86_64
+
+import c libm
+
+float a = 0.0
+float b = 0.0
+float c = 0.0
+
+danger {
+    a = libm.sqrt(9.0)
+    b = libm.fabs(-42.5)
+    c = libm.ceil(3.1)
+}
+
+print(a)       // 3
+print(b)       // 42.5
+print(c)       // 4
+print(err)     // nil

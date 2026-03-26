@@ -1,0 +1,16 @@
+// arr_default.flx — inicialização com valor default
+// int arr grande[1000000] = 0 deve ser quase instantâneo
+
+int arr buf[10] = 0
+print(buf[0])      // 0
+print(buf[9])      // 0
+buf[5] = 42
+print(buf[5])      // 42
+print(buf[4])      // 0 — vizinho intocado
+
+// array grande
+int arr gigante[1000000] = 0
+print(gigante[0])          // 0
+print(gigante[999999])     // 0
+gigante[500000] = 99
+print(gigante[500000])     // 99

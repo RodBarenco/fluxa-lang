@@ -1,0 +1,43 @@
+// arr_block_field.flx — arr como campo de Block
+
+Block Buffer {
+    int arr data[5] = 0
+
+    fn set(int idx, int val) nil {
+        data[idx] = val
+    }
+
+    fn get(int idx) int {
+        return data[idx]
+    }
+
+    fn soma() int {
+        int total = 0
+        int i = 0
+        while i < 5 {
+            total = total + data[i]
+            i = i + 1
+        }
+        return total
+    }
+}
+
+Buffer.set(0, 10)
+Buffer.set(2, 30)
+Buffer.set(4, 50)
+
+print(Buffer.get(0))     // 10
+print(Buffer.get(1))     // 0
+print(Buffer.get(2))     // 30
+print(Buffer.soma())     // 90
+
+// Isolamento entre instâncias
+Block b1 typeof Buffer
+Block b2 typeof Buffer
+
+b1.set(0, 100)
+b2.set(0, 999)
+
+print(b1.get(0))         // 100
+print(b2.get(0))         // 999
+print(Buffer.get(0))     // 10 — raiz intocada

@@ -1,0 +1,18 @@
+// ffi_err.flx — FFI call fora de danger deve ser erro
+// e err[0] deve ter kind=c_ffi quando libffi reporta problema
+
+import c libm
+
+float r = 0.0
+danger {
+    r = libm.sqrt(4.0)
+}
+print(r)           // 2
+print(err)         // nil — nenhum erro
+
+// sqrt de negativo retorna NaN — não é erro de C por si, mas podemos checar
+danger {
+    r = libm.sqrt(-1.0)
+}
+print(r)           // -nan ou nan
+print("feito")

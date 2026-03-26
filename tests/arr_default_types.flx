@@ -1,0 +1,13 @@
+// arr_default_types.flx — float, bool default init
+
+float arr medidas[5] = 0.0
+print(medidas[0])     // 0
+medidas[2] = 3.14
+print(medidas[2])     // 3.14
+print(medidas[3])     // 0
+
+bool arr flags[4] = false
+print(flags[0])       // false
+flags[1] = true
+print(flags[1])       // true
+print(flags[2])       // false

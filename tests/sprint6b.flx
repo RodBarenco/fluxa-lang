@@ -1,0 +1,32 @@
+// sprint6b.flx — critério de aceite oficial
+
+// ── 1. arr default init ──────────────────────────────────────────────────────
+int arr buf[100] = 0
+print(buf[0])       // 0
+print(buf[99])      // 0
+buf[50] = 77
+print(buf[50])      // 77
+
+float arr fvals[5] = 0.0
+print(fvals[0])     // 0
+fvals[2] = 2.71
+print(fvals[2])     // 2.71
+
+// ── 2. import c + danger ────────────────────────────────────────────────────
+import c libm
+
+float r = 0.0
+danger {
+    r = libm.sqrt(25.0)
+}
+print(r)            // 5
+
+// ── 3. err permanece nil em FFI sem erro ────────────────────────────────────
+print(err)          // nil
+
+// ── 4. danger ainda isola erros Fluxa ───────────────────────────────────────
+danger {
+    int bad = 1 / 0
+}
+print(err[0])       // division by zero
+print("tudo ok")

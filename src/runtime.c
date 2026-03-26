@@ -8,7 +8,9 @@
 #include "bytecode.h"
 #include "builtins.h"
 #include "block.h"
+#include "fluxa_ffi.h"
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -76,6 +78,9 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
     const char *op   = node->as.binary.op;
 
     if (strcmp(op, "==") == 0) {
+        /* nil == nil is true; nil == anything_else is false */
+        if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(1);
+        if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(0);
         if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer==right.as.integer);
         if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) return val_bool(left.as.real==right.as.real);
         if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  return val_bool(left.as.boolean==right.as.boolean);
@@ -83,6 +88,9 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
         return val_bool(0);
     }
     if (strcmp(op, "!=") == 0) {
+        /* nil != nil is false; nil != anything_else is true */
+        if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(0);
+        if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(1);
         if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer!=right.as.integer);
         if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) return val_bool(left.as.real!=right.as.real);
         if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  return val_bool(left.as.boolean!=right.as.boolean);
@@ -159,7 +167,12 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
 
     for (int i = 0; i < param_count; i++) {
-        rt->stack[i] = args[i];
+        if (args[i].type == VAL_ARR) {
+            rt->stack[i] = val_arr_ref(args[i].as.arr.data,
+                                       args[i].as.arr.size);
+        } else {
+            rt->stack[i] = args[i];
+        }
         if (rt->stack_size <= i) rt->stack_size = i + 1;
     }
     free(args);
@@ -201,6 +214,25 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
     } else if (member->type == NODE_FUNC_DECL) {
         Value v; v.type = VAL_FUNC; v.as.func = member;
         scope_set(scope, member->as.func_decl.name, v);
+    } else if (member->type == NODE_ARR_DECL) {
+        /* Sprint 6.b: arr field in Block — allocate and init directly */
+        int size = member->as.arr_decl.size;
+        Value *data = (Value*)gc_alloc(&rt->gc, size * (int)sizeof(Value));
+        if (!data) return;
+        if (member->as.arr_decl.default_init) {
+            Value def = eval(rt, member->as.arr_decl.default_value);
+            for (int i = 0; i < size; i++) {
+                if (def.type == VAL_STRING && def.as.string)
+                    data[i] = val_string(def.as.string);
+                else
+                    data[i] = def;
+            }
+        } else {
+            for (int i = 0; i < size; i++)
+                data[i] = eval(rt, member->as.arr_decl.elements[i]);
+        }
+        Value arr = val_arr(data, size);
+        scope_set(scope, member->as.arr_decl.arr_name, arr);
     }
 }
 
@@ -350,21 +382,39 @@ static Value eval(Runtime *rt, ASTNode *node) {
             return val_nil();
         }
 
-        /* ── Sprint 6: arr contíguo na heap ─────────────────────────────── */
+        /* ── Sprint 6/6.b: arr contíguo na heap ──────────────────────────── */
         case NODE_ARR_DECL: {
             int size = node->as.arr_decl.size;
-            /* allocate contiguous Value array via GC table */
             Value *data = (Value*)gc_alloc(&rt->gc, size * (int)sizeof(Value));
             if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
-            for (int i = 0; i < size; i++) {
-                data[i] = eval(rt, node->as.arr_decl.elements[i]);
-                if (rt->had_error) {
-                    gc_free(&rt->gc, data);
-                    return val_nil();
+
+            if (node->as.arr_decl.default_init) {
+                /* Sprint 6.b: fill all slots with single default value */
+                Value def = eval(rt, node->as.arr_decl.default_value);
+                if (rt->had_error) { gc_free(&rt->gc, data); return val_nil(); }
+                /* fast path for numeric types via memset-like loop */
+                for (int i = 0; i < size; i++) {
+                    if (def.type == VAL_STRING && def.as.string)
+                        data[i] = val_string(def.as.string); /* strdup each */
+                    else
+                        data[i] = def; /* int/float/bool: direct copy */
+                }
+            } else {
+                /* explicit list initializer */
+                for (int i = 0; i < size; i++) {
+                    data[i] = eval(rt, node->as.arr_decl.elements[i]);
+                    if (rt->had_error) { gc_free(&rt->gc, data); return val_nil(); }
                 }
             }
+
             Value arr = val_arr(data, size);
-            scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+            /* Store in instance scope if inside a Block method */
+            if (rt->current_instance) {
+                scope_set(&rt->current_instance->scope,
+                          node->as.arr_decl.arr_name, arr);
+            } else {
+                scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+            }
             return val_nil();
         }
 
@@ -386,11 +436,18 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 return val_string(e->message);
             }
 
-            /* normal arr access */
-            if (!scope_get(&rt->scope, arr_name, &arr_val)) {
-                /* also check instance scope */
-                if (rt->current_instance)
-                    scope_get(&rt->current_instance->scope, arr_name, &arr_val);
+            /* normal arr access — check stack first (fn params), then scope */
+            arr_val.type = VAL_NIL;
+            if (node->resolved_offset >= 0 &&
+                node->resolved_offset < rt->stack_size) {
+                arr_val = rt->stack[node->resolved_offset];
+            }
+            if (arr_val.type != VAL_ARR) {
+                /* fall back to scope (declared in this scope or instance) */
+                if (!scope_get(&rt->scope, arr_name, &arr_val)) {
+                    if (rt->current_instance)
+                        scope_get(&rt->current_instance->scope, arr_name, &arr_val);
+                }
             }
             if (arr_val.type != VAL_ARR) {
                 char buf[280];
@@ -420,33 +477,45 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
             long idx = idx_val.as.integer;
 
-            /* find the ScopeEntry to mutate in place */
+            /* find array — check stack first (fn params), then scope */
+            Value *stack_arr = NULL;
             ScopeEntry *entry = NULL;
-            if (rt->current_instance)
-                HASH_FIND_STR(rt->current_instance->scope.table, arr_name, entry);
-            if (!entry)
-                HASH_FIND_STR(rt->scope.table, arr_name, entry);
-            if (!entry || entry->value.type != VAL_ARR) {
+            if (node->resolved_offset >= 0 &&
+                node->resolved_offset < rt->stack_size &&
+                rt->stack[node->resolved_offset].type == VAL_ARR) {
+                stack_arr = &rt->stack[node->resolved_offset];
+            }
+            if (!stack_arr) {
+                if (rt->current_instance)
+                    HASH_FIND_STR(rt->current_instance->scope.table, arr_name, entry);
+                if (!entry)
+                    HASH_FIND_STR(rt->scope.table, arr_name, entry);
+            }
+            /* get the actual FluxaArr to mutate */
+            FluxaArr *target_arr = stack_arr
+                                 ? &stack_arr->as.arr
+                                 : (entry ? &entry->value.as.arr : NULL);
+            if (!target_arr || (stack_arr ? stack_arr->type : entry->value.type) != VAL_ARR) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "'%s' is not an array", arr_name);
                 rt_error(rt, buf); return val_nil();
             }
-            if (idx < 0 || idx >= entry->value.as.arr.size) {
+            if (idx < 0 || idx >= target_arr->size) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "array index out of bounds: %s[%ld] (size %d)",
-                         arr_name, idx, entry->value.as.arr.size);
+                         arr_name, idx, target_arr->size);
                 rt_error(rt, buf); return val_nil();
             }
             Value v = eval(rt, node->as.arr_assign.value);
             if (rt->had_error) return val_nil();
             /* free old string if needed */
-            if (entry->value.as.arr.data[idx].type == VAL_STRING &&
-                entry->value.as.arr.data[idx].as.string)
-                free(entry->value.as.arr.data[idx].as.string);
+            if (target_arr->data[idx].type == VAL_STRING &&
+                target_arr->data[idx].as.string)
+                free(target_arr->data[idx].as.string);
             /* copy new value; strdup strings */
             if (v.type == VAL_STRING && v.as.string)
                 v.as.string = strdup(v.as.string);
-            entry->value.as.arr.data[idx] = v;
+            target_arr->data[idx] = v;
             return val_nil();
         }
 
@@ -515,6 +584,70 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
             entry->value = val_nil();
             return val_nil();
+        }
+
+        /* ── Sprint 6.b: import c and FFI calls ────────────────────────── */
+        case NODE_IMPORT_C: {
+            const char *lib_name = node->as.import_c.lib_name;
+            const char *alias    = node->as.import_c.alias;
+            char path[256];
+            ffi_resolve_path(lib_name, path, sizeof(path));
+            /* load inside danger context if available, else load directly */
+            ffi_load_lib(&rt->ffi, &rt->err_stack, alias, path);
+            /* if load failed outside danger, it's a hard error */
+            if (rt->err_stack.count > 0 && rt->danger_depth == 0) {
+                const ErrEntry *e = errstack_get(&rt->err_stack, 0);
+                if (e) {
+                    fprintf(stderr, "[fluxa] Runtime error: %s\n", e->message);
+                    rt->had_error = 1;
+                }
+            }
+            return val_nil();
+        }
+
+        case NODE_FFI_CALL: {
+            /* parser guarantees this is inside danger */
+            if (rt->danger_depth == 0) {
+                rt_error(rt, "FFI call outside danger block");
+                return val_nil();
+            }
+            const char *lib_alias = node->as.ffi_call.lib_alias;
+            const char *sym_name  = node->as.ffi_call.sym_name;
+            const char *ret_type_s = node->as.ffi_call.ret_type;
+
+            FFILib *lib = ffi_find_lib(&rt->ffi, lib_alias);
+            if (!lib) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "FFI: library '%s' not loaded", lib_alias);
+                rt_error(rt, buf);
+                return val_nil();
+            }
+
+            /* evaluate arguments */
+            int arg_count = node->as.ffi_call.arg_count;
+            Value *args = NULL;
+            if (arg_count > 0) {
+                args = (Value*)malloc(sizeof(Value) * arg_count);
+                for (int i = 0; i < arg_count; i++)
+                    args[i] = eval(rt, node->as.ffi_call.args[i]);
+            }
+            if (rt->had_error) { free(args); return val_nil(); }
+
+            /* determine return type */
+            ValType ret_vt = VAL_NIL;
+            if      (strcmp(ret_type_s, "int")   == 0) ret_vt = VAL_INT;
+            else if (strcmp(ret_type_s, "float") == 0) ret_vt = VAL_FLOAT;
+            else if (strcmp(ret_type_s, "str")   == 0) ret_vt = VAL_STRING;
+            else if (strcmp(ret_type_s, "bool")  == 0) ret_vt = VAL_BOOL;
+
+            const char *ctx = rt->current_instance
+                           ? rt->current_instance->name : "<global>";
+            Value result = fluxa_ffi_call(lib, sym_name, ret_vt,
+                                          args, arg_count,
+                                          &rt->err_stack, ctx);
+            free(args);
+            return result;
         }
 
         /* ── Sprint 5: Block & typeof ────────────────────────────────────── */
@@ -598,6 +731,33 @@ static Value eval(Runtime *rt, ASTNode *node) {
             const char *method = node->as.member_call.method;
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {
+                /* Sprint 6.b: try as FFI call — lib.symbol(args) */
+                FFILib *lib = ffi_find_lib(&rt->ffi, owner);
+                if (lib) {
+                    if (rt->danger_depth == 0) {
+                        char buf[280];
+                        snprintf(buf, sizeof(buf),
+                            "FFI call to '%s.%s' must be inside danger block",
+                            owner, method);
+                        rt_error(rt, buf); return val_nil();
+                    }
+                    int argc = node->as.member_call.arg_count;
+                    Value *args = NULL;
+                    if (argc > 0) {
+                        args = (Value*)malloc(sizeof(Value) * argc);
+                        for (int i = 0; i < argc; i++)
+                            args[i] = eval(rt, node->as.member_call.args[i]);
+                    }
+                    if (rt->had_error) { free(args); return val_nil(); }
+                    /* default return type: float (covers libm math fns) */
+                    ValType ret_vt = VAL_FLOAT;
+                    const char *ctx = owner;
+                    Value result = fluxa_ffi_call(lib, method, ret_vt,
+                                                  args, argc,
+                                                  &rt->err_stack, ctx);
+                    free(args);
+                    return result;
+                }
                 char buf[280];
                 snprintf(buf, sizeof(buf), "undefined Block instance: %s", owner);
                 rt_error(rt, buf); return val_nil();
@@ -650,7 +810,8 @@ int runtime_exec(ASTNode *program) {
     rt.danger_depth     = 0;
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc);
-    prst_graph_init(&rt.prst_graph);
+    prst_pool_init(&rt.prst_pool);
+    ffi_registry_init(&rt.ffi);
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
@@ -662,6 +823,7 @@ int runtime_exec(ASTNode *program) {
     scope_free(&rt.scope);
     block_registry_free();
     gc_collect_all(&rt.gc);
-    prst_graph_free(&rt.prst_graph);
+    prst_pool_free(&rt.prst_pool);
+    ffi_registry_free(&rt.ffi);
     return rt.had_error ? 1 : 0;
 }

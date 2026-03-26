@@ -1,0 +1,44 @@
+// arr_param.flx — arr como argumento de função (por referência)
+
+// Função que modifica o array in-place
+fn dobrar(int arr nums) nil {
+    int i = 0
+    while i < 5 {
+        nums[i] = nums[i] * 2
+        i = i + 1
+    }
+}
+
+// Função que soma todos os elementos
+fn somar(int arr nums) int {
+    int total = 0
+    int i = 0
+    while i < 5 {
+        total = total + nums[i]
+        i = i + 1
+    }
+    return total
+}
+
+int arr v[5] = [1, 2, 3, 4, 5]
+
+// Passar por referência — somar não modifica
+int s = somar(v)
+print(s)           // 15
+print(v[0])        // 1 — intacto
+
+// dobrar modifica o original (referência)
+dobrar(v)
+print(v[0])        // 2
+print(v[4])        // 10
+print(somar(v))    // 30
+
+// Array grande — zero cópia
+int arr gigante[1000000] = 0
+gigante[0] = 42
+
+fn primeiro(int arr nums) int {
+    return nums[0]
+}
+
+print(primeiro(gigante))   // 42
