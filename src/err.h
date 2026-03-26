@@ -64,12 +64,10 @@ static inline void errstack_push(ErrStack *s, ErrKind kind,
         s->base = (s->base + 1) % ERR_STACK_CAP;
     }
     s->entries[slot].kind = kind;
-    strncpy(s->entries[slot].message, message,
-            sizeof(s->entries[slot].message) - 1);
-    s->entries[slot].message[sizeof(s->entries[slot].message)-1] = '\0';
-    strncpy(s->entries[slot].context, context ? context : "<global>",
-            sizeof(s->entries[slot].context) - 1);
-    s->entries[slot].context[sizeof(s->entries[slot].context)-1] = '\0';
+    snprintf(s->entries[slot].message, sizeof(s->entries[slot].message),
+             "%s", message ? message : "");
+    snprintf(s->entries[slot].context, sizeof(s->entries[slot].context),
+             "%s", context ? context : "<global>");
     s->entries[slot].line = line;
 }
 

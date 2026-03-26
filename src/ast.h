@@ -41,6 +41,9 @@ typedef enum {
     /* Sprint 6 */
     NODE_DANGER,        /* danger { }      */
     NODE_FREE,          /* free(var)       */
+    /* Sprint 6.b */
+    NODE_IMPORT_C,      /* import c libm   */
+    NODE_FFI_CALL,      /* libm.sqrt(x)    */
 } NodeType;
 
 #ifndef FLUXA_AST_NODE_DECLARED
@@ -118,8 +121,10 @@ struct ASTNode {
             char    *type_name;
             char    *arr_name;
             int      size;
-            ASTNode **elements;
+            ASTNode **elements;    /* NULL if default_init */
             int      persistent;
+            int      default_init; /* 1 = fill with default_value */
+            ASTNode *default_value;/* scalar literal for default  */
         } arr_decl;
 
         /* NODE_ARR_ACCESS */
@@ -188,6 +193,21 @@ struct ASTNode {
 
         /* NODE_FREE (Sprint 6) */
         struct { char *var_name; } free_stmt;
+
+        /* NODE_IMPORT_C (Sprint 6.b) */
+        struct {
+            char *lib_name;   /* "libm", "libc", etc. */
+            char *alias;      /* "as fm" — same as lib_name if no alias */
+        } import_c;
+
+        /* NODE_FFI_CALL (Sprint 6.b): alias.symbol(args) inside danger */
+        struct {
+            char     *lib_alias;    /* library alias */
+            char     *sym_name;     /* function name */
+            char     *ret_type;     /* "int","float","str","bool","nil" */
+            ASTNode **args;
+            int       arg_count;
+        } ffi_call;
 
     } as;
 };
