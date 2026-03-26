@@ -1,0 +1,13 @@
+// danger_after.flx — execução continua normalmente após o bloco
+// e variáveis declaradas antes/depois são acessíveis
+
+int antes = 10
+
+danger {
+    int x = 1 / 0
+}
+
+int depois = 20
+print(antes)
+print(depois)
+print("passou pelo danger")

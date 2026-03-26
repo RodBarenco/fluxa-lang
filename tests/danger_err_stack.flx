@@ -1,0 +1,11 @@
+// danger_err_stack.flx — múltiplos erros, ordem correta
+// err[0] = mais recente, err[1] = anterior
+
+danger {
+    int a = 10 / 0
+    int b = 10 / 0
+    int c = 10 / 0
+}
+print(err[0])
+print(err[1])
+print(err[2])

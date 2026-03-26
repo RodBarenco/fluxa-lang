@@ -1,0 +1,38 @@
+// sprint6.flx — critério de aceite oficial
+
+// ── 1. arr contíguo ─────────────────────────────────────────────────────────
+int arr v[4] = [1, 2, 3, 4]
+v[0] = 10
+print(v[0])      // 10
+print(v[3])      // 4
+
+// ── 2. danger isola erro — não aborta ───────────────────────────────────────
+danger {
+    int bad = 1 / 0
+}
+print("sobreviveu")   // deve imprimir
+
+// ── 3. err[0] tem mensagem correta ──────────────────────────────────────────
+print(err[0])         // "division by zero"
+
+// ── 4. err é nil em bloco limpo ─────────────────────────────────────────────
+danger {
+    int ok = 1 + 1
+}
+print(err)            // nil
+
+// ── 5. múltiplos erros — ordem correta ──────────────────────────────────────
+danger {
+    int e1 = 1 / 0
+    int e2 = 2 / 0
+}
+print(err[0])         // mais recente (e2)
+print(err[1])         // mais antigo (e1)
+
+// ── 6. execução continua após danger ────────────────────────────────────────
+int x = 42
+danger {
+    int boom = x / 0
+}
+print(x)              // 42 — x intacto
+print("fim")

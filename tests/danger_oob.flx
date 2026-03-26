@@ -1,0 +1,12 @@
+// danger_oob.flx — array out of bounds dentro de danger
+// deve acumular erro e continuar
+
+int arr nums[3] = [10, 20, 30]
+
+danger {
+    print(nums[0])
+    print(nums[99])
+    print("apos oob")
+}
+print(err[0])
+print("continuou")

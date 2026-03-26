@@ -1,0 +1,8 @@
+// danger_clean.flx — bloco sem erro: err permanece nil
+
+danger {
+    int x = 1 + 1
+    int y = x * 3
+}
+print(err)
+print("sem erros")

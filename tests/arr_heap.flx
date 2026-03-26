@@ -1,0 +1,32 @@
+// arr_heap.flx — arr com backend contíguo
+// testa declaração, acesso, atribuição, for, e bounds check
+
+int arr nums[5] = [10, 20, 30, 40, 50]
+
+// acesso direto
+print(nums[0])
+print(nums[4])
+
+// atribuição
+nums[2] = 99
+print(nums[2])
+
+// for x in arr
+int total = 0
+for n in nums {
+    total = total + n
+}
+print(total)
+
+// bounds check via danger
+danger {
+    print(nums[10])
+}
+print(err[0])
+
+// str arr
+str arr nomes[3] = ["alice", "bob", "carol"]
+print(nomes[0])
+print(nomes[2])
+nomes[1] = "eve"
+print(nomes[1])
