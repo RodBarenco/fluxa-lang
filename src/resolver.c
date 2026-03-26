@@ -253,6 +253,15 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             node->resolved_offset = -1;
             break;
 
+        /* Sprint 6 */
+        case NODE_DANGER:
+            resolve_node(r, node->as.danger_stmt.body);
+            break;
+
+        case NODE_FREE:
+            /* free(var) — var_name resolved at runtime via scope */
+            break;
+
         default:
             resolve_expr(r, node);
             break;

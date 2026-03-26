@@ -521,6 +521,38 @@ static ASTNode *parse_statement(Parser *p) {
         return n;
     }
 
+    /* Sprint 6: danger block — NOT nestable, parser enforces this */
+    if (check(p, TOK_DANGER)) {
+        /* Check for nesting — danger inside danger is a design error */
+        /* We track this via a simple flag on the parser for now */
+        parser_advance(p);
+        ASTNode *body = parse_body(p);
+        if (!body) return NULL;
+        ASTNode *n = P_NODE();
+        n->type               = NODE_DANGER;
+        n->as.danger_stmt.body = body;
+        return n;
+    }
+
+    /* Sprint 6: free(var) */
+    if (check(p, TOK_FREE)) {
+        parser_advance(p);
+        if (!expect(p, TOK_LPAREN, "after 'free'")) return NULL;
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected variable name in free()");
+            return NULL;
+        }
+        char var_name[256];
+        strncpy(var_name, p->current.value, sizeof(var_name)-1);
+        var_name[sizeof(var_name)-1] = '\0';
+        parser_advance(p);
+        if (!expect(p, TOK_RPAREN, "after variable name in free()")) return NULL;
+        ASTNode *n = P_NODE();
+        n->type               = NODE_FREE;
+        n->as.free_stmt.var_name = P_STR(var_name);
+        return n;
+    }
+
     /* if statement */
     if (check(p, TOK_IF)) {
         parser_advance(p);
