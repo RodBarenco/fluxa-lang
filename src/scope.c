@@ -13,15 +13,17 @@ static void value_free_data(Value *v) {
         free(v->as.string);
         v->as.string = NULL;
     }
-    if (v->type == VAL_ARR && v->as.arr.data) {
-        /* free each string element inside the array, then the array itself */
+    if (v->type == VAL_ARR && v->as.arr.data && v->as.arr.owned) {
+        /* only free when this scope owns the data (owned=1) */
+        /* owned=0 means it is a reference — caller retains ownership */
         for (int i = 0; i < v->as.arr.size; i++) {
             if (v->as.arr.data[i].type == VAL_STRING && v->as.arr.data[i].as.string)
                 free(v->as.arr.data[i].as.string);
         }
         free(v->as.arr.data);
-        v->as.arr.data = NULL;
-        v->as.arr.size = 0;
+        v->as.arr.data  = NULL;
+        v->as.arr.size  = 0;
+        v->as.arr.owned = 0;
     }
 }
 

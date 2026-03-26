@@ -88,7 +88,8 @@ static int expect(Parser *p, TokenType t, const char *ctx) {
 static int is_type_token(Parser *p) {
     TokenType t = p->current.type;
     return t==TOK_TYPE_INT||t==TOK_TYPE_FLOAT||t==TOK_TYPE_STR||
-           t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN;
+           t==TOK_TYPE_BOOL||t==TOK_TYPE_CHAR||t==TOK_TYPE_DYN||
+           t==TOK_TYPE_ARR;
 }
 
 /* ── Forward declarations ────────────────────────────────────────────────── */
@@ -209,6 +210,26 @@ static ASTNode *parse_primary(Parser *p) {
         ASTNode *inner = parse_expr(p);
         if (!expect(p, TOK_RPAREN, "after expression")) return NULL;
         return inner;
+    }
+    /* unary minus: -expr */
+    if (check(p, TOK_MINUS)) {
+        parser_advance(p);
+        ASTNode *operand = parse_primary(p);
+        if (!operand) return NULL;
+        /* fold into literal if possible */
+        if (operand->type == NODE_INT_LIT) {
+            operand->as.integer.value = -operand->as.integer.value;
+            return operand;
+        }
+        if (operand->type == NODE_FLOAT_LIT) {
+            operand->as.real.value = -operand->as.real.value;
+            return operand;
+        }
+        /* general case: 0 - expr */
+        ASTNode *zero = P_NODE();
+        zero->type = NODE_INT_LIT;
+        zero->as.integer.value = 0;
+        return p_binary(p, "-", zero, operand);
     }
     parse_error(p, "unexpected token in expression");
     return NULL;
@@ -331,8 +352,21 @@ static ASTNode *parse_block_decl(Parser *p) {
                 param_count++;
                 param_types = (char**)realloc(param_types, sizeof(char*)*param_count);
                 param_names = (char**)realloc(param_names, sizeof(char*)*param_count);
-                param_types[param_count-1] = P_STR(p->current.value);
-                parser_advance(p);
+                /* arr parameter: "int arr name" or just "arr name" */
+                if (p->current.type == TOK_TYPE_ARR) {
+                    param_types[param_count-1] = P_STR("arr");
+                    parser_advance(p);
+                } else {
+                    char _pt[64];
+                    snprintf(_pt, sizeof(_pt), "%s", p->current.value);
+                    parser_advance(p);
+                    if (check(p, TOK_TYPE_ARR)) {
+                        size_t _l = strlen(_pt);
+                        snprintf(_pt+_l, sizeof(_pt)-_l, " arr");
+                        parser_advance(p);
+                    }
+                    param_types[param_count-1] = P_STR(_pt);
+                }
                 if (!check(p, TOK_IDENT)) {
                     parse_error(p, "expected parameter name after type");
                     free(param_names); free(param_types); return NULL;
@@ -383,25 +417,76 @@ static ASTNode *parse_block_decl(Parser *p) {
             member->as.func_decl.body        = body;
 
         } else if (is_type_token(p)) {
-            /* var_decl inside Block */
+            /* var_decl inside Block — supports "int arr name[size] = val" */
             char type_name[32];
-            strncpy(type_name, p->current.value, sizeof(type_name)-1);
-            type_name[sizeof(type_name)-1] = '\0';
+            snprintf(type_name, sizeof(type_name), "%s", p->current.value);
             parser_advance(p);
 
-            if (!check(p, TOK_IDENT)) {
-                parse_error(p, "expected variable name after type in Block");
-                return NULL;
+            /* check for arr declaration: "int arr name[size] = ..." */
+            if (check(p, TOK_TYPE_ARR)) {
+                parser_advance(p);
+                if (!check(p, TOK_IDENT)) {
+                    parse_error(p, "expected array name after 'arr' in Block");
+                    return NULL;
+                }
+                char arr_name[256];
+                snprintf(arr_name, sizeof(arr_name), "%s", p->current.value);
+                parser_advance(p);
+                if (!expect(p, TOK_LBRACKET, "after array name in Block")) return NULL;
+                if (!check(p, TOK_INT)) {
+                    parse_error(p, "expected integer size in array declaration");
+                    return NULL;
+                }
+                int arr_size = (int)atol(p->current.value);
+                parser_advance(p);
+                if (!expect(p, TOK_RBRACKET, "after array size")) return NULL;
+                if (!expect(p, TOK_EQ, "after array declaration in Block")) return NULL;
+                /* default or list init */
+                ASTNode *arr_node = P_NODE();
+                arr_node->type                   = NODE_ARR_DECL;
+                arr_node->as.arr_decl.type_name  = P_STR(type_name);
+                arr_node->as.arr_decl.arr_name   = P_STR(arr_name);
+                arr_node->as.arr_decl.size       = arr_size;
+                arr_node->as.arr_decl.persistent = persistent;
+                if (!check(p, TOK_LBRACKET)) {
+                    /* default init */
+                    ASTNode *def = parse_expr(p);
+                    if (!def) return NULL;
+                    arr_node->as.arr_decl.default_init  = 1;
+                    arr_node->as.arr_decl.default_value = def;
+                    arr_node->as.arr_decl.elements      = NULL;
+                } else {
+                    /* explicit list */
+                    if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
+                    ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*)*arr_size);
+                    int ec = 0;
+                    while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
+                        if (ec < arr_size) elems[ec++] = parse_expr(p);
+                        else parse_expr(p);
+                        if (!match(p, TOK_COMMA)) break;
+                    }
+                    if (!expect(p, TOK_RBRACKET, "to close array literal")) {
+                        free(elems); return NULL;
+                    }
+                    arr_node->as.arr_decl.default_init  = 0;
+                    arr_node->as.arr_decl.default_value = NULL;
+                    arr_node->as.arr_decl.elements      = elems;
+                }
+                member = arr_node;
+            } else {
+                /* plain var decl */
+                if (!check(p, TOK_IDENT)) {
+                    parse_error(p, "expected variable name after type in Block");
+                    return NULL;
+                }
+                char var_name[256];
+                snprintf(var_name, sizeof(var_name), "%s", p->current.value);
+                parser_advance(p);
+                if (!expect(p, TOK_EQ, "after variable name in Block")) return NULL;
+                ASTNode *init = parse_expr(p);
+                if (!init) return NULL;
+                member = p_var_decl(p, type_name, var_name, init, persistent);
             }
-            char var_name[256];
-            strncpy(var_name, p->current.value, sizeof(var_name)-1);
-            var_name[sizeof(var_name)-1] = '\0';
-            parser_advance(p);
-
-            if (!expect(p, TOK_EQ, "after variable name in Block")) return NULL;
-            ASTNode *init = parse_expr(p);
-            if (!init) return NULL;
-            member = p_var_decl(p, type_name, var_name, init, persistent);
         } else {
             parse_error(p, "expected 'fn' or type declaration inside Block");
             return NULL;
@@ -439,6 +524,41 @@ static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
 
+    /* Sprint 6.b: import c libname [as alias] */
+    if (check(p, TOK_IMPORT)) {
+        parser_advance(p);
+        /* only "import c" supported here — std/live/static are future */
+        if (!check(p, TOK_IDENT) || strcmp(p->current.value, "c") != 0) {
+            parse_error(p, "only 'import c' is supported in Sprint 6.b");
+            return NULL;
+        }
+        parser_advance(p);
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected library name after 'import c'");
+            return NULL;
+        }
+        char lib_name[128];
+        strncpy(lib_name, p->current.value, sizeof(lib_name)-1);
+        lib_name[sizeof(lib_name)-1] = '\0';
+        parser_advance(p);
+        char alias[128];
+        snprintf(alias, sizeof(alias), "%s", lib_name);
+        if (check(p, TOK_IDENT) && strcmp(p->current.value, "as") == 0) {
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected alias after 'as'");
+                return NULL;
+            }
+            snprintf(alias, sizeof(alias), "%s", p->current.value);
+            parser_advance(p);
+        }
+        ASTNode *n = P_NODE();
+        n->type              = NODE_IMPORT_C;
+        n->as.import_c.lib_name = P_STR(lib_name);
+        n->as.import_c.alias    = P_STR(alias);
+        return n;
+    }
+
     /* Sprint 5: Block declaration or typeof instance */
     if (check(p, TOK_BLOCK)) {
         parser_advance(p);
@@ -469,8 +589,21 @@ static ASTNode *parse_statement(Parser *p) {
             param_count++;
             param_types = (char**)realloc(param_types, sizeof(char*)*param_count);
             param_names = (char**)realloc(param_names, sizeof(char*)*param_count);
-            param_types[param_count-1] = P_STR(p->current.value);
-            parser_advance(p);
+            /* arr parameter: "int arr name" or just "arr name" */
+            if (p->current.type == TOK_TYPE_ARR) {
+                param_types[param_count-1] = P_STR("arr");
+                parser_advance(p);
+            } else {
+                char _pt[64];
+                snprintf(_pt, sizeof(_pt), "%s", p->current.value);
+                parser_advance(p);
+                if (check(p, TOK_TYPE_ARR)) {
+                    size_t _l = strlen(_pt);
+                    snprintf(_pt+_l, sizeof(_pt)-_l, " arr");
+                    parser_advance(p);
+                }
+                param_types[param_count-1] = P_STR(_pt);
+            }
             if (!check(p, TOK_IDENT)) {
                 parse_error(p, "expected parameter name after type");
                 free(param_names); free(param_types); return NULL;
@@ -653,8 +786,28 @@ static ASTNode *parse_statement(Parser *p) {
             parser_advance(p);
             if (!expect(p, TOK_RBRACKET, "after array size")) return NULL;
             if (!expect(p, TOK_EQ, "after array declaration")) return NULL;
-            if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
 
+            ASTNode *n = P_NODE();
+            n->type                   = NODE_ARR_DECL;
+            n->as.arr_decl.type_name  = P_STR(type_name);
+            n->as.arr_decl.arr_name   = P_STR(arr_name);
+            n->as.arr_decl.size       = size;
+            n->as.arr_decl.persistent = persistent;
+
+            /* Sprint 6.b: default init — int arr buf[1000] = 0
+             * If next token is NOT [, it's a scalar default value */
+            if (!check(p, TOK_LBRACKET)) {
+                /* scalar initializer — fill all slots with this value */
+                ASTNode *def_val = parse_expr(p);
+                if (!def_val) return NULL;
+                n->as.arr_decl.default_init  = 1;
+                n->as.arr_decl.default_value = def_val;
+                n->as.arr_decl.elements      = NULL;
+                return n;
+            }
+
+            /* explicit list initializer */
+            if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
             ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*) * size);
             int count = 0;
             while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
@@ -665,14 +818,9 @@ static ASTNode *parse_statement(Parser *p) {
             if (!expect(p, TOK_RBRACKET, "to close array literal")) {
                 free(elems); return NULL;
             }
-
-            ASTNode *n = P_NODE();
-            n->type                  = NODE_ARR_DECL;
-            n->as.arr_decl.type_name = P_STR(type_name);
-            n->as.arr_decl.arr_name  = P_STR(arr_name);
-            n->as.arr_decl.size      = size;
-            n->as.arr_decl.elements  = elems;
-            n->as.arr_decl.persistent = persistent;
+            n->as.arr_decl.default_init  = 0;
+            n->as.arr_decl.default_value = NULL;
+            n->as.arr_decl.elements      = elems;
             return n;
         }
 

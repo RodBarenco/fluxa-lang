@@ -69,6 +69,11 @@ static void resolve_expr(Resolver *r, ASTNode *node) {
 
         case NODE_ARR_ACCESS:
             resolve_expr(r, node->as.arr_access.index);
+            /* Also resolve the array variable name itself — needed for fn params */
+            {
+                int off = symtable_find(r->current, node->as.arr_access.arr_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
             break;
 
         /* Sprint 5: member access — leave unresolved, eval handles it */
@@ -141,14 +146,24 @@ static void resolve_node(Resolver *r, ASTNode *node) {
         }
 
         case NODE_ARR_DECL: {
-            for (int i = 0; i < node->as.arr_decl.size; i++)
-                resolve_expr(r, node->as.arr_decl.elements[i]);
+            if (node->as.arr_decl.default_init) {
+                /* Sprint 6.b: scalar default — resolve just the one value */
+                resolve_expr(r, node->as.arr_decl.default_value);
+            } else {
+                for (int i = 0; i < node->as.arr_decl.size; i++)
+                    resolve_expr(r, node->as.arr_decl.elements[i]);
+            }
             break;
         }
 
         case NODE_ARR_ASSIGN:
             resolve_expr(r, node->as.arr_assign.index);
             resolve_expr(r, node->as.arr_assign.value);
+            /* Resolve array name for fn params */
+            {
+                int off = symtable_find(r->current, node->as.arr_assign.arr_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
             break;
 
         case NODE_FUNC_DECL: {
@@ -259,7 +274,18 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             break;
 
         case NODE_FREE:
-            /* free(var) — var_name resolved at runtime via scope */
+            break;
+
+        /* Sprint 6.b */
+        case NODE_IMPORT_C:
+            /* library loaded at runtime — nothing to resolve */
+            break;
+
+        case NODE_FFI_CALL:
+            /* args resolved as expressions */
+            for (int i = 0; i < node->as.ffi_call.arg_count; i++)
+                resolve_expr(r, node->as.ffi_call.args[i]);
+            node->resolved_offset = -1;
             break;
 
         default:

@@ -38,6 +38,8 @@ struct Value;  /* forward for FluxaArr */
 typedef struct {
     struct Value *data;
     int           size;
+    int           owned;  /* 1 = this scope owns data (free on scope_free) */
+                          /* 0 = reference, caller owns data               */
 } FluxaArr;
 
 /* ── Value ───────────────────────────────────────────────────────────────── */
@@ -70,9 +72,20 @@ static inline Value val_string(const char *s) {
 
 static inline Value val_arr(Value *data, int size) {
     Value v;
-    v.type        = VAL_ARR;
-    v.as.arr.data = data;
-    v.as.arr.size = size;
+    v.type         = VAL_ARR;
+    v.as.arr.data  = data;
+    v.as.arr.size  = size;
+    v.as.arr.owned = 1;   /* owner by default */
+    return v;
+}
+
+/* val_arr_ref: pass array by reference — caller retains ownership */
+static inline Value val_arr_ref(Value *data, int size) {
+    Value v;
+    v.type         = VAL_ARR;
+    v.as.arr.data  = data;
+    v.as.arr.size  = size;
+    v.as.arr.owned = 0;   /* reference — do NOT free data */
     return v;
 }
 
