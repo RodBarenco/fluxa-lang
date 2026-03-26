@@ -1,4 +1,6 @@
-/* scope.c — Fluxa Variable Scope implementation */
+/* scope.c — Fluxa Variable Scope implementation
+ * Sprint 6: VAL_ARR frees the contiguous data array on scope_free
+ */
 #define _POSIX_C_SOURCE 200809L
 #include "scope.h"
 #include <stdio.h>
@@ -6,16 +8,25 @@
 #include <string.h>
 
 static void value_free_data(Value *v) {
+    if (!v) return;
     if (v->type == VAL_STRING && v->as.string) {
         free(v->as.string);
         v->as.string = NULL;
     }
+    if (v->type == VAL_ARR && v->as.arr.data) {
+        /* free each string element inside the array, then the array itself */
+        for (int i = 0; i < v->as.arr.size; i++) {
+            if (v->as.arr.data[i].type == VAL_STRING && v->as.arr.data[i].as.string)
+                free(v->as.arr.data[i].as.string);
+        }
+        free(v->as.arr.data);
+        v->as.arr.data = NULL;
+        v->as.arr.size = 0;
+    }
 }
 
 Scope scope_new(void) {
-    Scope s;
-    s.table = NULL;
-    return s;
+    Scope s; s.table = NULL; return s;
 }
 
 void scope_set(Scope *s, const char *name, Value value) {
@@ -25,6 +36,7 @@ void scope_set(Scope *s, const char *name, Value value) {
         value_free_data(&entry->value);
         if (value.type == VAL_STRING && value.as.string)
             value.as.string = strdup(value.as.string);
+        /* Note: VAL_ARR ownership transfers — caller must not free data */
         entry->value = value;
     } else {
         entry = (ScopeEntry*)calloc(1, sizeof(ScopeEntry));

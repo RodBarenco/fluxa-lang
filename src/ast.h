@@ -38,6 +38,9 @@ typedef enum {
     NODE_MEMBER_CALL,     /* inst.metodo(args)          */
     NODE_MEMBER_ACCESS,   /* inst.campo (lvalue/rvalue) */
     NODE_MEMBER_ASSIGN,   /* inst.campo = val           */
+    /* Sprint 6 */
+    NODE_DANGER,        /* danger { }      */
+    NODE_FREE,          /* free(var)       */
 } NodeType;
 
 #ifndef FLUXA_AST_NODE_DECLARED
@@ -178,6 +181,13 @@ struct ASTNode {
             char    *field;
             ASTNode *value;
         } member_assign;
+
+
+        /* NODE_DANGER (Sprint 6) */
+        struct { ASTNode *body; } danger_stmt;
+
+        /* NODE_FREE (Sprint 6) */
+        struct { char *var_name; } free_stmt;
 
     } as;
 };
