@@ -42,6 +42,18 @@ test: build
 	@./$(TARGET) run tests/block_methods.flx
 	@echo "── typeof instance error test (expect error) ──"
 	@./$(TARGET) run tests/block_no_instance_typeof.flx || true
+	@echo "── Sprint 6 test ──────────────────────────────"
+	@./$(TARGET) run tests/sprint6.flx
+	@echo "── danger isolation test ──────────────────────"
+	@./$(TARGET) run tests/danger_basic.flx
+	@echo "── danger err stack test ──────────────────────"
+	@./$(TARGET) run tests/danger_err_stack.flx
+	@echo "── danger clean test ──────────────────────────"
+	@./$(TARGET) run tests/danger_clean.flx
+	@echo "── danger after test ──────────────────────────"
+	@./$(TARGET) run tests/danger_after.flx
+	@echo "── arr heap test ──────────────────────────────"
+	@./$(TARGET) run tests/arr_heap.flx
 	@echo "── all tests passed ───────────────────────────"
 
 test-sprint5: build
