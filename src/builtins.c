@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "builtins.h"
 #include "runtime.h"
+#include "err.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,18 @@ static void print_value(Value v) {
         case VAL_STRING:     printf("%s",   v.as.string); break;
         case VAL_FUNC:       printf("<fn %s>", v.as.func->as.func_decl.name); break;
         case VAL_BLOCK_INST: printf("<Block %s>", v.as.block_inst->name); break;
+        case VAL_ARR: {
+            printf("[");
+            for (int i = 0; i < v.as.arr.size; i++) {
+                if (i > 0) printf(", ");
+                print_value(v.as.arr.data[i]);
+            }
+            printf("]");
+            break;
+        }
+        case VAL_ERR_STACK:
+            errstack_print((const ErrStack *)v.as.err_stack);
+            return;   /* errstack_print adds its own newline per entry */
     }
 }
 
