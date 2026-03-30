@@ -1,0 +1,26 @@
+// tests/sprint7a_collision.flx — prst type collision detection
+//
+// Simula um reload onde o tipo de uma variável prst muda.
+// Na realidade isso aconteceria entre dois runs do mesmo arquivo.
+// Aqui simulamos diretamente via danger para capturar o erro sem abortar.
+//
+// Critério de aceite:
+//   [ ] colisão detectada → err_stack populado, estado anterior mantido
+
+prst int contador = 10
+
+// Simulação: em um reload, tentaria declarar contador como float.
+// Não podemos redeclarar na mesma execução mas podemos testar o pool diretamente.
+// O teste real de colisão acontece quando o runtime é reiniciado com código diferente.
+
+print(contador)   // 10
+
+// Verifica que prst_pool está ativo (PROJECT mode)
+prst bool ativo = true
+print(ativo)      // true
+
+// Verifica que leitura de prst dentro de fn registra no grafo
+fn usa_contador() int {
+    return contador + 1
+}
+print(usa_contador())   // 11

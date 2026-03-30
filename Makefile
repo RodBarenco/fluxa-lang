@@ -25,7 +25,7 @@ SRCS    = src/main.c \
           src/runtime.c
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 bench clean
+.PHONY: all build test test-sprint5 bench examples clean
 
 all: build
 
@@ -68,6 +68,14 @@ test: build
 	@./$(TARGET) run tests/arr_heap.flx
 	@echo "── Sprint 6.b test ─────────────────────────────"
 	@./$(TARGET) run tests/sprint6b.flx
+	@echo "── Sprint 6.c runtime test ─────────────────────"
+	@./$(TARGET) run tests/sprint6c_runtime.flx
+	@echo "── Sprint 7.a test ─────────────────────────────"
+	@./$(TARGET) run tests/sprint7a.flx
+	@echo "── Sprint 7.a collision test ───────────────────"
+	@./$(TARGET) run tests/sprint7a_collision.flx
+	@echo "── Sprint 7.a explain test ─────────────────────"
+	@./$(TARGET) explain tests/sprint7a.flx > /dev/null
 	@echo "── arr default test ───────────────────────────"
 	@./$(TARGET) run tests/arr_default.flx
 	@echo "── arr default types test ─────────────────────"
@@ -100,6 +108,35 @@ bench: build
 	@time ./$(TARGET) run tests/bench.flx
 	@echo "── bench_block (while inside method) ──────────"
 	@time ./$(TARGET) run tests/bench_block.flx
+
+examples: build
+	@echo "── sort ────────────────────────────────────────"
+	@./$(TARGET) run examples/sort.flx
+	@echo "── stack ───────────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/stack.flx
+	@echo "── queue ───────────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/queue.flx
+	@echo "── linked_list ─────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/linked_list.flx
+	@echo "── bst ─────────────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/bst.flx
+	@echo "── tree ────────────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/tree.flx
+	@echo "── hash_map ────────────────────────────────────"
+	@./$(TARGET) run examples/data_structures/hash_map.flx
+	@echo "── dynamic_programming ─────────────────────────"
+	@./$(TARGET) run examples/data_structures/dynamic_programming.flx
+	@echo "── 01_fizzbuzz ─────────────────────────────────"
+	@./$(TARGET) run examples/problems/01_fizzbuzz.flx
+	@echo "── 02_binary_search ────────────────────────────"
+	@./$(TARGET) run examples/problems/02_binary_search.flx
+	@echo "── 03_two_sum ──────────────────────────────────"
+	@./$(TARGET) run examples/problems/03_two_sum.flx
+	@echo "── 04_percolation ──────────────────────────────"
+	@./$(TARGET) run examples/problems/04_percolation.flx
+	@echo "── 05_sliding_window ───────────────────────────"
+	@./$(TARGET) run examples/problems/05_sliding_window.flx
+	@echo "── all examples ok ─────────────────────────────"
 
 clean:
 	rm -f $(TARGET)

@@ -44,4 +44,9 @@ typedef struct {
  * Returns max stack slots needed, or -1 on error. */
 int resolver_run(ASTNode *program);
 
+/* Sprint 7: scan AST for any prst declaration (persistent = 1).
+ * Returns 1 if found (→ FLUXA_MODE_PROJECT), 0 if not (→ FLUXA_MODE_SCRIPT).
+ * Called before runtime_exec so the runtime can bifurcate correctly. */
+int resolver_has_prst(ASTNode *program);
+
 #endif /* FLUXA_RESOLVER_H */

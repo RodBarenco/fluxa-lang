@@ -109,4 +109,48 @@ int    scope_get(Scope *s, const char *name, Value *out);
 int    scope_has(Scope *s, const char *name);
 void   scope_free(Scope *s);
 
+/* ── Global table helpers ────────────────────────────────────────────────── */
+/* Direct uthash table operations — used by runtime's global_table field.
+ * These bypass the Scope struct and operate on the raw ScopeEntry* table. */
+
+static inline int scope_table_get(ScopeEntry *table, const char *name, Value *out) {
+    ScopeEntry *entry = NULL;
+    HASH_FIND_STR(table, name, entry);
+    if (!entry) return 0;
+    *out = entry->value;
+    return 1;
+}
+
+static inline void scope_table_set(ScopeEntry **table, const char *name, Value value) {
+    ScopeEntry *entry = NULL;
+    HASH_FIND_STR(*table, name, entry);
+    if (entry) {
+        if (entry->value.type == VAL_STRING && entry->value.as.string)
+            free(entry->value.as.string);
+        if (value.type == VAL_STRING && value.as.string)
+            value.as.string = strdup(value.as.string);
+        entry->value = value;
+    } else {
+        entry = (ScopeEntry*)calloc(1, sizeof(ScopeEntry));
+        strncpy(entry->name, name, sizeof(entry->name) - 1);
+        entry->persistent = 0;
+        if (value.type == VAL_STRING && value.as.string)
+            value.as.string = strdup(value.as.string);
+        entry->value = value;
+        HASH_ADD_STR(*table, name, entry);
+    }
+}
+
+static inline void scope_table_free(ScopeEntry **table) {
+    if (!table || !*table) return;
+    ScopeEntry *e, *tmp;
+    HASH_ITER(hh, *table, e, tmp) {
+        HASH_DEL(*table, e);
+        if (e->value.type == VAL_STRING && e->value.as.string)
+            free(e->value.as.string);
+        free(e);
+    }
+    *table = NULL;
+}
+
 #endif /* FLUXA_SCOPE_H */

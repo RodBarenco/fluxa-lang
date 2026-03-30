@@ -1,0 +1,22 @@
+// tests/sprint7a_gc.flx — GC cap overflow handling
+//
+// Critério de aceite:
+//   [ ] gc_alloc além do cap → erro em err_stack, sem segfault
+//   [ ] programa continua após erro contido em danger
+
+danger {
+    int arr a[10] = 0
+    int arr b[10] = 0
+    int arr c[10] = 0
+    int arr d[10] = 0
+    int arr e[10] = 0
+}
+
+// err stack deve ter a mensagem de GC cap excedido
+if err != nil {
+    print(err[0])
+} else {
+    print("no gc error")
+}
+
+print("survived")

@@ -1,0 +1,2 @@
+[runtime]
+gc_cap = 4   # very low — for testing overflow detection
