@@ -133,3 +133,149 @@ static inline void prst_pool_invalidate(PrstPool *p, const char *name) {
 }
 
 #endif /* FLUXA_PRST_POOL_H */
+
+/* ── Sprint 7.b additions (appended) ─────────────────────────────────────── */
+
+#include <stdint.h>
+
+/* FNV-32 checksum over all pool entries (names + types + int values).
+ * String values are not checksummed (pointer instability across reloads).
+ * Used by Sprint 8 Handover Atômico for bit-to-bit integrity verification. */
+static inline uint32_t prst_pool_checksum(const PrstPool *p) {
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < p->count; i++) {
+        const char *n = p->entries[i].name;
+        while (*n) { h ^= (uint8_t)*n++; h *= 16777619u; }
+        h ^= 0x1f;
+        /* include type tag and integer value in checksum */
+        h ^= (uint8_t)p->entries[i].declared_type;
+        h *= 16777619u;
+        if (p->entries[i].value.type == VAL_INT) {
+            long v = p->entries[i].value.as.integer;
+            h ^= (uint32_t)(v & 0xFFFFFFFF);
+            h *= 16777619u;
+            h ^= (uint32_t)((v >> 32) & 0xFFFFFFFF);
+            h *= 16777619u;
+        }
+        h ^= 0x1e;
+    }
+    return h;
+}
+
+/* ── Serialization ───────────────────────────────────────────────────────── */
+/* Wire format (flat, no pointers):
+ *   [int32 count]
+ *   [count × PrstWireEntry]
+ *
+ * PrstWireEntry:
+ *   char name[256]
+ *   int32 declared_type
+ *   int32 stack_offset
+ *   int64 int_val        (valid when declared_type == VAL_INT)
+ *   double float_val     (valid when declared_type == VAL_FLOAT)
+ *   int32 bool_val       (valid when declared_type == VAL_BOOL)
+ *   int32 str_len        (0 if not VAL_STRING)
+ *   char str_data[str_len]   (inline, no nul-terminator in wire)
+ *
+ * Strings are inlined to avoid pointer issues during transfer.
+ * Caller must free(*out_buf). Returns 1 on success, 0 on failure.
+ */
+static inline int prst_pool_serialize(const PrstPool *p,
+                                       void **out_buf, size_t *out_size) {
+    /* Two-pass: first calculate size, then fill */
+    size_t sz = sizeof(int32_t);
+    for (int i = 0; i < p->count; i++) {
+        sz += 256 + sizeof(int32_t)*3 + sizeof(int64_t) + sizeof(double);
+        if (p->entries[i].value.type == VAL_STRING && p->entries[i].value.as.string)
+            sz += (size_t)strlen(p->entries[i].value.as.string);
+    }
+    char *buf = (char*)malloc(sz);
+    if (!buf) return 0;
+
+    char *w = buf;
+    int32_t cnt = (int32_t)p->count;
+    memcpy(w, &cnt, sizeof(int32_t)); w += sizeof(int32_t);
+
+    for (int i = 0; i < p->count; i++) {
+        const PrstEntry *e = &p->entries[i];
+        /* name */
+        memcpy(w, e->name, 256); w += 256;
+        /* declared_type */
+        int32_t dt = (int32_t)e->declared_type;
+        memcpy(w, &dt, sizeof(int32_t)); w += sizeof(int32_t);
+        /* stack_offset */
+        int32_t so = (int32_t)e->stack_offset;
+        memcpy(w, &so, sizeof(int32_t)); w += sizeof(int32_t);
+        /* int_val */
+        int64_t iv = (e->value.type == VAL_INT) ? (int64_t)e->value.as.integer : 0;
+        memcpy(w, &iv, sizeof(int64_t)); w += sizeof(int64_t);
+        /* float_val */
+        double fv = (e->value.type == VAL_FLOAT) ? e->value.as.real : 0.0;
+        memcpy(w, &fv, sizeof(double)); w += sizeof(double);
+        /* bool_val */
+        int32_t bv = (e->value.type == VAL_BOOL) ? e->value.as.boolean : 0;
+        memcpy(w, &bv, sizeof(int32_t)); w += sizeof(int32_t);
+        /* str_len + str_data */
+        int32_t slen = 0;
+        if (e->value.type == VAL_STRING && e->value.as.string)
+            slen = (int32_t)strlen(e->value.as.string);
+        memcpy(w, &slen, sizeof(int32_t)); w += sizeof(int32_t);
+        if (slen > 0) { memcpy(w, e->value.as.string, (size_t)slen); w += slen; }
+    }
+
+    *out_buf  = buf;
+    *out_size = (size_t)(w - buf);
+    return 1;
+}
+
+/* Deserialize into an existing PrstPool (resets it first).
+ * Returns 1 on success, 0 on malformed data. */
+static inline int prst_pool_deserialize(PrstPool *p,
+                                         const void *buf, size_t buf_size) {
+    if (buf_size < sizeof(int32_t)) return 0;
+    const char *r = (const char*)buf;
+    const char *end = r + buf_size;
+
+    int32_t cnt;
+    memcpy(&cnt, r, sizeof(int32_t)); r += sizeof(int32_t);
+    if (cnt < 0 || cnt > 65536) return 0;
+
+    prst_pool_free(p);
+    prst_pool_init(p);
+
+    for (int i = 0; i < cnt; i++) {
+        if (r + 256 + sizeof(int32_t)*4 + sizeof(int64_t) + sizeof(double) > end)
+            return 0;
+        char name[256];
+        memcpy(name, r, 256); name[255] = '\0'; r += 256;
+        int32_t dt; memcpy(&dt, r, sizeof(int32_t)); r += sizeof(int32_t);
+        int32_t so; memcpy(&so, r, sizeof(int32_t)); r += sizeof(int32_t);
+        int64_t iv; memcpy(&iv, r, sizeof(int64_t)); r += sizeof(int64_t);
+        double  fv; memcpy(&fv, r, sizeof(double));  r += sizeof(double);
+        int32_t bv; memcpy(&bv, r, sizeof(int32_t)); r += sizeof(int32_t);
+        int32_t slen; memcpy(&slen, r, sizeof(int32_t)); r += sizeof(int32_t);
+        if (slen < 0 || r + slen > end) return 0;
+
+        Value v; v.type = (ValType)dt;
+        switch (v.type) {
+            case VAL_INT:    v.as.integer = (long)iv; break;
+            case VAL_FLOAT:  v.as.real    = fv; break;
+            case VAL_BOOL:   v.as.boolean = (int)bv; break;
+            case VAL_STRING:
+                v.as.string = slen > 0 ? (char*)malloc((size_t)slen + 1) : strdup("");
+                if (slen > 0) { memcpy(v.as.string, r, (size_t)slen); v.as.string[slen] = '\0'; }
+                break;
+            default:         v.type = VAL_NIL; break;
+        }
+        r += slen;
+
+        int idx = prst_pool_set(p, name, v, NULL);
+        if (idx >= 0) {
+            p->entries[idx].declared_type = (ValType)dt;
+            p->entries[idx].stack_offset  = (int)so;
+        }
+        /* free string we just copied — prst_pool_set will strdup again */
+        if (v.type == VAL_STRING && v.as.string) free(v.as.string);
+    }
+    return 1;
+}
