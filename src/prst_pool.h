@@ -1,40 +1,36 @@
-/* prst_pool.h — Persistent Variable Pool (Sprint 6.b)
+/* prst_pool.h — Persistent Variable Pool (Sprint 7)
  *
- * Replaces the PrstGraph stub from Sprint 6.
- *
- * Design:
- *   - Dynamic array via realloc, factor ×2, initial cap 64
- *   - Offsets are integer indices — safe after realloc (no pointer aliases)
- *   - prst is ONLY valid at module/Block/main scope — parser enforces this
- *   - Growth happens at declaration time only, never inside a hot path
- *
- * Sprint 7 hook:
- *   - prst_pool_invalidate() stub — Sprint 7 adds cascade invalidation logic
+ * Sprint 6.b: dynamic array, realloc ×2, basic get/set.
+ * Sprint 7:   real semantics:
+ *   - Type collision detection: same name + different type → error
+ *   - Reload semantics: on re-declaration of existing prst, value is
+ *     restored from pool instead of re-evaluated from AST initializer
+ *   - Only active in FLUXA_MODE_PROJECT (prst present in source)
+ *   - In FLUXA_MODE_SCRIPT: prst declarations emit a warning, pool unused
  */
 #ifndef FLUXA_PRST_POOL_H
 #define FLUXA_PRST_POOL_H
 
 #include "scope.h"
+#include "err.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 #define PRST_POOL_INIT_CAP 64
 
-/* ── Entry ───────────────────────────────────────────────────────────────── */
 typedef struct {
-    char  name[256];
-    Value value;
+    char    name[256];
+    Value   value;
+    ValType declared_type;
+    int     stack_offset;   /* resolved_offset of the VAR_DECL node, -1 if unknown */
 } PrstEntry;
 
-/* ── Pool ────────────────────────────────────────────────────────────────── */
 typedef struct {
-    PrstEntry *entries;   /* heap — realloc'd, factor ×2 */
+    PrstEntry *entries;
     int        count;
     int        cap;
 } PrstPool;
-
-/* ── API ─────────────────────────────────────────────────────────────────── */
 
 static inline void prst_pool_init(PrstPool *p) {
     p->entries = (PrstEntry *)malloc(sizeof(PrstEntry) * PRST_POOL_INIT_CAP);
@@ -44,7 +40,6 @@ static inline void prst_pool_init(PrstPool *p) {
 
 static inline void prst_pool_free(PrstPool *p) {
     if (!p->entries) return;
-    /* free string values */
     for (int i = 0; i < p->count; i++) {
         if (p->entries[i].value.type == VAL_STRING && p->entries[i].value.as.string)
             free(p->entries[i].value.as.string);
@@ -55,7 +50,6 @@ static inline void prst_pool_free(PrstPool *p) {
     p->cap     = 0;
 }
 
-/* Returns index of entry, or -1 on failure */
 static inline int prst_pool_find(PrstPool *p, const char *name) {
     for (int i = 0; i < p->count; i++)
         if (strcmp(p->entries[i].name, name) == 0)
@@ -63,12 +57,22 @@ static inline int prst_pool_find(PrstPool *p, const char *name) {
     return -1;
 }
 
-/* Set a prst variable — creates if not exists, updates if exists.
- * Returns the index, or -1 on allocation failure. */
-static inline int prst_pool_set(PrstPool *p, const char *name, Value value) {
+/* Set a prst variable.
+ * First declaration: stores value + declared_type.
+ * Re-declaration (reload): type must match — collision → err, returns -1.
+ * Returns index on success, -1 on error. */
+static inline int prst_pool_set(PrstPool *p, const char *name,
+                                  Value value, ErrStack *err) {
     int idx = prst_pool_find(p, name);
     if (idx >= 0) {
-        /* update existing — free old string */
+        if (p->entries[idx].declared_type != value.type) {
+            char buf[280];
+            snprintf(buf, sizeof(buf),
+                "prst collision: '%s' was type %d, reload attempts type %d — state preserved",
+                name, (int)p->entries[idx].declared_type, (int)value.type);
+            if (err) errstack_push(err, ERR_RELOAD, buf, "<prst>", 0);
+            return -1;
+        }
         if (p->entries[idx].value.type == VAL_STRING &&
             p->entries[idx].value.as.string)
             free(p->entries[idx].value.as.string);
@@ -77,29 +81,36 @@ static inline int prst_pool_set(PrstPool *p, const char *name, Value value) {
         p->entries[idx].value = value;
         return idx;
     }
-
-    /* grow if needed */
     if (p->count >= p->cap) {
         int new_cap = p->cap > 0 ? p->cap * 2 : PRST_POOL_INIT_CAP;
-        PrstEntry *new_entries = (PrstEntry *)realloc(
-            p->entries, sizeof(PrstEntry) * new_cap);
-        if (!new_entries) {
-            fprintf(stderr, "[fluxa] prst pool: out of memory growing pool\n");
+        PrstEntry *ne = (PrstEntry *)realloc(p->entries,
+                            sizeof(PrstEntry) * new_cap);
+        if (!ne) {
+            if (err) errstack_push(err, ERR_FLUXA,
+                "out of memory growing prst pool", "<prst>", 0);
             return -1;
         }
-        p->entries = new_entries;
+        p->entries = ne;
         p->cap     = new_cap;
     }
-
     strncpy(p->entries[p->count].name, name, 255);
-    p->entries[p->count].name[255] = '\0';
+    p->entries[p->count].name[255]     = '\0';
+    p->entries[p->count].declared_type = value.type;
     if (value.type == VAL_STRING && value.as.string)
         value.as.string = strdup(value.as.string);
-    p->entries[p->count].value = value;
+    p->entries[p->count].value        = value;
+    p->entries[p->count].stack_offset = -1;   /* set by caller after decl */
     return p->count++;
 }
 
-/* Get a prst variable. Returns 1 if found, 0 if not. */
+/* Set the stack_offset for a prst entry — called once after NODE_VAR_DECL
+ * resolution so the VM sync pass can read rt->stack[offset] directly. */
+static inline void prst_pool_set_offset(PrstPool *p, const char *name,
+                                         int offset) {
+    int idx = prst_pool_find(p, name);
+    if (idx >= 0) p->entries[idx].stack_offset = offset;
+}
+
 static inline int prst_pool_get(PrstPool *p, const char *name, Value *out) {
     int idx = prst_pool_find(p, name);
     if (idx < 0) return 0;
@@ -107,11 +118,18 @@ static inline int prst_pool_get(PrstPool *p, const char *name, Value *out) {
     return 1;
 }
 
-/* Sprint 7 hook — stub, no-op until hot reload is implemented */
+static inline int prst_pool_has(PrstPool *p, const char *name) {
+    return prst_pool_find(p, name) >= 0;
+}
+
 static inline void prst_pool_invalidate(PrstPool *p, const char *name) {
-    (void)p;
-    (void)name;
-    /* TODO Sprint 7: cascade invalidate all executions that read this prst */
+    int idx = prst_pool_find(p, name);
+    if (idx < 0) return;
+    if (p->entries[idx].value.type == VAL_STRING &&
+        p->entries[idx].value.as.string)
+        free(p->entries[idx].value.as.string);
+    p->entries[idx] = p->entries[p->count - 1];
+    p->count--;
 }
 
 #endif /* FLUXA_PRST_POOL_H */
