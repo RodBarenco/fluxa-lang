@@ -4,6 +4,8 @@
  * Sprint 6.b: PrstPool (realloc), FFIRegistry
  * Sprint 7: FluxaMode, real GC cap, real PrstPool+PrstGraph, toml config,
  *           runtime_explain for fluxa explain
+ * Sprint 7.b: cycle_count, dry_run, runtime_is_safe_point, runtime_apply,
+ *             ERR_HANDOVER, prst checksum+serialization
  */
 #ifndef FLUXA_RUNTIME_H
 #define FLUXA_RUNTIME_H
@@ -65,11 +67,27 @@ typedef struct Runtime {
     PrstPool       prst_pool;
     PrstGraph      prst_graph;
     FluxaConfig    config;
+
+    /* Sprint 7.b */
+    long           cycle_count;   /* incremented per top-level statement    */
+    int            dry_run;       /* 1 = suppress all output (print, FFI)   */
 } Runtime;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 int  runtime_exec(ASTNode *program);
 int  runtime_exec_explain(ASTNode *program);
 void runtime_explain(Runtime *rt);
+
+/* Sprint 7.b */
+/* Returns 1 when the runtime is at a safe point for handover/reload.
+ * A safe point is: call_depth == 0 AND danger_depth == 0. */
+static inline int runtime_is_safe_point(const Runtime *rt) {
+    return rt->call_depth == 0 && rt->danger_depth == 0;
+}
+
+/* Apply a reload: re-parse and re-execute program, preserving prst state.
+ * pool_in: existing PrstPool from the previous run (state to carry over).
+ * Returns 0 on success, 1 on error. */
+int runtime_apply(ASTNode *program, PrstPool *pool_in);
 
 #endif /* FLUXA_RUNTIME_H */

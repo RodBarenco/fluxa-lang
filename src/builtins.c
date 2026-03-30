@@ -40,6 +40,12 @@ static void print_value(Value v) {
 }
 
 static Value builtin_print(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
+    /* Sprint 7.b: dry_run suppresses all output (used during handover validation) */
+    if (rt->dry_run) {
+        for (int i = 0; i < call->as.list.count; i++)
+            eval_fn(rt, call->as.list.children[i]); /* evaluate for side-effects only */
+        return val_nil();
+    }
     for (int i = 0; i < call->as.list.count; i++) {
         Value v = eval_fn(rt, call->as.list.children[i]);
         print_value(v);

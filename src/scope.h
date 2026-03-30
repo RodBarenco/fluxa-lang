@@ -5,7 +5,7 @@
 #ifndef FLUXA_SCOPE_H
 #define FLUXA_SCOPE_H
 
-#include "../vendor/uthash.h"
+#include "uthash.h"
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,5 +1,5 @@
 /* runtime.c — Fluxa Runtime
- * Sprint 6: danger/err, arr contíguo, free(), PrstGraph stub, GCTable stub
+ * Sprint 6: danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
  */
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
@@ -189,8 +189,12 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
 
     /* ── Trampoline loop — iterates on tail calls, exits on normal return ── */
     while (1) {
-        /* Load parameters into the current frame */
+        /* Zero enough slots to clean both function's params+locals AND
+         * any stale values left by the caller frame (caller_sz slots).
+         * Without this, callers with more slots than this function leave
+         * stale values that rt_get picks up via the stack path. */
         int zero_slots = param_count + 64;
+        if (zero_slots < caller_sz + 1) zero_slots = caller_sz + 1;
         if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
         for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
 
@@ -588,7 +592,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
             return val_nil();
         }
 
-        /* ── Sprint 6/6.b: arr contíguo na heap ──────────────────────────── */
+        /* ── Sprint 6/6.b: contiguous arr on heap ──────────────────────────── */
         case NODE_ARR_DECL: {
             int size = node->as.arr_decl.size;
             Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
@@ -1019,7 +1023,7 @@ int runtime_exec(ASTNode *program) {
     Runtime rt;
     rt.scope            = scope_new();
     rt.global_table = NULL;
-    rt.stack_size       = slots;
+    rt.stack_size       = 0;   /* grows via rt_set; slots pre-sizes the static array */
     rt.had_error        = 0;
     rt.call_depth       = 0;
     rt.ret.active       = 0;
@@ -1029,6 +1033,8 @@ int runtime_exec(ASTNode *program) {
     rt.ret.value        = val_nil();
     rt.current_instance = NULL;
     rt.danger_depth     = 0;
+    rt.cycle_count      = 0;
+    rt.dry_run          = 0;
     rt.mode             = mode;
     rt.config           = config;
     errstack_clear(&rt.err_stack);
@@ -1050,6 +1056,7 @@ int runtime_exec(ASTNode *program) {
 
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
+        rt.cycle_count++;
         if (rt.had_error) break;
     }
 
@@ -1085,7 +1092,7 @@ int runtime_exec_explain(ASTNode *program) {
     Runtime rt;
     rt.scope            = scope_new();
     rt.global_table = NULL;
-    rt.stack_size       = slots;
+    rt.stack_size       = 0;   /* grows via rt_set; slots pre-sizes the static array */
     rt.had_error        = 0;
     rt.call_depth       = 0;
     rt.ret.active       = 0;
@@ -1107,6 +1114,7 @@ int runtime_exec_explain(ASTNode *program) {
 
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
+        rt.cycle_count++;
         if (rt.had_error) break;
     }
     runtime_explain(&rt);
@@ -1187,4 +1195,87 @@ void runtime_explain(Runtime *rt) {
         }
     }
     printf("\n");
+}
+
+/* ── runtime_apply — Sprint 7.b ──────────────────────────────────────────── */
+/* Re-execute a program preserving prst state from a previous run.
+ * pool_in: PrstPool from the previous runtime (values survive the reload).
+ *
+ * Semantics:
+ *   - prst vars that exist in pool_in are restored instead of re-initialized
+ *   - prst vars with type collision push ERR_RELOAD and keep old value
+ *   - prst_graph is rebuilt from scratch (deps re-registered during eval)
+ *   - non-prst state (stack, scope, Blocks) is fresh
+ *
+ * Sprint 7.c will add: cascade abort via prst_graph_invalidate before eval.
+ */
+int runtime_apply(ASTNode *program, PrstPool *pool_in) {
+    if (!program || program->type != NODE_PROGRAM) {
+        fprintf(stderr, "[fluxa] runtime_apply: invalid program node\n");
+        return 1;
+    }
+
+    int slots = resolver_run(program);
+    if (slots < 0) {
+        fprintf(stderr, "[fluxa] aborting due to resolver errors.\n");
+        return 1;
+    }
+
+    FluxaConfig config = fluxa_config_find_and_load();
+
+    Runtime rt;
+    rt.scope            = scope_new();
+    rt.global_table     = NULL;
+    rt.stack_size       = 0;
+    rt.had_error        = 0;
+    rt.call_depth       = 0;
+    rt.ret.active       = 0;
+    rt.ret.tco_active   = 0;
+    rt.ret.tco_fn       = NULL;
+    rt.ret.tco_args     = NULL;
+    rt.ret.value        = val_nil();
+    rt.current_instance = NULL;
+    rt.danger_depth     = 0;
+    rt.cycle_count      = 0;
+    rt.dry_run          = 0;
+    rt.mode             = FLUXA_MODE_PROJECT;
+    rt.config           = config;
+    errstack_clear(&rt.err_stack);
+    gc_init(&rt.gc, config.gc_cap);
+    ffi_registry_init(&rt.ffi);
+    prst_graph_init(&rt.prst_graph);
+
+    /* Transfer pool from previous run — prst values survive the reload */
+    if (pool_in && pool_in->count > 0) {
+        rt.prst_pool = *pool_in;   /* shallow copy — we own it now */
+        /* Invalidate all graph deps so they re-register during eval */
+        /* (Sprint 7.c will also abort in-flight executions here)    */
+        for (int i = 0; i < rt.prst_pool.count; i++)
+            prst_graph_invalidate(&rt.prst_graph, rt.prst_pool.entries[i].name);
+    } else {
+        prst_pool_init(&rt.prst_pool);
+    }
+
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
+
+    for (int i = 0; i < program->as.list.count; i++) {
+        eval(&rt, program->as.list.children[i]);
+        rt.cycle_count++;
+        if (rt.had_error) break;
+    }
+
+    int result = rt.had_error ? 1 : 0;
+
+    /* If caller passed pool_in, update it with the final pool state.
+     * This allows chained applies (next reload gets current values). */
+    if (pool_in) *pool_in = rt.prst_pool;
+    else prst_pool_free(&rt.prst_pool);
+
+    scope_free(&rt.scope);
+    scope_table_free(&rt.global_table);
+    block_registry_free();
+    gc_collect_all(&rt.gc);
+    prst_graph_free(&rt.prst_graph);
+    ffi_registry_free(&rt.ffi);
+    return result;
 }
