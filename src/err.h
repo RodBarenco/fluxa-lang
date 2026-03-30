@@ -19,17 +19,22 @@
 
 /* ── Error kinds ─────────────────────────────────────────────────────────── */
 typedef enum {
-    ERR_FLUXA,    /* runtime error from Fluxa itself (div/0, OOB, etc.)     */
-    ERR_C_FFI,    /* error from import c — Sprint 6.b                       */
-    ERR_RELOAD,   /* prst invalidation during hot reload — Sprint 7         */
+    ERR_FLUXA,      /* runtime error from Fluxa itself (div/0, OOB, etc.)   */
+    ERR_C_FFI,      /* error from import c — Sprint 6.b                     */
+    ERR_RELOAD,     /* prst invalidation during hot reload — Sprint 7       */
+    ERR_HANDOVER,   /* handover validation failure — Sprint 7.b/8           */
 } ErrKind;
 
 /* ── Single error entry ──────────────────────────────────────────────────── */
+/* ERR_MSG_MAX must be >= the largest buf[] used in runtime.c (currently 280).
+ * 512 gives headroom for Sprint 7 messages (prst collision includes type names). */
+#define ERR_MSG_MAX 512
+
 typedef struct {
     ErrKind kind;
-    char    message[256];  /* human-readable description                    */
-    char    context[128];  /* function name, Block name, or "<global>"      */
-    int     line;          /* source line — 0 if unknown                    */
+    char    message[ERR_MSG_MAX]; /* human-readable description             */
+    char    context[128];         /* fn name, Block name, or "<global>"     */
+    int     line;                 /* source line — 0 if unknown             */
 } ErrEntry;
 
 /* ── Error stack ─────────────────────────────────────────────────────────── */
@@ -64,7 +69,7 @@ static inline void errstack_push(ErrStack *s, ErrKind kind,
         s->base = (s->base + 1) % ERR_STACK_CAP;
     }
     s->entries[slot].kind = kind;
-    snprintf(s->entries[slot].message, sizeof(s->entries[slot].message),
+    snprintf(s->entries[slot].message, ERR_MSG_MAX,
              "%s", message ? message : "");
     snprintf(s->entries[slot].context, sizeof(s->entries[slot].context),
              "%s", context ? context : "<global>");
@@ -90,8 +95,9 @@ static inline void errstack_print(const ErrStack *s) {
         const ErrEntry *e = errstack_get(s, i);
         if (!e) break;
         const char *kind_str =
-            (e->kind == ERR_C_FFI)   ? "c_ffi"  :
-            (e->kind == ERR_RELOAD)  ? "reload" : "fluxa";
+            (e->kind == ERR_C_FFI)    ? "c_ffi"    :
+            (e->kind == ERR_RELOAD)   ? "reload"   :
+            (e->kind == ERR_HANDOVER) ? "handover" : "fluxa";
         if (e->line > 0)
             printf("[%s] %s (in %s, line %d)\n",
                    kind_str, e->message, e->context, e->line);
