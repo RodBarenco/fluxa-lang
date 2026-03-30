@@ -71,6 +71,7 @@ typedef struct Runtime {
     /* Sprint 7.b */
     long           cycle_count;   /* incremented per top-level statement    */
     int            dry_run;       /* 1 = suppress all output (print, FFI)   */
+    volatile int  *cancel_flag;   /* non-NULL in -dev: set to 1 to abort VM */
 } Runtime;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -89,5 +90,10 @@ static inline int runtime_is_safe_point(const Runtime *rt) {
  * pool_in: existing PrstPool from the previous run (state to carry over).
  * Returns 0 on success, 1 on error. */
 int runtime_apply(ASTNode *program, PrstPool *pool_in);
+
+/* -dev mode: register a global cancel flag checked on every VM back-edge.
+ * Set *flag = 1 from the watcher thread to break infinite loops.
+ * Call with NULL to clear (after thread joins). */
+void runtime_set_cancel_flag(volatile int *flag);
 
 #endif /* FLUXA_RUNTIME_H */

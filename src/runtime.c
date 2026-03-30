@@ -14,7 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Error helper ────────────────────────────────────────────────────────── */
+/* ── Global cancel flag for -dev mode ────────────────────────────────────── */
+/* Set by the watcher thread to abort an infinite loop in the VM.
+ * Only one Runtime runs at a time in -dev mode, so a global is safe. */
+static volatile int  *g_cancel_flag = NULL;
+
+void runtime_set_cancel_flag(volatile int *flag) {
+    g_cancel_flag = flag;
+}
+
+/* ── Error helper ─────────────────────────────────────────────────────────── */
 /* Sprint 6: if inside danger, accumulate in err_stack instead of aborting.
  * context_name is the current function/Block name for the ErrEntry. */
 static void rt_error(Runtime *rt, const char *msg) {
@@ -384,9 +393,51 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     /* PROJECT mode: check pool first */
                     Value pooled;
                     if (prst_pool_has(&rt->prst_pool, vname)) {
-                        /* Reload: restore value from pool, skip initializer */
+                        /* Reload path: pool has a value from the previous run.
+                         *
+                         * Two cases:
+                         *   A) User edited the initializer in source (e.g. 12->99).
+                         *      The source is the authoritative new value.
+                         *   B) The runtime mutated the variable (e.g. a counter).
+                         *      The pool value survives the reload.
+                         *
+                         * We distinguish by evaluating the source initializer and
+                         * comparing it to the pooled value.  If they differ, the
+                         * user changed the source -> use source.  If they match,
+                         * keep the runtime value from the pool.
+                         */
                         prst_pool_get(&rt->prst_pool, vname, &pooled);
-                        rt_set(rt, node, vname, pooled);
+
+                        Value src_init = eval(rt, node->as.var_decl.initializer);
+                        if (rt->had_error) return val_nil();
+
+                        int src_changed = 0;
+                        if (src_init.type != pooled.type) {
+                            src_changed = 1;
+                        } else if (src_init.type == VAL_INT &&
+                                   src_init.as.integer != pooled.as.integer) {
+                            src_changed = 1;
+                        } else if (src_init.type == VAL_FLOAT &&
+                                   src_init.as.real != pooled.as.real) {
+                            src_changed = 1;
+                        } else if (src_init.type == VAL_BOOL &&
+                                   src_init.as.boolean != pooled.as.boolean) {
+                            src_changed = 1;
+                        } else if (src_init.type == VAL_STRING) {
+                            const char *a = src_init.as.string ? src_init.as.string : "";
+                            const char *b = pooled.as.string   ? pooled.as.string   : "";
+                            if (strcmp(a, b) != 0) src_changed = 1;
+                        }
+
+                        Value chosen = src_changed ? src_init : pooled;
+
+                        /* Always refresh offset: resolver may assign a different
+                         * slot on a new parse of the same file. */
+                        prst_pool_set(&rt->prst_pool, vname, chosen, &rt->err_stack);
+                        prst_pool_set_offset(&rt->prst_pool, vname,
+                                             node->resolved_offset);
+                        rt_set(rt, node, vname, chosen);
+                        scope_table_set(&rt->global_table, vname, chosen);
                         return val_nil();
                     }
                     /* First run: evaluate and register */
@@ -554,7 +605,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_WHILE: {
             Chunk chunk;
             if (chunk_compile_loop(&chunk, node)) {
-                vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size);
+                vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size,
+                       rt->cancel_flag);
                 chunk_free(&chunk);
                 /* Sprint 7: after VM, sync prst vars from rt->stack back to
                  * pool and global_table. The VM writes rt->stack[offset]
@@ -565,7 +617,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         int off = pe->stack_offset;
                         if (off >= 0 && off < rt->stack_size) {
                             Value sv = rt->stack[off];
-                            /* Only update if type still matches */
+                            /* Only sync if type still matches declared type */
                             if (sv.type == pe->declared_type) {
                                 prst_pool_set(&rt->prst_pool, pe->name,
                                               sv, &rt->err_stack);
@@ -577,6 +629,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
             } else {
                 int limit = 100000000;
                 while (limit-- > 0) {
+                    /* -dev mode: stop if file changed */
+                    if (rt->cancel_flag && *rt->cancel_flag) break;
                     Value cond = eval(rt, node->as.while_stmt.condition);
                     if (rt->had_error || rt->ret.active) break;
                     int truthy = 0;
@@ -1035,6 +1089,7 @@ int runtime_exec(ASTNode *program) {
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
+    rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = mode;
     rt.config           = config;
     errstack_clear(&rt.err_stack);
@@ -1091,8 +1146,8 @@ int runtime_exec_explain(ASTNode *program) {
 
     Runtime rt;
     rt.scope            = scope_new();
-    rt.global_table = NULL;
-    rt.stack_size       = 0;   /* grows via rt_set; slots pre-sizes the static array */
+    rt.global_table     = NULL;
+    rt.stack_size       = 0;
     rt.had_error        = 0;
     rt.call_depth       = 0;
     rt.ret.active       = 0;
@@ -1102,6 +1157,9 @@ int runtime_exec_explain(ASTNode *program) {
     rt.ret.value        = val_nil();
     rt.current_instance = NULL;
     rt.danger_depth     = 0;
+    rt.cycle_count      = 0;
+    rt.dry_run          = 0;
+    rt.cancel_flag      = g_cancel_flag;
     rt.mode             = FLUXA_MODE_PROJECT;  /* always project for explain */
     rt.config           = config;
     errstack_clear(&rt.err_stack);
@@ -1238,6 +1296,7 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
+    rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = FLUXA_MODE_PROJECT;
     rt.config           = config;
     errstack_clear(&rt.err_stack);

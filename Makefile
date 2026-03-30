@@ -12,7 +12,7 @@ endif
 
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
            -Isrc -Ivendor $(FFI_CFLAGS)
-LDFLAGS = $(FFI_LDFLAGS) -ldl -lm
+LDFLAGS = $(FFI_LDFLAGS) -ldl -lm -lpthread
 SRCS    = src/main.c \
           src/lexer.c \
           src/parser.c \

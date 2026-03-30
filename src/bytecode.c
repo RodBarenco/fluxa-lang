@@ -200,7 +200,8 @@ static inline Value vm_compare(Value l, Value r, Opcode op) {
 }
 
 /* ── VM execution ────────────────────────────────────────────────────────── */
-int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size) {
+int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
+           volatile int *cancel_flag) {
     (void)scope;
     (void)stack_size;
 
@@ -273,7 +274,8 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size) {
         if (!truthy) ip = c->code + i_off;
         NEXT();
     }
-    L_JUMP:  { ip = c->code + i_off; NEXT(); }
+    L_JUMP:  { if (cancel_flag && *cancel_flag) goto L_RETURN;
+               ip = c->code + i_off; NEXT(); }
     L_RETURN: return 1;
 
     #pragma GCC diagnostic pop
@@ -324,7 +326,9 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size) {
                 if (!truthy) ip = c->code + instr->offset;
                 break;
             }
-            case OP_JUMP:   ip = c->code + instr->offset; break;
+            case OP_JUMP:
+                if (cancel_flag && *cancel_flag) return 1;
+                ip = c->code + instr->offset; break;
             case OP_RETURN: return 1;
         }
     }

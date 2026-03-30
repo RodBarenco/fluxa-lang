@@ -103,6 +103,9 @@ static inline int chunk_add_const_str(Chunk *c, const char *sval) {
 
 /* ── Public API (implemented in bytecode.c) ──────────────────────────────── */
 int chunk_compile_loop(Chunk *c, ASTNode *loop_node);
-int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size);
+/* cancel_flag: NULL for normal execution; set *cancel_flag=1 from another
+ * thread to break out of a long-running VM loop (used by -dev watcher). */
+int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
+           volatile int *cancel_flag);
 
 #endif /* FLUXA_BYTECODE_H */
