@@ -35,7 +35,6 @@ static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
     if (node && node->resolved_offset >= 0 &&
         node->resolved_offset < rt->stack_size) {
         Value v = rt->stack[node->resolved_offset];
-        /* Sprint 6: record prst read for hot-reload graph */
         return v;
     }
     if (rt->current_instance) {
@@ -43,11 +42,16 @@ static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
         if (scope_get(&rt->current_instance->scope, name, &v)) return v;
     }
     Value v; v.type = VAL_NIL;
-    if (!scope_get(&rt->scope, name, &v)) {
-        char buf[280];
-        snprintf(buf, sizeof(buf), "undefined variable: %s", name);
-        rt_error(rt, buf);
+    if (scope_get(&rt->scope, name, &v)) return v;
+    /* Fall back to global scope — allows fns to call other top-level fns.
+     * global_scope.table holds the top-level uthash table, which is
+     * different from rt->scope.table when we are inside a fn call frame. */
+    if (rt->call_depth > 0) {
+        if (scope_table_get(rt->global_table, name, &v)) return v;
     }
+    char buf[280];
+    snprintf(buf, sizeof(buf), "undefined variable: %s", name);
+    rt_error(rt, buf);
     return v;
 }
 
@@ -126,7 +130,19 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
     rt_error(rt, "unknown operator"); return val_nil();
 }
 
-/* ── Function call ───────────────────────────────────────────────────────── */
+/* ── Function call with TCO trampoline ───────────────────────────────────── */
+/*
+ * Design:
+ *   - The outer `while(1)` is the trampoline. On a normal call it executes
+ *     once and returns. On a tail call (return self(args) or return other(args)
+ *     at tail position) it loops, reusing the same C stack frame.
+ *   - Tail call is detected in NODE_RETURN: if the return value is a
+ *     NODE_FUNC_CALL that resolves to a VAL_FUNC, we set rt->ret.tco_* and
+ *     break the body loop instead of recursing into call_function again.
+ *   - This gives O(1) C stack depth for tail-recursive Fluxa functions.
+ *   - Non-tail calls (e.g. `return n * fatorial(n-1)`) are NOT tail calls
+ *     and still recurse normally — their depth is bounded by FLUXA_MAX_DEPTH.
+ */
 static Value call_function(Runtime *rt, ASTNode *fn_node,
                             ASTNode **arg_nodes, int arg_count,
                             BlockInstance *method_inst) {
@@ -134,6 +150,8 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
         rt_error(rt, "stack overflow — max call depth reached");
         return val_nil();
     }
+
+    /* ── Evaluate arguments in the CALLER's scope before swapping ── */
     int param_count = fn_node->as.func_decl.param_count;
     if (arg_count != param_count) {
         char buf[280];
@@ -150,53 +168,107 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     }
     if (rt->had_error) { free(args); return val_nil(); }
 
+    /* ── Save caller frame ── */
     Scope          caller_scope = rt->scope;
     int            caller_sz    = rt->stack_size;
     BlockInstance *caller_inst  = rt->current_instance;
     int            save_slots   = (caller_sz < FLUXA_STACK_SIZE) ? caller_sz : FLUXA_STACK_SIZE;
-    Value          caller_stack[FLUXA_STACK_SIZE];
-    if (save_slots > 0)
+    Value         *caller_stack = NULL;
+    if (save_slots > 0) {
+        caller_stack = (Value*)malloc(sizeof(Value) * save_slots);
+        if (!caller_stack) { free(args); rt_error(rt, "out of memory in call frame"); return val_nil(); }
         memcpy(caller_stack, rt->stack, sizeof(Value) * save_slots);
+    }
 
     rt->scope            = scope_new();
     rt->stack_size       = 0;
     rt->current_instance = method_inst;
     rt->call_depth++;
-    int zero_slots = param_count + 64;
-    if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
-    for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
 
-    for (int i = 0; i < param_count; i++) {
-        if (args[i].type == VAL_ARR) {
-            rt->stack[i] = val_arr_ref(args[i].as.arr.data,
-                                       args[i].as.arr.size);
-        } else {
-            rt->stack[i] = args[i];
+    Value result = val_nil();
+
+    /* ── Trampoline loop — iterates on tail calls, exits on normal return ── */
+    while (1) {
+        /* Load parameters into the current frame */
+        int zero_slots = param_count + 64;
+        if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
+        for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
+
+        for (int i = 0; i < param_count; i++) {
+            if (args[i].type == VAL_ARR)
+                rt->stack[i] = val_arr_ref(args[i].as.arr.data, args[i].as.arr.size);
+            else
+                rt->stack[i] = args[i];
+            if (rt->stack_size <= i) rt->stack_size = i + 1;
         }
-        if (rt->stack_size <= i) rt->stack_size = i + 1;
+        free(args);
+        args = NULL;
+
+        /* Register self for recursion lookup */
+        Value self; self.type = VAL_FUNC; self.as.func = fn_node;
+        scope_set(&rt->scope, fn_node->as.func_decl.name, self);
+        rt->ret.active     = 0;
+        rt->ret.tco_active = 0;
+        rt->ret.tco_fn     = NULL;
+        rt->ret.tco_args   = NULL;
+        rt->ret.value      = val_nil();
+
+        /* Execute body */
+        ASTNode *body = fn_node->as.func_decl.body;
+        for (int i = 0; i < body->as.list.count; i++) {
+            eval(rt, body->as.list.children[i]);
+            if (rt->had_error || rt->ret.active || rt->ret.tco_active) break;
+        }
+
+        if (rt->had_error) { result = val_nil(); break; }
+
+        /* ── Tail call detected — loop instead of recurse ── */
+        if (rt->ret.tco_active) {
+            ASTNode *next_fn   = rt->ret.tco_fn;
+            Value   *next_args = rt->ret.tco_args;
+            int      next_argc = rt->ret.tco_arg_count;
+
+            /* Validate param count for next iteration */
+            if (next_argc != next_fn->as.func_decl.param_count) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "function '%s' expects %d argument(s), got %d (tail call)",
+                    next_fn->as.func_decl.name,
+                    next_fn->as.func_decl.param_count, next_argc);
+                rt_error(rt, buf);
+                free(next_args);
+                result = val_nil();
+                break;
+            }
+
+            /* Reset scope for next iteration — reuse same C frame */
+            scope_free(&rt->scope);
+            rt->scope      = scope_new();
+            rt->stack_size = 0;
+            rt->ret.tco_active = 0;
+
+            fn_node    = next_fn;
+            param_count = next_fn->as.func_decl.param_count;
+            args        = next_args;    /* already evaluated */
+            method_inst = rt->current_instance; /* keep same instance context */
+            continue;  /* trampoline: go back to top of while(1) */
+        }
+
+        /* Normal return */
+        result = rt->ret.active ? rt->ret.value : val_nil();
+        rt->ret.active = 0;
+        break;
     }
-    free(args);
 
-    Value self; self.type = VAL_FUNC; self.as.func = fn_node;
-    scope_set(&rt->scope, fn_node->as.func_decl.name, self);
-    rt->ret.active = 0;
-    rt->ret.value  = val_nil();
-
-    ASTNode *body = fn_node->as.func_decl.body;
-    for (int i = 0; i < body->as.list.count; i++) {
-        eval(rt, body->as.list.children[i]);
-        if (rt->had_error || rt->ret.active) break;
-    }
-
-    Value result = rt->ret.active ? rt->ret.value : val_nil();
-    rt->ret.active = 0;
-
+    /* ── Restore caller frame ── */
+    free(args); /* safety — NULL if already freed in trampoline */
     scope_free(&rt->scope);
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
     rt->current_instance = caller_inst;
     if (save_slots > 0)
         memcpy(rt->stack, caller_stack, sizeof(Value) * save_slots);
+    free(caller_stack);
     rt->call_depth--;
     return result;
 }
@@ -217,7 +289,7 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
     } else if (member->type == NODE_ARR_DECL) {
         /* Sprint 6.b: arr field in Block — allocate and init directly */
         int size = member->as.arr_decl.size;
-        Value *data = (Value*)gc_alloc(&rt->gc, size * (int)sizeof(Value));
+        Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
         if (!data) return;
         if (member->as.arr_decl.default_init) {
             Value def = eval(rt, member->as.arr_decl.default_value);
@@ -273,16 +345,64 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 return v;
             }
 
-            /* Sprint 6: record prst reads for hot-reload graph */
+            /* Sprint 7: record prst reads for dependency graph */
             Value v = rt_get(rt, node, name);
-            /* TODO Sprint 7: if persistent, prst_graph_record */
+            if (rt->mode == FLUXA_MODE_PROJECT && rt->call_depth > 0) {
+                /* If this var is in global_table it is a prst — record dep */
+                Value tmp;
+                if (scope_table_get(rt->global_table, name, &tmp)) {
+                    const char *ctx = rt->current_instance
+                                    ? rt->current_instance->name : "<global>";
+                    prst_graph_record(&rt->prst_graph, name, ctx);
+                }
+            }
             return v;
         }
 
         case NODE_VAR_DECL: {
+            /* Sprint 7: prst semantics
+             * SCRIPT mode: prst is a warning + no-op persistence.
+             * PROJECT mode:
+             *   - If this prst name already exists in the pool (reload):
+             *     skip AST initializer, restore value from pool.
+             *   - If new: evaluate initializer, store in pool + scope.
+             *   - Type collision: pool rejects, error reported via err_stack. */
+            int is_prst = node->as.var_decl.persistent;
+            const char *vname = node->as.var_decl.var_name;
+
+            if (is_prst) {
+                if (rt->mode == FLUXA_MODE_SCRIPT) {
+                    fprintf(stderr,
+                        "[fluxa] warning: prst '%s' ignored in script mode\n",
+                        vname);
+                    /* fall through to normal evaluation */
+                } else {
+                    /* PROJECT mode: check pool first */
+                    Value pooled;
+                    if (prst_pool_has(&rt->prst_pool, vname)) {
+                        /* Reload: restore value from pool, skip initializer */
+                        prst_pool_get(&rt->prst_pool, vname, &pooled);
+                        rt_set(rt, node, vname, pooled);
+                        return val_nil();
+                    }
+                    /* First run: evaluate and register */
+                    Value v = eval(rt, node->as.var_decl.initializer);
+                    if (rt->had_error) return val_nil();
+                    int ok = prst_pool_set(&rt->prst_pool, vname, v, &rt->err_stack);
+                    if (ok >= 0) {
+                        rt_set(rt, node, vname, v);
+                        /* Record stack offset so post-VM sync can read rt->stack */
+                        prst_pool_set_offset(&rt->prst_pool, vname,
+                                              node->resolved_offset);
+                        scope_table_set(&rt->global_table, vname, v);
+                    }
+                    return val_nil();
+                }
+            }
+
             Value v = eval(rt, node->as.var_decl.initializer);
             if (rt->had_error) return val_nil();
-            rt_set(rt, node, node->as.var_decl.var_name, v);
+            rt_set(rt, node, vname, v);
             return val_nil();
         }
 
@@ -302,6 +422,14 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 rt_error(rt, buf); return val_nil();
             }
             rt_set(rt, node, node->as.assign.var_name, v);
+            /* Sprint 7: keep prst_pool in sync so fluxa explain shows
+             * current values and reload restores the latest state. */
+            if (rt->mode == FLUXA_MODE_PROJECT &&
+                prst_pool_has(&rt->prst_pool, node->as.assign.var_name)) {
+                prst_pool_set(&rt->prst_pool, node->as.assign.var_name,
+                              v, &rt->err_stack);
+                scope_table_set(&rt->global_table, node->as.assign.var_name, v);
+            }
             return val_nil();
         }
 
@@ -311,11 +439,55 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_FUNC_DECL: {
             Value v; v.type = VAL_FUNC; v.as.func = node;
             scope_set(&rt->scope, node->as.func_decl.name, v);
+            /* Sprint 7: top-level fns go to global_table so any function
+             * can call any other function regardless of declaration order.
+             * global_table is the single lookup table for cross-function
+             * visibility — contains both fns and prst vars. */
+            if (rt->call_depth == 0)
+                scope_table_set(&rt->global_table, node->as.func_decl.name, v);
             return val_nil();
         }
 
         case NODE_RETURN: {
-            Value v = node->as.ret.value ? eval(rt, node->as.ret.value) : val_nil();
+            /* ── Tail Call Optimization detection ──
+             * If the return expression is a bare FUNC_CALL (not embedded in
+             * a binary expression like `n * f(n-1)`), we can reuse the
+             * current call frame instead of growing the C stack.
+             * Condition: we are inside a function (call_depth > 0) AND
+             * the return node's value is a NODE_FUNC_CALL. */
+            ASTNode *ret_expr = node->as.ret.value;
+            if (ret_expr && rt->call_depth > 0 &&
+                ret_expr->type == NODE_FUNC_CALL) {
+                const char *fn_name = ret_expr->as.list.name;
+                /* Resolve the function */
+                Value fn_val;
+                int found = scope_get(&rt->scope, fn_name, &fn_val);
+                if (!found && rt->current_instance)
+                    found = scope_get(&rt->current_instance->scope, fn_name, &fn_val);
+                if (!found && rt->call_depth > 0)
+                    found = scope_table_get(rt->global_table, fn_name, &fn_val);
+                if (found && fn_val.type == VAL_FUNC && !builtin_is(fn_name)) {
+                    /* Evaluate arguments NOW in current scope */
+                    int argc = ret_expr->as.list.count;
+                    Value *tco_args = NULL;
+                    if (argc > 0) {
+                        tco_args = (Value*)malloc(sizeof(Value) * argc);
+                        for (int i = 0; i < argc; i++)
+                            tco_args[i] = eval(rt, ret_expr->as.list.children[i]);
+                    }
+                    if (!rt->had_error) {
+                        rt->ret.tco_active    = 1;
+                        rt->ret.tco_fn        = fn_val.as.func;
+                        rt->ret.tco_args      = tco_args;
+                        rt->ret.tco_arg_count = argc;
+                        rt->ret.active        = 0;
+                        return val_nil();
+                    }
+                    free(tco_args);
+                }
+            }
+            /* Normal (non-tail) return */
+            Value v = ret_expr ? eval(rt, ret_expr) : val_nil();
             rt->ret.active = 1;
             rt->ret.value  = v;
             return v;
@@ -326,7 +498,14 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (builtin_is(name))
                 return builtin_dispatch(rt, node, (EvalFn)eval);
             Value fn_val;
-            if (!scope_get(&rt->scope, name, &fn_val)) {
+            int found = scope_get(&rt->scope, name, &fn_val);
+            /* Inside a Block method: look up sibling methods in instance scope */
+            if (!found && rt->current_instance)
+                found = scope_get(&rt->current_instance->scope, name, &fn_val);
+            /* Fall back to global scope for top-level fns */
+            if (!found && rt->call_depth > 0)
+                found = scope_table_get(rt->global_table, name, &fn_val);
+            if (!found) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "undefined function: %s", name);
                 rt_error(rt, buf); return val_nil();
@@ -336,8 +515,17 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 snprintf(buf, sizeof(buf), "'%s' is not a function", name);
                 rt_error(rt, buf); return val_nil();
             }
+            /* If resolved from instance scope, pass the instance as context */
+            BlockInstance *call_inst = NULL;
+            if (fn_val.type == VAL_FUNC && rt->current_instance) {
+                Value check;
+                if (scope_get(&rt->current_instance->scope, name, &check) &&
+                    check.type == VAL_FUNC)
+                    call_inst = rt->current_instance;
+            }
             return call_function(rt, fn_val.as.func,
-                                 node->as.list.children, node->as.list.count, NULL);
+                                 node->as.list.children, node->as.list.count,
+                                 call_inst);
         }
 
         case NODE_BLOCK_STMT:
@@ -364,6 +552,24 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (chunk_compile_loop(&chunk, node)) {
                 vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size);
                 chunk_free(&chunk);
+                /* Sprint 7: after VM, sync prst vars from rt->stack back to
+                 * pool and global_table. The VM writes rt->stack[offset]
+                 * directly — the PrstEntry stores the offset set at decl time. */
+                if (rt->mode == FLUXA_MODE_PROJECT) {
+                    for (int pi = 0; pi < rt->prst_pool.count; pi++) {
+                        PrstEntry *pe = &rt->prst_pool.entries[pi];
+                        int off = pe->stack_offset;
+                        if (off >= 0 && off < rt->stack_size) {
+                            Value sv = rt->stack[off];
+                            /* Only update if type still matches */
+                            if (sv.type == pe->declared_type) {
+                                prst_pool_set(&rt->prst_pool, pe->name,
+                                              sv, &rt->err_stack);
+                                scope_table_set(&rt->global_table, pe->name, sv);
+                            }
+                        }
+                    }
+                }
             } else {
                 int limit = 100000000;
                 while (limit-- > 0) {
@@ -385,13 +591,13 @@ static Value eval(Runtime *rt, ASTNode *node) {
         /* ── Sprint 6/6.b: arr contíguo na heap ──────────────────────────── */
         case NODE_ARR_DECL: {
             int size = node->as.arr_decl.size;
-            Value *data = (Value*)gc_alloc(&rt->gc, size * (int)sizeof(Value));
+            Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
             if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
 
             if (node->as.arr_decl.default_init) {
                 /* Sprint 6.b: fill all slots with single default value */
                 Value def = eval(rt, node->as.arr_decl.default_value);
-                if (rt->had_error) { gc_free(&rt->gc, data); return val_nil(); }
+                if (rt->had_error) { free(data); return val_nil(); }
                 /* fast path for numeric types via memset-like loop */
                 for (int i = 0; i < size; i++) {
                     if (def.type == VAL_STRING && def.as.string)
@@ -403,7 +609,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 /* explicit list initializer */
                 for (int i = 0; i < size; i++) {
                     data[i] = eval(rt, node->as.arr_decl.elements[i]);
-                    if (rt->had_error) { gc_free(&rt->gc, data); return val_nil(); }
+                    if (rt->had_error) { free(data); return val_nil(); }
                 }
             }
 
@@ -575,7 +781,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         entry->value.as.arr.data[i].as.string)
                         free(entry->value.as.arr.data[i].as.string);
                 }
-                gc_free(&rt->gc, entry->value.as.arr.data);
+                free(entry->value.as.arr.data);
                 entry->value.as.arr.data = NULL;
                 entry->value.as.arr.size = 0;
             } else if (entry->value.type == VAL_STRING && entry->value.as.string) {
@@ -799,19 +1005,46 @@ int runtime_exec(ASTNode *program) {
         return 1;
     }
 
+    /* ── Sprint 7: mode detection ─────────────────────────────────────────
+     * resolver_has_prst() scans AST for any prst declaration.
+     * prst present → PROJECT mode: PrstPool + PrstGraph active.
+     * no prst      → SCRIPT mode:  lightweight, no persistence infra.    */
+    FluxaMode mode = resolver_has_prst(program)
+                   ? FLUXA_MODE_PROJECT
+                   : FLUXA_MODE_SCRIPT;
+
+    /* Load fluxa.toml for runtime config (gc_cap, etc.) */
+    FluxaConfig config = fluxa_config_find_and_load();
+
     Runtime rt;
     rt.scope            = scope_new();
+    rt.global_table = NULL;
     rt.stack_size       = slots;
     rt.had_error        = 0;
     rt.call_depth       = 0;
     rt.ret.active       = 0;
+    rt.ret.tco_active   = 0;
+    rt.ret.tco_fn       = NULL;
+    rt.ret.tco_args     = NULL;
     rt.ret.value        = val_nil();
     rt.current_instance = NULL;
     rt.danger_depth     = 0;
+    rt.mode             = mode;
+    rt.config           = config;
     errstack_clear(&rt.err_stack);
-    gc_init(&rt.gc);
-    prst_pool_init(&rt.prst_pool);
+    gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
+
+    if (mode == FLUXA_MODE_PROJECT) {
+        prst_pool_init(&rt.prst_pool);
+        prst_graph_init(&rt.prst_graph);
+    } else {
+        /* Script mode: zero out pool/graph so free() calls are safe */
+        rt.prst_pool.entries = NULL;
+        rt.prst_pool.count   = 0;
+        rt.prst_pool.cap     = 0;
+        rt.prst_graph.count  = 0;
+    }
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
@@ -821,9 +1054,137 @@ int runtime_exec(ASTNode *program) {
     }
 
     scope_free(&rt.scope);
+    scope_table_free(&rt.global_table);
+    block_registry_free();
+    gc_collect_all(&rt.gc);
+    if (mode == FLUXA_MODE_PROJECT) {
+        prst_pool_free(&rt.prst_pool);
+        prst_graph_free(&rt.prst_graph);
+    }
+    ffi_registry_free(&rt.ffi);
+    return rt.had_error ? 1 : 0;
+}
+
+/* runtime_exec_explain: like runtime_exec but prints explain output
+ * before teardown — used by `fluxa explain <file>`. Forces PROJECT mode
+ * so PrstPool and PrstGraph are always active for explain. */
+int runtime_exec_explain(ASTNode *program) {
+    if (!program || program->type != NODE_PROGRAM) {
+        fprintf(stderr, "[fluxa] runtime: invalid program node\n");
+        return 1;
+    }
+
+    int slots = resolver_run(program);
+    if (slots < 0) {
+        fprintf(stderr, "[fluxa] aborting due to resolver errors.\n");
+        return 1;
+    }
+
+    FluxaConfig config = fluxa_config_find_and_load();
+
+    Runtime rt;
+    rt.scope            = scope_new();
+    rt.global_table = NULL;
+    rt.stack_size       = slots;
+    rt.had_error        = 0;
+    rt.call_depth       = 0;
+    rt.ret.active       = 0;
+    rt.ret.tco_active   = 0;
+    rt.ret.tco_fn       = NULL;
+    rt.ret.tco_args     = NULL;
+    rt.ret.value        = val_nil();
+    rt.current_instance = NULL;
+    rt.danger_depth     = 0;
+    rt.mode             = FLUXA_MODE_PROJECT;  /* always project for explain */
+    rt.config           = config;
+    errstack_clear(&rt.err_stack);
+    gc_init(&rt.gc, config.gc_cap);
+    ffi_registry_init(&rt.ffi);
+    prst_pool_init(&rt.prst_pool);
+    prst_graph_init(&rt.prst_graph);
+
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
+
+    for (int i = 0; i < program->as.list.count; i++) {
+        eval(&rt, program->as.list.children[i]);
+        if (rt.had_error) break;
+    }
+    runtime_explain(&rt);
+
+    scope_free(&rt.scope);
+    scope_table_free(&rt.global_table);
     block_registry_free();
     gc_collect_all(&rt.gc);
     prst_pool_free(&rt.prst_pool);
+    prst_graph_free(&rt.prst_graph);
     ffi_registry_free(&rt.ffi);
     return rt.had_error ? 1 : 0;
+}
+
+/* ── runtime_explain ─────────────────────────────────────────────────────── */
+/* Prints the full runtime state for `fluxa explain`.
+ * Called after program execution completes in PROJECT mode.
+ * Shows: prst variables, non-prst variables, Blocks, and dep graph. */
+void runtime_explain(Runtime *rt) {
+    printf("\n── prst (sobrevivem ao reload) ");
+    printf("────────────────────────────────────\n");
+    if (rt->prst_pool.count == 0) {
+        printf("  (nenhuma)\n");
+    } else {
+        for (int i = 0; i < rt->prst_pool.count; i++) {
+            PrstEntry *e = &rt->prst_pool.entries[i];
+            /* Prefer value from global_table (reflects latest assignments,
+             * including those done via bytecode VM) over pool snapshot */
+            Value cur = e->value;
+            scope_table_get(rt->global_table, e->name, &cur);
+            printf("  %-20s ", e->name);
+            switch (cur.type) {
+                case VAL_INT:   printf("int   = %ld\n",  cur.as.integer); break;
+                case VAL_FLOAT: printf("float = %g\n",   cur.as.real);    break;
+                case VAL_BOOL:  printf("bool  = %s\n",   cur.as.boolean ? "true" : "false"); break;
+                case VAL_STRING:printf("str   = \"%s\"\n", cur.as.string ? cur.as.string : ""); break;
+                default:        printf("(%d)\n", cur.type); break;
+            }
+        }
+    }
+
+    printf("\n── Blocks ─────────────────────────────────────────────────────\n");
+    BlockDef *def, *dtmp;
+    int block_count = 0;
+    HASH_ITER(hh, g_block_defs, def, dtmp) {
+        BlockInstance *inst = block_inst_find(def->name);
+        int prst_count = 0;
+        int fn_count   = 0;
+        for (int i = 0; i < def->node->as.block_decl.count; i++) {
+            ASTNode *m = def->node->as.block_decl.members[i];
+            if (m->type == NODE_VAR_DECL  && m->as.var_decl.persistent)  prst_count++;
+            if (m->type == NODE_FUNC_DECL) fn_count++;
+        }
+        if (inst && inst->is_root) {
+            printf("  %-16s (raiz)  — %d prst, %d fn\n",
+                   def->name, prst_count, fn_count);
+        }
+        block_count++;
+        (void)inst;
+    }
+    /* typeof instances */
+    BlockInstance *inst, *itmp;
+    HASH_ITER(hh, g_block_instances, inst, itmp) {
+        if (!inst->is_root) {
+            printf("  %-16s typeof %s\n", inst->name, inst->def->name);
+        }
+    }
+    if (block_count == 0) printf("  (nenhum)\n");
+
+    printf("\n── Dependências registradas ───────────────────────────────────\n");
+    if (rt->prst_graph.count == 0) {
+        printf("  nenhuma — estado atual compatível com o código\n");
+    } else {
+        for (int i = 0; i < rt->prst_graph.count; i++) {
+            printf("  %-20s  <-  %s\n",
+                   rt->prst_graph.deps[i].prst_name,
+                   rt->prst_graph.deps[i].reader_ctx);
+        }
+    }
+    printf("\n");
 }

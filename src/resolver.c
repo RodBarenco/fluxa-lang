@@ -309,3 +309,51 @@ int resolver_run(ASTNode *program) {
     if (r.had_error) return -1;
     return r.max_slots;
 }
+
+/* ── resolver_has_prst ───────────────────────────────────────────────────── */
+/* Recursive scan — returns 1 on first prst found anywhere in the AST.
+ * Checks VAR_DECL and ARR_DECL with persistent=1.
+ * Also scans inside Block declarations and function bodies. */
+static int has_prst_node(ASTNode *node) {
+    if (!node) return 0;
+    switch (node->type) {
+        case NODE_VAR_DECL:
+            if (node->as.var_decl.persistent) return 1;
+            break;
+        case NODE_ARR_DECL:
+            if (node->as.arr_decl.persistent) return 1;
+            break;
+        case NODE_BLOCK_DECL:
+            for (int i = 0; i < node->as.block_decl.count; i++)
+                if (has_prst_node(node->as.block_decl.members[i])) return 1;
+            break;
+        case NODE_FUNC_DECL:
+            if (has_prst_node(node->as.func_decl.body)) return 1;
+            break;
+        case NODE_PROGRAM:
+        case NODE_BLOCK_STMT:
+            for (int i = 0; i < node->as.list.count; i++)
+                if (has_prst_node(node->as.list.children[i])) return 1;
+            break;
+        case NODE_IF:
+            if (has_prst_node(node->as.if_stmt.then_body)) return 1;
+            if (has_prst_node(node->as.if_stmt.else_body)) return 1;
+            break;
+        case NODE_WHILE:
+            if (has_prst_node(node->as.while_stmt.body)) return 1;
+            break;
+        case NODE_FOR:
+            if (has_prst_node(node->as.for_stmt.body)) return 1;
+            break;
+        case NODE_DANGER:
+            if (has_prst_node(node->as.danger_stmt.body)) return 1;
+            break;
+        default:
+            break;
+    }
+    return 0;
+}
+
+int resolver_has_prst(ASTNode *program) {
+    return has_prst_node(program);
+}
