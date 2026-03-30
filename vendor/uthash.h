@@ -99,8 +99,6 @@ static inline void _uth_del(void **head_vp, UT_hash_handle *hh, size_t hh_off) {
     else *head_vp = tbl->head ? (char*)tbl->head - hh_off : NULL;
 }
 
-/* ── Public macros (C99, no __typeof__) ─────────────────────────────────── */
-
 #define HASH_ADD_STR(head, fieldname, add)                              \
     do {                                                                \
         (add)->hh.key    = (void*)((add)->fieldname);                  \
