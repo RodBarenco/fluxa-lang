@@ -25,7 +25,7 @@ SRCS    = src/main.c \
           src/runtime.c
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 bench examples clean
+.PHONY: all build test test-sprint5 test-runner bench examples clean
 
 all: build
 
@@ -92,7 +92,13 @@ test: build
 	@./$(TARGET) run tests/arr_param.flx
 	@echo "── arr block field test ───────────────────────"
 	@./$(TARGET) run tests/arr_block_field.flx
+	@echo "── Sprint 7.b test ─────────────────────────────"
+	@./$(TARGET) run tests/sprint7b.flx
 	@echo "── all tests passed ───────────────────────────"
+
+# Automated PASS/FAIL runner — shows diff on failures, suitable for CI
+test-runner: build
+	@./tests/run_tests.sh ./$(TARGET)
 
 test-sprint5: build
 	@echo "── Sprint 5 only ──────────────────────────────"
@@ -105,9 +111,9 @@ test-sprint5: build
 
 bench: build
 	@echo "── bench (global while) ───────────────────────"
-	@time ./$(TARGET) run tests/bench.flx
+	@bash -c "time ./$(TARGET) run tests/bench.flx"
 	@echo "── bench_block (while inside method) ──────────"
-	@time ./$(TARGET) run tests/bench_block.flx
+	@bash -c "time ./$(TARGET) run tests/bench_block.flx"
 
 examples: build
 	@echo "── sort ────────────────────────────────────────"
@@ -136,6 +142,12 @@ examples: build
 	@./$(TARGET) run examples/problems/04_percolation.flx
 	@echo "── 05_sliding_window ───────────────────────────"
 	@./$(TARGET) run examples/problems/05_sliding_window.flx
+	@echo "── 06_maze_bfs ─────────────────────────────────────"
+	@./$(TARGET) run examples/problems/06_maze_bfs.flx
+	@echo "── 07_dijkstra ─────────────────────────────────────"
+	@./$(TARGET) run examples/problems/07_dijkstra.flx
+	@echo "── 08_pagerank ─────────────────────────────────────"
+	@./$(TARGET) run examples/problems/08_pagerank.flx
 	@echo "── all examples ok ─────────────────────────────"
 
 clean:

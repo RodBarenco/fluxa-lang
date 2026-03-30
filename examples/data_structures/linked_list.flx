@@ -1,0 +1,212 @@
+// data_structures/linked_list.flx — Linked List
+//
+// Implementation via "index pool": two parallel arrays simulate nodes.
+//   vals[i]  = value of node i
+//   nexts[i] = index of next node (-1 = end)
+//
+// This pattern is called "index-based linked list" and is identical to what a
+// real linked list does in memory — the difference is that the "pointer" is an
+// integer indexing a static pool. Common in embedded C.
+//
+// Operations:
+//   append O(n) | prepend O(1) | remove_head O(1) | contains O(n)
+//
+// How to run:
+//   ./fluxa run examples/data_structures/linked_list.flx
+
+Block LinkedList {
+    int arr vals[64]  = 0
+    int arr nexts[64] = -1
+    int head     = -1
+    int free_idx = 0
+
+    fn alloc_node(int val) int {
+        if free_idx >= 64 {
+            print("ERRO: pool esgotado")
+            return -1
+        }
+        int idx = free_idx
+        vals[idx]  = val
+        nexts[idx] = -1
+        free_idx = free_idx + 1
+        return idx
+    }
+
+    fn prepend(int val) nil {
+        int idx = alloc_node(val)
+        if idx < 0 {
+            return
+        }
+        nexts[idx] = head
+        head = idx
+    }
+
+    fn append(int val) nil {
+        int idx = alloc_node(val)
+        if idx < 0 {
+            return
+        }
+        if head < 0 {
+            head = idx
+            return
+        }
+        int cur = head
+        while nexts[cur] != -1 {
+            cur = nexts[cur]
+        }
+        nexts[cur] = idx
+    }
+
+    fn remove_head() int {
+        if head < 0 {
+            return -1
+        }
+        int val = vals[head]
+        head = nexts[head]
+        return val
+    }
+
+    fn contains(int val) int {
+        int cur = head
+        while cur != -1 {
+            if vals[cur] == val {
+                return 1
+            }
+            cur = nexts[cur]
+        }
+        return 0
+    }
+
+    fn length() int {
+        int cur = head
+        int len = 0
+        while cur != -1 {
+            len = len + 1
+            cur = nexts[cur]
+        }
+        return len
+    }
+
+    fn get_val(int idx) int {
+        return vals[idx]
+    }
+
+    fn get_next(int idx) int {
+        return nexts[idx]
+    }
+
+    fn is_empty() int {
+        if head < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn print_list() nil {
+        if head < 0 {
+            print("[ vazia ]")
+            return
+        }
+        int cur = head
+        while cur != -1 {
+            print(vals[cur])
+            cur = nexts[cur]
+        }
+    }
+}
+
+// ── Basic demo ───────────────────────────────────────────────────────────────
+
+print("--- append 10, 20, 30 ---")
+LinkedList.append(10)
+LinkedList.append(20)
+LinkedList.append(30)
+LinkedList.print_list()
+// esperado: 10 20 30
+
+print("--- prepend 5 ---")
+LinkedList.prepend(5)
+LinkedList.print_list()
+// esperado: 5 10 20 30
+
+print("--- length ---")
+print(LinkedList.length())       // 4
+
+print("--- contains ---")
+print(LinkedList.contains(20))   // 1
+print(LinkedList.contains(99))   // 0
+
+print("--- remove_head ---")
+print(LinkedList.remove_head())  // 5
+LinkedList.print_list()
+// esperado: 10 20 30
+
+// ── Application: reverse ─────────────────────────────────────────────────────
+// Reverter usando uma segunda lista como pilha auxiliar (prepend = push).
+
+print("--- reverse ---")
+Block orig typeof LinkedList
+orig.append(1)
+orig.append(2)
+orig.append(3)
+orig.append(4)
+orig.append(5)
+
+Block rev typeof LinkedList
+int cur = orig.head
+while cur != -1 {
+    int v = orig.get_val(cur)
+    rev.prepend(v)
+    cur = orig.get_next(cur)
+}
+
+print("original:")
+orig.print_list()    // 1 2 3 4 5
+print("reversed:")
+rev.print_list()     // 5 4 3 2 1
+
+// ── Application: merge two sorted lists ──────────────────────────────────────
+
+print("--- merge ordenado ---")
+Block la typeof LinkedList
+Block lb typeof LinkedList
+Block lc typeof LinkedList
+
+la.append(1)
+la.append(3)
+la.append(5)
+la.append(7)
+
+lb.append(2)
+lb.append(4)
+lb.append(6)
+lb.append(8)
+
+int ia = la.head
+int ib = lb.head
+
+while ia != -1 {
+    if ib == -1 {
+        int va = la.get_val(ia)
+        lc.append(va)
+        ia = la.get_next(ia)
+    } else {
+        int va = la.get_val(ia)
+        int vb = lb.get_val(ib)
+        if va <= vb {
+            lc.append(va)
+            ia = la.get_next(ia)
+        } else {
+            lc.append(vb)
+            ib = lb.get_next(ib)
+        }
+    }
+}
+while ib != -1 {
+    int vb = lb.get_val(ib)
+    lc.append(vb)
+    ib = lb.get_next(ib)
+}
+
+print("merged (esperado: 1 2 3 4 5 6 7 8):")
+lc.print_list()

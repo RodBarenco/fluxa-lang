@@ -1,0 +1,178 @@
+// data_structures/hash_map.flx — Hash Map
+//
+// Maps integer keys to values in O(1) average.
+// Collisions resolved by linear probing (open addressing).
+//
+// hash(key) = key % 32  (capacidade = 32)
+// Fator de carga ideal < 0.7 para sondagem linear.
+//
+// Operations: put O(1) | get O(1) | has O(1) | remove O(1)
+//
+// How to run:
+//   ./fluxa run examples/data_structures/hash_map.flx
+
+Block HashMap {
+    int arr keys[32]  = -1
+    int arr vals[32]  = 0
+    int arr used[32]  = 0
+    int count = 0
+
+    fn hash(int key) int {
+        int h = key % 32
+        if h < 0 {
+            h = h + 32
+        }
+        return h
+    }
+
+    fn find_slot(int key) int {
+        int slot = hash(key)
+        int probe = 0
+        while probe < 32 {
+            int idx = (slot + probe) % 32
+            if used[idx] == 0 {
+                return -1
+            }
+            if keys[idx] == key {
+                return idx
+            }
+            probe = probe + 1
+        }
+        return -1
+    }
+
+    fn put(int key, int val) nil {
+        // Check if key already exists (update)
+        int idx = find_slot(key)
+        if idx >= 0 {
+            vals[idx] = val
+            return
+        }
+        if count >= 28 {
+            print("AVISO: hash map quase cheio")
+        }
+        int slot = hash(key)
+        int probe = 0
+        while probe < 32 {
+            int i = (slot + probe) % 32
+            if used[i] == 0 {
+                keys[i] = key
+                vals[i] = val
+                used[i] = 1
+                count = count + 1
+                return
+            }
+            probe = probe + 1
+        }
+        print("ERRO: hash map cheio")
+    }
+
+    fn get(int key) int {
+        int idx = find_slot(key)
+        if idx < 0 {
+            return -1
+        }
+        return vals[idx]
+    }
+
+    fn has(int key) int {
+        int idx = find_slot(key)
+        if idx < 0 {
+            return 0
+        }
+        return 1
+    }
+
+    fn remove(int key) nil {
+        int idx = find_slot(key)
+        if idx < 0 {
+            return
+        }
+        used[idx] = 0
+        keys[idx] = -1
+        count = count - 1
+    }
+
+    fn size() int {
+        return count
+    }
+}
+
+// ── Basic demo ───────────────────────────────────────────────────────────────
+
+print("--- put / get ---")
+HashMap.put(10, 100)
+HashMap.put(20, 200)
+HashMap.put(30, 300)
+
+print(HashMap.get(10))   // 100
+print(HashMap.get(20))   // 200
+print(HashMap.get(99))   // -1
+
+print("--- has ---")
+print(HashMap.has(20))   // 1
+print(HashMap.has(99))   // 0
+
+print("--- size ---")
+print(HashMap.size())    // 3
+
+print("--- update ---")
+HashMap.put(20, 999)
+print(HashMap.get(20))   // 999
+print(HashMap.size())    // 3
+
+print("--- remove ---")
+HashMap.remove(10)
+print(HashMap.has(10))   // 0
+print(HashMap.size())    // 2
+
+// ── Application: frequency count ─────────────────────────────────────────────
+
+print("--- frequencia ---")
+Block freq typeof HashMap
+
+int arr data[12] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 3]
+int di = 0
+while di < 12 {
+    int elem = data[di]
+    if freq.has(elem) == 1 {
+        int cur = freq.get(elem)
+        freq.put(elem, cur + 1)
+    } else {
+        freq.put(elem, 1)
+    }
+    di = di + 1
+}
+
+print("freq 1:")
+print(freq.get(1))   // 2
+print("freq 3:")
+print(freq.get(3))   // 3
+print("freq 5:")
+print(freq.get(5))   // 3
+print("freq 9:")
+print(freq.get(9))   // 1
+
+// ── Application: Fibonacci memoization ───────────────────────────────────────
+// Using the hash map as a cache eliminates the exponential work of naive fib.
+
+print("--- fibonacci memoizado ---")
+Block memo typeof HashMap
+
+fn fib_memo(int n) int {
+    if n <= 1 {
+        return n
+    }
+    if memo.has(n) == 1 {
+        return memo.get(n)
+    }
+    int a = fib_memo(n - 1)
+    int b = fib_memo(n - 2)
+    int result = a + b
+    memo.put(n, result)
+    return result
+}
+
+print(fib_memo(10))   // 55
+print(fib_memo(15))   // 610
+print(fib_memo(20))   // 6765

@@ -1,0 +1,260 @@
+// problems/06_maze_bfs.flx — Maze Solver with BFS
+//
+// Level: Intermediate
+//
+// ── The history of the problem ────────────────────────────────────────────────
+//
+// The maze pathfinding problem is fundamental in computer science and appears
+// in robotics, game development, and network routing. Given a grid where some
+// cells are blocked and others are open, find a path from a start position to
+// a goal position.
+//
+// This model describes real phenomena:
+//   - Robot navigation in warehouses (Amazon, logistics)
+//   - NPC pathfinding in video games (A*, BFS, Dijkstra)
+//   - Emergency evacuation route planning
+//   - Circuit board trace routing
+//
+// The central question: what is the SHORTEST path from start to goal?
+// While DFS finds A path, only BFS guarantees the shortest path in unweighted
+// grids. This is because BFS explores layer-by-layer: all cells at distance d
+// are visited before any at distance d+1.
+//
+// It is a classic interview problem (LeetCode #1091, #1293) and appears in
+// the MIT 6.006 Introduction to Algorithms course as a BFS application.
+// Here we implement BFS with a circular queue — O(n²) time, O(n²) space.
+//
+// Grid: 8x8, cells as linear array (row*8 + col)
+// States: 0 = wall, 1 = path, 2 = start, 3 = goal, 4 = solution marker
+//
+// How to run:
+//   ./fluxa run examples/problems/06_maze_bfs.flx
+
+Block MazeSolver {
+    // ── Private state ─────────────────────────────────────────────────────
+    int n = 8
+    int arr grid[64]    = 0
+    int arr visited[64] = 0
+    int arr dist[64]    = 0
+    int arr parent[64]  = -1
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0 { return 0 }
+        if r >= n { return 0 }
+        if c < 0 { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn is_walkable(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 0 }
+        int v = grid[idx(r, c)]
+        if v == 1 { return 1 }
+        if v == 2 { return 1 }
+        if v == 3 { return 1 }
+        if v == 4 { return 1 }
+        return 0
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────
+
+    fn clear() nil {
+        int i = 0
+        while i < 64 {
+            grid[i]    = 0
+            visited[i] = 0
+            dist[i]    = -1
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_cell(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { grid[idx(r, c)] = val }
+    }
+
+    fn get_cell(int r, int c) int {
+        if in_bounds(r, c) == 0 { return -1 }
+        return grid[idx(r, c)]
+    }
+
+    fn print_maze_grid() nil {
+        int r = 0
+        while r < n {
+            print("Row", r, ":", grid[idx(r,0)], grid[idx(r,1)], grid[idx(r,2)], grid[idx(r,3)], grid[idx(r,4)], grid[idx(r,5)], grid[idx(r,6)], grid[idx(r,7)])
+            r = r + 1
+        }
+    }
+
+    fn mark_path(int goal_r, int goal_c) nil {
+        int goal_i = idx(goal_r, goal_c)
+        if dist[goal_i] < 0 { return }
+        int cur = goal_i
+        while cur != -1 {
+            int v = grid[cur]
+            if v != 2 {
+                if v != 3 { grid[cur] = 4 }
+            }
+            cur = parent[cur]
+        }
+    }
+
+    fn setup_default() nil {
+        clear()
+        // Row 0: S . # . . . # .
+        set_cell(0,0,2) set_cell(0,1,1) set_cell(0,2,0) set_cell(0,3,1)
+        set_cell(0,4,1) set_cell(0,5,1) set_cell(0,6,0) set_cell(0,7,1)
+        // Row 1: # . # # # . # .
+        set_cell(1,0,0) set_cell(1,1,1) set_cell(1,2,0) set_cell(1,3,0)
+        set_cell(1,4,0) set_cell(1,5,1) set_cell(1,6,0) set_cell(1,7,1)
+        // Row 2: . . . . # . . .
+        set_cell(2,0,1) set_cell(2,1,1) set_cell(2,2,1) set_cell(2,3,1)
+        set_cell(2,4,0) set_cell(2,5,1) set_cell(2,6,1) set_cell(2,7,1)
+        // Row 3: . # # # # # # .
+        set_cell(3,0,1) set_cell(3,1,0) set_cell(3,2,0) set_cell(3,3,0)
+        set_cell(3,4,0) set_cell(3,5,0) set_cell(3,6,0) set_cell(3,7,1)
+        // Row 4: . . . . . . # .
+        set_cell(4,0,1) set_cell(4,1,1) set_cell(4,2,1) set_cell(4,3,1)
+        set_cell(4,4,1) set_cell(4,5,1) set_cell(4,6,0) set_cell(4,7,1)
+        // Row 5: # # # # # . # .
+        set_cell(5,0,0) set_cell(5,1,0) set_cell(5,2,0) set_cell(5,3,0)
+        set_cell(5,4,0) set_cell(5,5,1) set_cell(5,6,0) set_cell(5,7,1)
+        // Row 6: . . . . # . . .
+        set_cell(6,0,1) set_cell(6,1,1) set_cell(6,2,1) set_cell(6,3,1)
+        set_cell(6,4,0) set_cell(6,5,1) set_cell(6,6,1) set_cell(6,7,1)
+        // Row 7: . # # # # # # G
+        set_cell(7,0,1) set_cell(7,1,0) set_cell(7,2,0) set_cell(7,3,0)
+        set_cell(7,4,0) set_cell(7,5,0) set_cell(7,6,0) set_cell(7,7,3)
+    }
+
+    fn solve(int start_r, int start_c, int goal_r, int goal_c) int {
+        int start_i = idx(start_r, start_c)
+        int goal_i  = idx(goal_r,  goal_c)
+
+        int i = 0
+        while i < 64 {
+            visited[i] = 0
+            dist[i]    = -1
+            parent[i]  = -1
+            i = i + 1
+        }
+
+        int arr queue[64] = 0
+        int qhead = 0
+        int qtail = 0
+
+        queue[qtail] = start_i
+        qtail = qtail + 1
+        visited[start_i] = 1
+        dist[start_i]    = 0
+
+        int arr dr[4] = [-1, 1, 0, 0]
+        int arr dc[4] = [ 0, 0,-1, 1]
+
+        while qhead < qtail {
+            int cur = queue[qhead]
+            qhead = qhead + 1
+
+            if cur == goal_i { return dist[cur] }
+
+            int cr = row(cur)
+            int cc = col(cur)
+
+            int d = 0
+            while d < 4 {
+                int nr = cr + dr[d]
+                int nc = cc + dc[d]
+                if is_walkable(nr, nc) == 1 {
+                    int ni = idx(nr, nc)
+                    if visited[ni] == 0 {
+                        visited[ni] = 1
+                        dist[ni]    = dist[cur] + 1
+                        parent[ni]  = cur
+                        queue[qtail] = ni
+                        qtail = qtail + 1
+                    }
+                }
+                d = d + 1
+            }
+        }
+        return -1
+    }
+
+    fn print_path(int goal_r, int goal_c) nil {
+        int goal_i = idx(goal_r, goal_c)
+        if dist[goal_i] < 0 { print("No path available")  return }
+        print("--- Path (goal -> start) ---")
+        int cur = goal_i
+        while cur != -1 {
+            print("  row=", row(cur), "col=", col(cur), "dist=", dist[cur])
+            cur = parent[cur]
+        }
+    }
+}
+
+// ── Case 1: Default maze — path exists ───────────────────────────────────────
+print("=== Case 1: DEFAULT MAZE ===")
+Block ms1 typeof MazeSolver
+ms1.setup_default()
+print("Initial maze (0=wall 1=path 2=start 3=goal):")
+ms1.print_maze_grid()
+
+int result = ms1.solve(0, 0, 7, 7)
+if result >= 0 {
+    print("Path found — shortest distance:", result)
+    ms1.mark_path(7, 7)
+    print("Solution path (4 = marked cell):")
+    ms1.print_maze_grid()
+    ms1.print_path(7, 7)
+} else {
+    print("No path exists")
+}
+
+// ── Case 2: Start = goal — trivial ───────────────────────────────────────────
+print("")
+print("=== Case 2: START = GOAL ===")
+Block ms2 typeof MazeSolver
+ms2.clear()
+ms2.set_cell(3, 3, 2)
+int same = ms2.solve(3, 3, 3, 3)
+print("distance when start=goal:", same)   // expected: 0
+
+// ── Case 3: Completely blocked ───────────────────────────────────────────────
+print("")
+print("=== Case 3: COMPLETELY BLOCKED ===")
+Block ms3 typeof MazeSolver
+ms3.clear()
+ms3.set_cell(0, 0, 2)
+ms3.set_cell(7, 7, 3)
+int blocked = ms3.solve(0, 0, 7, 7)
+print("distance when completely blocked:", blocked)   // expected: -1
+
+// ── Case 4: Custom small maze ────────────────────────────────────────────────
+print("")
+print("=== Case 4: CUSTOM SMALL MAZE ===")
+Block ms4 typeof MazeSolver
+ms4.clear()
+ms4.set_cell(0,0,2) ms4.set_cell(0,1,1) ms4.set_cell(0,2,1) ms4.set_cell(0,3,3)
+print("Row 0:", ms4.get_cell(0,0), ms4.get_cell(0,1), ms4.get_cell(0,2), ms4.get_cell(0,3))
+int small = ms4.solve(0, 0, 0, 3)
+print("distance:", small)   // expected: 3
+
+// ── Case 5: Multiple paths — BFS picks shortest ──────────────────────────────
+print("")
+print("=== Case 5: MULTIPLE PATHS ===")
+Block ms5 typeof MazeSolver
+ms5.clear()
+ms5.set_cell(0,0,2) ms5.set_cell(0,1,1) ms5.set_cell(0,2,1) ms5.set_cell(0,3,3)
+ms5.set_cell(1,0,1) ms5.set_cell(1,1,1) ms5.set_cell(1,2,1) ms5.set_cell(1,3,1)
+int multi = ms5.solve(0, 0, 0, 3)
+print("shortest path (should be 3, not 7):", multi)   // expected: 3
+
+print("")
+print("=== Notes ===")
+print("bfs guarantees shortest path in unweighted grids")
+print("complexity: O(n^2) time and space for n x n grid")

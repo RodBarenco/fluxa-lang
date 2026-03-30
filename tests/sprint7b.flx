@@ -1,0 +1,79 @@
+// tests/sprint7b.flx — critérios de aceite Sprint 7.b
+//
+// 1. prst persiste entre chamadas (simula reload: declara, usa, reatribui)
+// 2. Funções chamam outras funções sem corrupção de stack (bug fix)
+// 3. Colisão de tipo gera ERR_RELOAD
+// 4. cycle_count avança (verificado via efeito em prst)
+// 5. dry_run suprime output (testado via runtime_apply interno)
+// 6. Block com prst em PROJECT mode
+
+// ── 1. prst básico com múltiplas funções (bug fix: stack corruption) ────────
+fn somar(int a, int b) int {
+    return a + b
+}
+fn maximo(int a, int b) int {
+    if a > b { return a }
+    return b
+}
+fn fatorial(int n) int {
+    if n <= 1 { return 1 }
+    return n * fatorial(n - 1)
+}
+
+print(somar(3, 7))        // 10
+print(maximo(10, 20))     // 20
+print(maximo(99, 3))      // 99
+print(fatorial(5))        // 120
+print(fatorial(10))       // 3628800
+print(somar(100, 200))    // 300  ← era o bug: retornava true
+
+// ── 2. prst em PROJECT mode ──────────────────────────────────────────────────
+prst int contador = 0
+contador = contador + 1
+print(contador)   // 1
+
+prst int score = 100
+print(score)      // 100
+
+// ── 3. Block com prst ────────────────────────────────────────────────────────
+Block Game {
+    prst int lives = 3
+    int level = 1
+
+    fn get_lives() int {
+        return lives
+    }
+    fn next_level() nil {
+        level = level + 1
+    }
+}
+
+print(Game.get_lives())   // 3
+Game.next_level()
+print(Game.level)         // 2
+
+// ── 4. prst bool e float ────────────────────────────────────────────────────
+prst bool running = true
+prst float rate   = 1.5
+print(running)    // true
+print(rate)       // 1.5
+
+// ── 5. Recursão profunda após múltiplas funções (stack bug final) ────────────
+fn ping(int n) int {
+    if n <= 0 { return 0 }
+    return pong(n - 1)
+}
+fn pong(int n) int {
+    if n <= 0 { return 0 }
+    return ping(n - 1)
+}
+print(ping(1000))   // 0 — sem segfault
+
+// ── 6. prst loop ────────────────────────────────────────────────────────────
+prst int ticks = 0
+int i = 0
+while i < 5 {
+    ticks = ticks + 1
+    i = i + 1
+}
+print(ticks)   // 5

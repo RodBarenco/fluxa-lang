@@ -1,0 +1,170 @@
+// data_structures/tree.flx — General N-ary Tree
+//
+// Each node can have up to 4 children (MAX_CHILDREN = 4).
+// Implementation: pool + 2D adjacency array simulated as 1D.
+//   child_data[node * 4 + slot] = child index
+//
+// Operations: add_node, DFS pre-order, height, count_nodes, count_leaves
+//
+// How to run:
+//   ./fluxa run examples/data_structures/tree.flx
+
+Block Tree {
+    int arr vals[32]        = 0
+    int arr child_data[128] = -1
+    int arr child_count[32] = 0
+    int arr parent[32]      = -1
+    int root     = -1
+    int free_idx = 0
+
+    fn add_node(int val, int par) int {
+        if free_idx >= 32 {
+            print("ERRO: pool esgotado")
+            return -1
+        }
+        int idx = free_idx
+        vals[idx]        = val
+        child_count[idx] = 0
+        parent[idx]      = par
+        free_idx = free_idx + 1
+        if par >= 0 {
+            int slot = child_count[par]
+            if slot < 4 {
+                child_data[par * 4 + slot] = idx
+                child_count[par] = slot + 1
+            } else {
+                print("ERRO: max 4 filhos por no")
+            }
+        } else {
+            root = idx
+        }
+        return idx
+    }
+
+    fn print_dfs(int node) nil {
+        if node < 0 {
+            return
+        }
+        print(vals[node])
+        int i = 0
+        while i < child_count[node] {
+            int child = child_data[node * 4 + i]
+            print_dfs(child)
+            i = i + 1
+        }
+    }
+
+    fn count_nodes(int node) int {
+        if node < 0 {
+            return 0
+        }
+        int total = 1
+        int i = 0
+        while i < child_count[node] {
+            int child = child_data[node * 4 + i]
+            total = total + count_nodes(child)
+            i = i + 1
+        }
+        return total
+    }
+
+    fn height(int node) int {
+        if node < 0 {
+            return 0
+        }
+        if child_count[node] == 0 {
+            return 0
+        }
+        int max_h = 0
+        int i = 0
+        while i < child_count[node] {
+            int child = child_data[node * 4 + i]
+            int h = height(child)
+            if h > max_h {
+                max_h = h
+            }
+            i = i + 1
+        }
+        return max_h + 1
+    }
+
+    fn count_leaves(int node) int {
+        if node < 0 {
+            return 0
+        }
+        if child_count[node] == 0 {
+            return 1
+        }
+        int total = 0
+        int i = 0
+        while i < child_count[node] {
+            int child = child_data[node * 4 + i]
+            total = total + count_leaves(child)
+            i = i + 1
+        }
+        return total
+    }
+
+    fn depth_of(int node) int {
+        int cur = node
+        int d = 0
+        while parent[cur] != -1 {
+            cur = parent[cur]
+            d = d + 1
+        }
+        return d
+    }
+}
+
+// ── Demo ─────────────────────────────────────────────────────────────────────
+//
+// Tree:
+//           1
+//         / | \
+//        2  3  4
+//       /|     |
+//      5  6    7
+//            /   \
+//           8     9
+
+int r  = Tree.add_node(1, -1)
+int n2 = Tree.add_node(2, r)
+int n3 = Tree.add_node(3, r)
+int n4 = Tree.add_node(4, r)
+int n5 = Tree.add_node(5, n2)
+int n6 = Tree.add_node(6, n2)
+int n7 = Tree.add_node(7, n4)
+int n8 = Tree.add_node(8, n7)
+int n9 = Tree.add_node(9, n7)
+
+print("--- DFS pre-ordem (esperado: 1 2 5 6 3 4 7 8 9) ---")
+Tree.print_dfs(Tree.root)
+
+print("--- total nos ---")
+print(Tree.count_nodes(Tree.root))   // 9
+
+print("--- height ---")
+print(Tree.height(Tree.root))        // 3
+
+print("--- folhas ---")
+print(Tree.count_leaves(Tree.root))  // 5 (nos: 5,6,3,8,9)
+
+print("--- profundidade no 8 ---")
+print(Tree.depth_of(n8))             // 3
+
+// ── Directory hierarchy ────────────────────────────────────────────────────────
+
+print("--- sistema de arquivos ---")
+Block fs typeof Tree
+
+int fsr    = fs.add_node(100, -1)   // root
+int fssrc  = fs.add_node(200, fsr)  // src
+int fststs = fs.add_node(300, fsr)  // tests
+int fsvnd  = fs.add_node(400, fsr)  // vendor
+int fslx   = fs.add_node(210, fssrc) // lexer
+int fsprs  = fs.add_node(220, fssrc) // parser
+
+print("DFS (esperado: 100 200 210 220 300 400):")
+fs.print_dfs(fs.root)
+print("height (esperado: 2):")
+print(fs.height(fs.root))

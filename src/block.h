@@ -1,13 +1,13 @@
 /* block.h — Fluxa Block system (Sprint 5)
  * BlockDef  = molde (Block Foo { ... })
- * BlockInstance = instância com escopo próprio (Block raiz ou typeof)
+ * BlockInstance = live instance with its own scope (Block root or typeof)
  */
 #ifndef FLUXA_BLOCK_H
 #define FLUXA_BLOCK_H
 
 #include "scope.h"
 #include "ast.h"
-#include "../vendor/uthash.h"
+#include "uthash.h"
 
 /* ── BlockDef — the template ─────────────────────────────────────────────── */
 typedef struct BlockDef {

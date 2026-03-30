@@ -1,0 +1,115 @@
+// problems/02_binary_search.flx — Binary Search
+//
+// Level: Beginner
+//
+// Problem:
+//   Given a SORTED array and a target value, return the index of the target.
+//   Returns -1 if not found.
+//
+// Why it matters:
+//   Linear search: up to n comparisons — O(n).
+//   Binary search: discards half at each step — O(log n).
+//   Para n = 1.000.000.000:
+//     Linear: up to 1 billion comparisons
+//     Binary: up to 30 comparisons
+//
+//   This is the clearest example of how algorithm choice matters
+//   more than faster hardware.
+//
+// How to run:
+//   ./fluxa run examples/problems/02_binary_search.flx
+
+fn binary_search(int arr a, int n, int target) int {
+    int lo = 0
+    int hi = n - 1
+    while lo <= hi {
+        int mid = (lo + hi) / 2
+        if a[mid] == target {
+            return mid
+        }
+        if a[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return -1
+}
+
+// Variant: first occurrence in array with duplicates
+fn binary_search_first(int arr a, int n, int target) int {
+    int lo     = 0
+    int hi     = n - 1
+    int result = -1
+    while lo <= hi {
+        int mid = (lo + hi) / 2
+        if a[mid] == target {
+            result = mid
+            hi = mid - 1   // keep searching left
+        } else {
+            if a[mid] < target {
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+    }
+    return result
+}
+
+// Count iterations to demonstrate O(log n)
+fn binary_search_count(int arr a, int n, int target) int {
+    int lo    = 0
+    int hi    = n - 1
+    int iters = 0
+    while lo <= hi {
+        iters = iters + 1
+        int mid = (lo + hi) / 2
+        if a[mid] == target {
+            return iters
+        }
+        if a[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return iters
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+int arr sorted[10] = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
+
+print("--- busca basica ---")
+print(binary_search(sorted, 10, 23))   // 5
+print(binary_search(sorted, 10, 2))    // 0
+print(binary_search(sorted, 10, 91))   // 9
+print(binary_search(sorted, 10, 50))   // -1
+print(binary_search(sorted, 10, 1))    // -1
+print(binary_search(sorted, 10, 100))  // -1
+
+print("--- primeira ocorrencia ---")
+int arr dupes[8] = [1, 2, 2, 2, 3, 4, 4, 5]
+print(binary_search_first(dupes, 8, 2))   // 1
+print(binary_search_first(dupes, 8, 4))   // 5
+print(binary_search_first(dupes, 8, 9))   // -1
+
+print("--- iteracoes (demonstra log n) ---")
+int arr s8[8]   = [1, 3, 5, 7, 9, 11, 13, 15]
+int arr s16[16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+print("buscar 15 em 8 elementos:")
+print(binary_search_count(s8, 8, 15))    // ~3 iteracoes
+
+print("buscar 1 em 16 elementos:")
+print(binary_search_count(s16, 16, 1))   // ~4 iteracoes
+
+print("--- edge cases ---")
+int arr one[1] = [42]
+print(binary_search(one, 1, 42))   // 0
+print(binary_search(one, 1, 99))   // -1
+
+int arr two[2] = [1, 2]
+print(binary_search(two, 2, 1))    // 0
+print(binary_search(two, 2, 2))    // 1

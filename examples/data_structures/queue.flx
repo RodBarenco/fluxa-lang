@@ -1,0 +1,135 @@
+// data_structures/queue.flx — Queue
+//
+// FIFO: First In, First Out.
+// Implementation: circular buffer with static array.
+// O buffer circular reutiliza os slots liberados sem mover elementos.
+//
+// Operations:  enqueue O(1) | dequeue O(1) | front O(1) | is_empty O(1)
+//
+// Applications: BFS in graphs, task scheduler, producer/consumer buffer.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/queue.flx
+
+Block Queue {
+    int arr data[64] = 0
+    int head  = 0
+    int tail  = 0
+    int count = 0
+
+    fn enqueue(int val) nil {
+        if count >= 64 {
+            print("ERRO: queue cheia")
+            return
+        }
+        data[tail] = val
+        tail = (tail + 1) % 64
+        count = count + 1
+    }
+
+    fn dequeue() int {
+        if count <= 0 {
+            print("ERRO: queue vazia")
+            return -1
+        }
+        int val = data[head]
+        head = (head + 1) % 64
+        count = count - 1
+        return val
+    }
+
+    fn front() int {
+        if count <= 0 {
+            return -1
+        }
+        return data[head]
+    }
+
+    fn is_empty() int {
+        if count <= 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return count
+    }
+
+    fn print_queue() nil {
+        if count <= 0 {
+            print("[ vazia ]")
+            return
+        }
+        int i = 0
+        while i < count {
+            int idx = (head + i) % 64
+            print(data[idx])
+            i = i + 1
+        }
+    }
+}
+
+// ── Basic demo ───────────────────────────────────────────────────────────────
+
+print("--- enqueue 10, 20, 30 ---")
+Queue.enqueue(10)
+Queue.enqueue(20)
+Queue.enqueue(30)
+Queue.print_queue()
+// esperado: 10 20 30
+
+print("--- front ---")
+print(Queue.front())       // 10
+
+print("--- dequeue ---")
+print(Queue.dequeue())     // 10
+print(Queue.dequeue())     // 20
+Queue.print_queue()        // 30
+
+print("--- size ---")
+print(Queue.size())        // 1
+
+// ── Circular buffer ───────────────────────────────────────────────────────────
+// Shows that freed slots are reused.
+
+print("--- buffer circular ---")
+Block cq typeof Queue
+
+int ci = 0
+while ci < 5 {
+    cq.enqueue(ci * 10)
+    ci = ci + 1
+}
+// queue: 0 10 20 30 40
+
+cq.dequeue()   // 0
+cq.dequeue()   // 10
+cq.dequeue()   // 20
+// queue: 30 40  (head advanced — slots 0,1,2 free)
+
+cq.enqueue(50)
+cq.enqueue(60)
+cq.enqueue(70)
+// these wrap around into slots at the start of the array
+
+print("circular (esperado: 30 40 50 60 70):")
+cq.print_queue()
+
+// ── Application: service simulation ─────────────────────────────────────────
+
+print("--- atendimento ---")
+Block fila typeof Queue
+fila.enqueue(101)
+fila.enqueue(102)
+fila.enqueue(103)
+fila.enqueue(104)
+fila.enqueue(105)
+
+int atendidos = 0
+while fila.is_empty() == 0 {
+    print(fila.dequeue())
+    atendidos = atendidos + 1
+}
+print("total:")
+print(atendidos)   // 5

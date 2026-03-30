@@ -1,0 +1,164 @@
+// problems/08_pagerank.flx — PageRank Algorithm
+//
+// Level: Advanced
+//
+// ── The history of the problem ────────────────────────────────────────────────
+//
+// Created by Larry Page and Sergey Brin (Google founders), PageRank
+// revolutionized web search. Instead of just counting links (Degree
+// Centrality), it evaluates the QUALITY of links. A link from a
+// highly-ranked node is worth more than a link from a low-ranked node.
+//
+// It uses the "Random Surfer" model: a user clicks links randomly, but
+// has a 15% chance (Damping Factor) of getting bored and jumping to a
+// completely random page. This prevents the algorithm from getting stuck
+// in "spider traps" (loops).
+//
+// This model describes real phenomena:
+//   - Web search ranking (Google, Bing)
+//   - Academic citation analysis
+//   - Social network influence scoring
+//   - Trust propagation in distributed systems
+//
+// ── Fixed-Point Arithmetic ────────────────────────────────────────────────────
+//
+// PageRank calculates probabilities (floats 0.0 to 1.0). Since Fluxa
+// supports only integers, we use fixed-point math multiplied by 10000.
+//   1.0  (100%)  = 10000
+//   0.85 (damping factor) represented as integer 85
+//   0.15 (random jump)   represented as integer 15
+// All node scores sum to exactly 10000.
+//
+// How to run:
+//   ./fluxa run examples/problems/08_pagerank.flx
+
+Block PageRank {
+    // N = 5 nodes
+    int n = 5
+    int arr adj[25]       = 0   // adjacency matrix: adj[from*5+to] = 1 if edge
+    int arr out_degree[5] = 0
+    int arr rank[5]       = 0
+    int arr next_rank[5]  = 0
+
+    fn idx(int r, int c) int { return r * n + c }
+
+    fn add_edge(int from_node, int to_node) nil {
+        adj[idx(from_node, to_node)] = 1
+    }
+
+    fn init_ranks() nil {
+        int i = 0
+        while i < n {
+            rank[i] = 10000 / n   // 1.0 / N in fixed-point
+            int deg = 0
+            int j = 0
+            while j < n {
+                if adj[idx(i, j)] == 1 { deg = deg + 1 }
+                j = j + 1
+            }
+            out_degree[i] = deg
+            i = i + 1
+        }
+    }
+
+    fn iterate() nil {
+        // Dangling nodes (no outgoing edges) distribute rank evenly to all
+        int dangling_sum = 0
+        int i = 0
+        while i < n {
+            if out_degree[i] == 0 { dangling_sum = dangling_sum + rank[i] }
+            i = i + 1
+        }
+
+        // base_score = (0.15 / N) in fixed-point
+        int base_score    = (15 * 10000) / (100 * n)
+        // dangling_share = (0.85 * dangling_sum) / N in fixed-point
+        int dangling_share = (85 * dangling_sum) / (100 * n)
+
+        i = 0
+        while i < n {
+            int new_r = base_score + dangling_share
+            // Add contributions from nodes pointing TO i
+            int j = 0
+            while j < n {
+                if adj[idx(j, i)] == 1 {
+                    int contrib = rank[j] / out_degree[j]
+                    new_r = new_r + (85 * contrib) / 100
+                }
+                j = j + 1
+            }
+            next_rank[i] = new_r
+            i = i + 1
+        }
+
+        i = 0
+        while i < n {
+            rank[i] = next_rank[i]
+            i = i + 1
+        }
+    }
+
+    fn run(int iterations) nil {
+        init_ranks()
+        int i = 0
+        while i < iterations { iterate()  i = i + 1 }
+    }
+
+    fn print_ranks() nil {
+        int i = 0
+        int total = 0
+        while i < n {
+            print("Node", i, "score:", rank[i])
+            total = total + rank[i]
+            i = i + 1
+        }
+        print("Total system energy (should be ~10000):", total)
+    }
+}
+
+// ── Case 1: Star network — one dominant hub ───────────────────────────────────
+print("=== Case 1: STAR NETWORK ===")
+print("Nodes 1,2,3,4 all point to Node 0. Node 0 is a dangling node.")
+Block star typeof PageRank
+star.add_edge(1, 0)
+star.add_edge(2, 0)
+star.add_edge(3, 0)
+star.add_edge(4, 0)
+star.run(20)
+print("Node 0 should have the highest score:")
+star.print_ranks()
+
+// ── Case 2: Spider trap — closed loop ────────────────────────────────────────
+print("")
+print("=== Case 2: SPIDER TRAP ===")
+print("Without the 15% random teleport, all energy would get stuck in the loop.")
+print("Nodes 1->2->3->1 form a closed loop. Node 0 feeds into it.")
+Block trap typeof PageRank
+trap.add_edge(0, 1)
+trap.add_edge(1, 2)
+trap.add_edge(2, 3)
+trap.add_edge(3, 1)
+trap.run(20)
+print("Loop nodes (1,2,3) concentrate energy. Nodes 0 and 4 get base score:")
+trap.print_ranks()
+
+// ── Case 3: Quality over quantity ────────────────────────────────────────────
+print("")
+print("=== Case 3: QUALITY VS QUANTITY ===")
+print("Node 0 has only 1 incoming edge (from Node 1, the biggest hub).")
+print("Nodes 2,3,4 each have 3 followers but from isolated low-rank nodes.")
+Block quality typeof PageRank
+quality.add_edge(2, 1)
+quality.add_edge(3, 1)
+quality.add_edge(4, 1)
+quality.add_edge(1, 0)   // Node 1 (high rank) points to Node 0
+quality.run(20)
+print("Node 0 beats 2, 3, 4 despite having only 1 incoming edge:")
+quality.print_ranks()
+
+print("")
+print("=== Notes ===")
+print("pagerank uses fixed-point arithmetic: all scores x 10000")
+print("damping factor 0.85: 85% follow links, 15% random jump")
+print("convergence: typically 20-50 iterations for small graphs")
+print("dangling nodes: distribute rank evenly to prevent energy loss")

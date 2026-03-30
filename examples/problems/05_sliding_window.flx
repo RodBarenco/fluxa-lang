@@ -1,0 +1,161 @@
+// problems/05_sliding_window.flx — Sliding Window
+//
+// Level: Intermediate
+//
+// Technique:
+//   Sliding Window elimina loops aninhados O(n²) mantendo uma "janela"
+//   [lo, hi] que desliza pelo array. Em vez de recalcular do zero,
+//   atualiza incrementalmente: remove o que saiu, adiciona o que entrou.
+//
+// Problemas:
+//   1. Maximum sum in fixed-size window k         — O(n)
+//   2. Smallest subarray with sum >= target (var) — O(n)
+//   3. Maximum product of contiguous subarray     — O(n)
+//   4. Largest range (max-min) in window of size k — O(n·k)
+//
+// How to run:
+//   ./fluxa run examples/problems/05_sliding_window.flx
+
+// ── 1. Maximum sum in window of size k ───────────────────────────────────────
+// Calcula soma da primeira janela, depois desliza subtraindo o que sai
+// and adding what enters — never recalculates the sum from scratch.
+
+fn max_sum_k(int arr a, int n, int k) int {
+    if k > n {
+        return -1
+    }
+    int window_sum = 0
+    int i = 0
+    while i < k {
+        window_sum = window_sum + a[i]
+        i = i + 1
+    }
+    int max_sum = window_sum
+    while i < n {
+        window_sum = window_sum + a[i] - a[i - k]
+        if window_sum > max_sum {
+            max_sum = window_sum
+        }
+        i = i + 1
+    }
+    return max_sum
+}
+
+print("--- soma maxima janela k=3 ---")
+int arr a1[8] = [2, 1, 5, 1, 3, 2, 4, 1]
+print(max_sum_k(a1, 8, 3))   // 9  ([5,1,3])
+print(max_sum_k(a1, 8, 1))   // 5  (elemento maximo)
+print(max_sum_k(a1, 8, 8))   // 19 (array inteiro)
+
+// ── 2. Smallest subarray with sum >= target ───────────────────────────────────
+// Variable window: expand hi when sum < target, shrink lo when sum >= target.
+
+fn min_len_sum(int arr a, int n, int target) int {
+    int min_len    = n + 1
+    int window_sum = 0
+    int lo = 0
+    int hi = 0
+    while hi < n {
+        window_sum = window_sum + a[hi]
+        hi = hi + 1
+        while window_sum >= target {
+            int len = hi - lo
+            if len < min_len {
+                min_len = len
+            }
+            window_sum = window_sum - a[lo]
+            lo = lo + 1
+        }
+    }
+    if min_len == n + 1 {
+        return -1
+    }
+    return min_len
+}
+
+print("--- menor subarray soma >= target ---")
+int arr a2[7] = [2, 3, 1, 2, 4, 3, 1]
+print(min_len_sum(a2, 7, 7))    // 2  ([4,3])
+print(min_len_sum(a2, 7, 4))    // 1  ([4])
+print(min_len_sum(a2, 7, 100))  // -1 (impossivel, soma total=16)
+
+// ── 3. Maximum product of contiguous subarray ────────────────────────────────
+// Dois negativos multiplicados = positivo.
+// Keep max_here and min_here: each new element may flip the roles.
+
+fn max_product(int arr a, int n) int {
+    int max_here    = a[0]
+    int min_here    = a[0]
+    int max_so_far  = a[0]
+    int i = 1
+    while i < n {
+        int opt1 = max_here * a[i]
+        int opt2 = min_here * a[i]
+        // novo max
+        int new_max = a[i]
+        if opt1 > new_max {
+            new_max = opt1
+        }
+        if opt2 > new_max {
+            new_max = opt2
+        }
+        // novo min
+        int new_min = a[i]
+        if opt1 < new_min {
+            new_min = opt1
+        }
+        if opt2 < new_min {
+            new_min = opt2
+        }
+        max_here = new_max
+        min_here = new_min
+        if max_here > max_so_far {
+            max_so_far = max_here
+        }
+        i = i + 1
+    }
+    return max_so_far
+}
+
+print("--- produto maximo ---")
+int arr a3[6] = [2, 3, -2, 4, -1, 5]
+print(max_product(a3, 6))   // 240 (2*3*-2*4*-1*5)
+
+int arr a4[4] = [-2, 3, -4, 2]
+print(max_product(a4, 4))   // 24  (-2*3*-4)
+
+int arr a5[3] = [-2, -3, -4]
+print(max_product(a5, 3))   // 12  (-3*-4)
+
+// ── 4. Largest range (max-min) in window of size k ───────────────────────────
+
+fn max_range_k(int arr a, int n, int k) int {
+    int max_range = 0
+    int i = 0
+    while i <= n - k {
+        int wmax = a[i]
+        int wmin = a[i]
+        int j = i + 1
+        while j < i + k {
+            if a[j] > wmax {
+                wmax = a[j]
+            }
+            if a[j] < wmin {
+                wmin = a[j]
+            }
+            j = j + 1
+        }
+        int range = wmax - wmin
+        if range > max_range {
+            max_range = range
+        }
+        i = i + 1
+    }
+    return max_range
+}
+
+print("--- maior range janela k=3 ---")
+int arr a6[7] = [1, 3, 2, 8, 5, 3, 9]
+print(max_range_k(a6, 7, 3))   // 6  ([2,8,5]: 8-2=6)
+print(max_range_k(a6, 7, 2))   // 6  ([3,9]: 9-3=6)
+print(max_range_k(a6, 7, 7))   // 8  (array inteiro: 9-1=8)

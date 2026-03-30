@@ -1,0 +1,51 @@
+// sprint6c_runtime.flx — fn calling fn + TCO
+
+// ── 1. fn chamando outra fn top-level ───────────────────────────────────────
+fn dobrar(int n) int {
+    return n * 2
+}
+fn quadruplicar(int n) int {
+    return dobrar(dobrar(n))
+}
+print(quadruplicar(5))      // 20
+print(quadruplicar(10))     // 40
+
+// ── 2. recursão simples (não-tail) ──────────────────────────────────────────
+fn fatorial(int n) int {
+    if n <= 1 { return 1 }
+    return n * fatorial(n - 1)
+}
+print(fatorial(5))          // 120
+print(fatorial(10))         // 3628800
+
+// ── 3. TCO: tail recursion com acumulador ───────────────────────────────────
+fn soma_tc(int n, int acc) int {
+    if n <= 0 { return acc }
+    return soma_tc(n - 1, acc + n)
+}
+print(soma_tc(100, 0))      // 5050
+print(soma_tc(10000, 0))    // 50005000  — seria segfault sem TCO
+
+// ── 4. recursão mútua ───────────────────────────────────────────────────────
+fn is_par(int n) int {
+    if n == 0 { return 1 }
+    return is_impar(n - 1)
+}
+fn is_impar(int n) int {
+    if n == 0 { return 0 }
+    return is_par(n - 1)
+}
+print(is_par(10))           // 1
+print(is_impar(7))          // 1
+print(is_par(3))            // 0
+
+// ── 5. TCO tail mutual recursion ────────────────────────────────────────────
+fn ping(int n) int {
+    if n <= 0 { return 0 }
+    return pong(n - 1)
+}
+fn pong(int n) int {
+    if n <= 0 { return 0 }
+    return ping(n - 1)
+}
+print(ping(10000))          // 0 — 10000 alternâncias, seria segfault sem TCO

@@ -1,0 +1,167 @@
+// data_structures/dynamic_programming.flx — Dynamic Programming
+//
+// DP resolve problemas com:
+//   1. Optimal substructure: optimal solution contains optimal sub-solutions
+//   2. Overlapping subproblems: the same sub-problems appear multiple times
+//
+// Technique: compute each sub-problem once and store the result (tabulation).
+//
+// Problemas:
+//   1. Fibonacci          — introduction, O(n) vs O(2^n)
+//   2. Coin Change        — fewest coins to reach a target value
+//   3. Longest Common Subsequence (LCS)
+//   4. 0/1 Knapsack       — classic knapsack problem
+//
+// How to run:
+//   ./fluxa run examples/data_structures/dynamic_programming.flx
+
+// ── 1. Fibonacci bottom-up ───────────────────────────────────────────────────
+// Recurrence: fib(n) = fib(n-1) + fib(n-2) | fib(0)=0, fib(1)=1
+// Iterative version with two variables: O(n) time, O(1) space
+
+fn fib(int n) int {
+    if n <= 0 {
+        return 0
+    }
+    if n == 1 {
+        return 1
+    }
+    int prev2 = 0
+    int prev1 = 1
+    int i = 2
+    while i <= n {
+        int cur = prev1 + prev2
+        prev2 = prev1
+        prev1 = cur
+        i = i + 1
+    }
+    return prev1
+}
+
+print("--- Fibonacci ---")
+print(fib(0))    // 0
+print(fib(1))    // 1
+print(fib(10))   // 55
+print(fib(20))   // 6765
+print(fib(30))   // 832040
+
+// ── 2. Coin Change ───────────────────────────────────────────────────────────
+// Given coins and a target value, find the fewest coins to reach it.
+// Recurrence: dp[i] = min(dp[i], dp[i - coin] + 1) for each coin
+// Base: dp[0] = 0, dp[i] = amount+1 ("infinito") para i > 0
+
+fn coin_change(int arr coins, int num_coins, int amount) int {
+    int arr dp[201] = 0
+    int i = 1
+    while i <= amount {
+        dp[i] = amount + 1
+        i = i + 1
+    }
+    int a = 1
+    while a <= amount {
+        int c = 0
+        while c < num_coins {
+            if coins[c] <= a {
+                int sub = dp[a - coins[c]] + 1
+                if sub < dp[a] {
+                    dp[a] = sub
+                }
+            }
+            c = c + 1
+        }
+        a = a + 1
+    }
+    if dp[amount] > amount {
+        return -1
+    }
+    return dp[amount]
+}
+
+print("--- Coin Change ---")
+int arr coins1[3] = [1, 5, 10]
+print(coin_change(coins1, 3, 11))   // 2  (10+1)
+print(coin_change(coins1, 3, 15))   // 2  (10+5)
+print(coin_change(coins1, 3, 30))   // 3  (10+10+10)
+
+int arr coins2[2] = [2, 5]
+print(coin_change(coins2, 2, 3))    // -1 (impossible)
+
+int arr coins3[4] = [1, 2, 5, 10]
+print(coin_change(coins3, 4, 100))  // 10 (10*10)
+
+// ── 3. LCS — Longest Common Subsequence ──────────────────────────────────────
+// Given two sequences, find the length of the longest common subsequence.
+// Recurrence:
+//   a[i]==b[j]: dp[i][j] = dp[i-1][j-1] + 1
+//   else:       dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+// Tabela 2D simulada como array 1D: dp[i * (lb+1) + j], max lb=16
+
+fn lcs(int arr a, int la, int arr b, int lb) int {
+    int arr dp[289] = 0   // (16+1)*(16+1)
+    int i = 1
+    while i <= la {
+        int j = 1
+        while j <= lb {
+            if a[i - 1] == b[j - 1] {
+                dp[i * 17 + j] = dp[(i - 1) * 17 + (j - 1)] + 1
+            } else {
+                int up   = dp[(i - 1) * 17 + j]
+                int left = dp[i * 17 + (j - 1)]
+                if up > left {
+                    dp[i * 17 + j] = up
+                } else {
+                    dp[i * 17 + j] = left
+                }
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return dp[la * 17 + lb]
+}
+
+print("--- LCS ---")
+int arr s1[6] = [1, 3, 4, 5, 6, 7]
+int arr s2[5] = [1, 3, 5, 7, 8]
+print(lcs(s1, 6, s2, 5))   // 3 ([1,3,5] ou [1,3,7])
+
+int arr s3[5] = [1, 2, 3, 4, 5]
+int arr s4[5] = [5, 4, 3, 2, 1]
+print(lcs(s3, 5, s4, 5))   // 1
+
+int arr s5[4] = [1, 2, 3, 4]
+int arr s6[4] = [1, 2, 3, 4]
+print(lcs(s5, 4, s6, 4))   // 4 (identical)
+
+// ── 4. 0/1 Knapsack ──────────────────────────────────────────────────────────
+// n itens com pesos e valores, mochila de capacidade W.
+// Maximize total value without exceeding W. Each item: at most once.
+// Rolling array: iterate backwards — ensures each item is used at most once.
+
+fn knapsack(int arr weights, int arr values, int n, int capacity) int {
+    int arr dp[101] = 0
+    int i = 0
+    while i < n {
+        int w = capacity
+        while w >= weights[i] {
+            int with_item = dp[w - weights[i]] + values[i]
+            if with_item > dp[w] {
+                dp[w] = with_item
+            }
+            w = w - 1
+        }
+        i = i + 1
+    }
+    return dp[capacity]
+}
+
+print("--- Knapsack ---")
+int arr w1[4] = [2, 3, 4, 5]
+int arr v1[4] = [3, 4, 5, 6]
+print(knapsack(w1, v1, 4, 8))   // 10  (items 3+4: weight 3+5=8, value 4+6=10)
+print(knapsack(w1, v1, 4, 5))   // 7   (peso 2+3=5, val 3+4=7)
+
+int arr w2[4] = [1, 3, 4, 5]
+int arr v2[4] = [1, 4, 5, 7]
+print(knapsack(w2, v2, 4, 7))   // 9   (peso 3+4=7, val 4+5=9)
+print(knapsack(w2, v2, 4, 10))  // 13  (peso 1+4+5=10, val 1+5+7=13)

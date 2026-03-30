@@ -1,0 +1,179 @@
+// data_structures/bst.flx — Binary Search Tree (BST)
+//
+// For each node N: left subtree < N < right subtree.
+// Guarantees O(log n) search for balanced trees.
+//
+// Implementation: parallel arrays pool (same pattern as linked list).
+//   vals[i]   = value of node i
+//   lefts[i]  = filho esquerdo (-1 = nenhum)
+//   rights[i] = filho direito  (-1 = nenhum)
+//
+// Operações:
+//   insert O(log n) médio | search O(log n) | min/max O(log n)
+//   inorder O(n) — produces sorted sequence
+//
+// How to run:
+//   ./fluxa run examples/data_structures/bst.flx
+
+Block BST {
+    int arr vals[64]   = 0
+    int arr lefts[64]  = -1
+    int arr rights[64] = -1
+    int root     = -1
+    int free_idx = 0
+
+    fn alloc_node(int val) int {
+        if free_idx >= 64 {
+            print("ERRO: pool esgotado")
+            return -1
+        }
+        int idx = free_idx
+        vals[idx]   = val
+        lefts[idx]  = -1
+        rights[idx] = -1
+        free_idx = free_idx + 1
+        return idx
+    }
+
+    fn insert_node(int node, int val) int {
+        if node < 0 {
+            return alloc_node(val)
+        }
+        if val < vals[node] {
+            int new_left = insert_node(lefts[node], val)
+            lefts[node] = new_left
+        } else {
+            if val > vals[node] {
+                int new_right = insert_node(rights[node], val)
+                rights[node] = new_right
+            }
+        }
+        return node
+    }
+
+    fn insert(int val) nil {
+        root = insert_node(root, val)
+    }
+
+    fn search_node(int node, int val) int {
+        if node < 0 {
+            return 0
+        }
+        if val == vals[node] {
+            return 1
+        }
+        if val < vals[node] {
+            return search_node(lefts[node], val)
+        }
+        return search_node(rights[node], val)
+    }
+
+    fn search(int val) int {
+        return search_node(root, val)
+    }
+
+    fn min_node(int node) int {
+        if node < 0 {
+            return -1
+        }
+        if lefts[node] < 0 {
+            return vals[node]
+        }
+        return min_node(lefts[node])
+    }
+
+    fn min() int {
+        return min_node(root)
+    }
+
+    fn max_node(int node) int {
+        if node < 0 {
+            return -1
+        }
+        if rights[node] < 0 {
+            return vals[node]
+        }
+        return max_node(rights[node])
+    }
+
+    fn max() int {
+        return max_node(root)
+    }
+
+    fn inorder(int node) nil {
+        if node < 0 {
+            return
+        }
+        inorder(lefts[node])
+        print(vals[node])
+        inorder(rights[node])
+    }
+
+    fn print_inorder() nil {
+        inorder(root)
+    }
+
+    fn height_node(int node) int {
+        if node < 0 {
+            return 0
+        }
+        int lh = height_node(lefts[node])
+        int rh = height_node(rights[node])
+        if lh > rh {
+            return lh + 1
+        }
+        return rh + 1
+    }
+
+    fn height() int {
+        return height_node(root)
+    }
+}
+
+// ── Demo ─────────────────────────────────────────────────────────────────────
+//
+// Tree built:
+//         5
+//        / \
+//       3   8
+//      / \ / \
+//     1  4 7  9
+
+BST.insert(5)
+BST.insert(3)
+BST.insert(8)
+BST.insert(1)
+BST.insert(4)
+BST.insert(7)
+BST.insert(9)
+
+print("--- inorder (esperado: 1 3 4 5 7 8 9) ---")
+BST.print_inorder()
+
+print("--- min / max ---")
+print(BST.min())    // 1
+print(BST.max())    // 9
+
+print("--- search ---")
+print(BST.search(4))   // 1
+print(BST.search(6))   // 0
+
+print("--- height ---")
+print(BST.height())    // 3
+
+// ── Worst case: insertion in ascending order ─────────────────────────────────
+// Produces a degenerate tree (linked list) — height n instead of log n.
+// Ilustra por que balanceamento (AVL, Red-Black) importa.
+
+print("--- arvore degenerada ---")
+Block degen typeof BST
+degen.insert(1)
+degen.insert(2)
+degen.insert(3)
+degen.insert(4)
+degen.insert(5)
+
+print("inorder (esperado: 1 2 3 4 5):")
+degen.print_inorder()
+print("height (esperado: 5):")
+print(degen.height())
