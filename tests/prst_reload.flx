@@ -1,0 +1,5 @@
+// prst_reload.flx — tests prst value restoration across reloads
+// This test is run in SCRIPT mode (prst warns but doesn't crash)
+// The important test is the -dev reload chain, tested manually.
+prst int number = 100
+print(number)

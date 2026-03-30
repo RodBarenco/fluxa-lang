@@ -236,6 +236,20 @@ true
 
 rm -f "$TMP"
 
+# ── prst reload: source-wins logic across pool-sharing reloads ───────────────
+printf "  %-56s" "prst_reload (3 successive applies, pool shared)"
+prst_out=$("$FLUXA" test-reload 2>&1)
+if echo "$prst_out" | grep -q "ALL PASS"; then
+    echo "PASS"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS
+  prst_reload:
+$(echo "$prst_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then
