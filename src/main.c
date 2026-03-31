@@ -1,20 +1,34 @@
-/* main.c — Fluxa CLI entry point (Sprint 8)
+/* main.c — Fluxa CLI entry point (Sprint 9)
  *
  * Commands:
- *   fluxa run <file.flx>          execute (auto-detects script vs project)
- *   fluxa run <file.flx> -dev     dev mode: watch + auto-reload on change
- *   fluxa run <file.flx> -prod    prod mode (manual apply via signal/IPC)
- *   fluxa explain <file.flx>      print prst state + dep graph after execution
- *   fluxa apply <file.flx>        one-shot reload preserving prst state
- *   fluxa handover <old.flx> <new.flx>   Atomic Handover: substitui old por new
+ *   fluxa run <file.flx>                     execute (auto-detects script vs project)
+ *   fluxa run <file.flx> -dev                dev mode: watch + auto-reload on change
+ *   fluxa run <file.flx> -dev -p             dev mode with preflight validation
+ *   fluxa run <file.flx> -prod               prod mode (manual apply via IPC)
+ *   fluxa explain <file.flx>                 print prst state + dep graph
+ *   fluxa apply <file.flx>                   one-shot reload preserving prst state
+ *   fluxa apply <file.flx> -p               preflight before applying
+ *   fluxa apply <file.flx> -p --force       force apply even with warnings (prod only)
+ *   fluxa handover <old.flx> <new.flx>      Atomic Handover (5-step protocol)
+ *   fluxa observe <var>                      watch prst value in real time
+ *   fluxa set <var> <val>                    mutate prst value without stopping execution
+ *   fluxa logs                               tail runtime error/event log
+ *   fluxa status                             runtime health snapshot
+ *   fluxa init [dir]                         create project structure with fluxa.toml
  *
- * Sprint 8 additions:
- *   fluxa handover: protocolo de 5 passos (standby→migration→dry_run→switchover→cleanup)
- *   test-handover:  suite interna que valida o protocolo (PASS/FAIL)
+ * Sprint 9 additions:
+ *   IPC layer: unix socket /tmp/fluxa-<pid>.sock, 0600 permissions, fixed-size protocol
+ *   fluxa observe / set / logs / status: connect to running runtime via IPC
+ *   fluxa init: scaffold project directory
+ *   preflight (-p): validate before applying, operator decides
+ *   --force: apply with warnings (prod only)
  */
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <signal.h>
 
 #include "lexer.h"
 #include "parser.h"
@@ -24,6 +38,8 @@
 #include "runtime.h"
 #include "handover.h"
 #include "watcher.h"
+#include "fluxa_ipc.h"
+#include "ipc_server.h"
 #include <pthread.h>
 
 static char *load_file(const char *path) {
@@ -45,10 +61,18 @@ static void usage(void) {
         "usage:\n"
         "  fluxa run <file.flx>                    execute (auto script vs project)\n"
         "  fluxa run <file.flx> -dev               dev mode: watch + reload on save\n"
+        "  fluxa run <file.flx> -dev -p            dev mode with preflight validation\n"
         "  fluxa run <file.flx> -prod              prod mode (manual apply)\n"
         "  fluxa explain <file.flx>                show prst state + dependency graph\n"
         "  fluxa apply <file.flx>                  reload preserving prst state\n"
+        "  fluxa apply <file.flx> -p               preflight before applying\n"
+        "  fluxa apply <file.flx> -p --force       force apply with warnings (prod only)\n"
         "  fluxa handover <old.flx> <new.flx>      Atomic Handover (5-step protocol)\n"
+        "  fluxa observe <var>                      watch prst value in real time\n"
+        "  fluxa set <var> <val>                    mutate prst value without stopping\n"
+        "  fluxa logs                               tail runtime error/event log\n"
+        "  fluxa status                             runtime health snapshot\n"
+        "  fluxa init [dir]                         create project with fluxa.toml\n"
     );
 }
 
@@ -89,6 +113,7 @@ typedef struct {
     volatile int   cancel;        /* watcher sets 1 → VM stops at next check */
     volatile int   done;          /* worker sets 1 when finished           */
     int            exit_code;
+    IpcRtView     *ipc_view;      /* Sprint 9: stable view for IPC server  */
 } DevCtx;
 
 static void *dev_exec_thread(void *arg) {
@@ -107,6 +132,8 @@ static void *dev_exec_thread(void *arg) {
     /* Register the cancel flag so every runtime created here picks it up
      * via g_cancel_flag. Only one runtime runs at a time in -dev mode. */
     runtime_set_cancel_flag(&ctx->cancel);
+    /* Sprint 9: register the IPC view so the exec loop updates it each cycle */
+    runtime_set_ipc_view(ctx->ipc_view);
 
     int r;
     if (ctx->first_run) {
@@ -118,6 +145,7 @@ static void *dev_exec_thread(void *arg) {
             fprintf(stderr, "[fluxa] -dev: reload done (exit=%d)\n", r);
     }
     runtime_set_cancel_flag(NULL);
+    runtime_set_ipc_view(NULL);
 
     pool_free(ctx->ast_pool);
     ctx->exit_code = r;
@@ -132,6 +160,10 @@ static int run_dev(const char *path) {
     static PrstPool pool;
     pool.entries = NULL; pool.count = 0; pool.cap = 0;
 
+    /* Sprint 9: create stable IPC view — survives across reloads */
+    IpcRtView *ipc_view = ipc_rtview_create();
+    IpcServer *ipc = ipc_view ? ipc_server_start(ipc_view) : NULL;
+
     DevCtx ctx;
     ctx.path      = path;
     ctx.ast_pool  = &ast_pool;
@@ -140,72 +172,368 @@ static int run_dev(const char *path) {
     ctx.cancel    = 0;
     ctx.done      = 0;
     ctx.exit_code = 0;
+    ctx.ipc_view  = ipc_view;  /* passed to runtime so it can update the view */
 
     while (1) {
         ctx.cancel = 0;
         ctx.done   = 0;
 
-        /* Launch script execution in a worker thread */
         pthread_t tid;
         if (pthread_create(&tid, NULL, dev_exec_thread, &ctx) != 0) {
             fprintf(stderr, "[fluxa] -dev: pthread_create failed\n");
+            if (ipc) ipc_server_stop(ipc);
+            if (ipc_view) ipc_rtview_destroy(ipc_view);
             return 1;
         }
 
-        /* Main thread: watch for file changes while script runs.
-         * Poll in short intervals (200ms) so we react quickly to saves. */
         FWatcher *fw = fw_open(path);
         if (!fw) {
             fprintf(stderr, "[fluxa] -dev: cannot open watcher for %s\n", path);
             ctx.cancel = 1;
             pthread_join(tid, NULL);
+            if (ipc) ipc_server_stop(ipc);
+            if (ipc_view) ipc_rtview_destroy(ipc_view);
             return 1;
         }
 
         int reload = 0;
         while (!reload) {
             int wr = fw_wait(fw, 200);
-            if (wr == 1) {
-                reload = 1;        /* file changed → cancel + reload */
-            } else if (wr == -1) {
+            if (wr == 1)  reload = 1;
+            else if (wr == -1) {
                 fw_close(fw);
                 fw = fw_open(path);
                 if (!fw) break;
             }
-            if (ctx.done) {
-                reload = 1;        /* script finished cleanly → re-watch */
-            }
+            if (ctx.done) reload = 1;
         }
         fw_close(fw);
 
         if (!ctx.done) {
-            /* Script still running — cancel it and wait */
             ctx.cancel = 1;
             pthread_join(tid, NULL);
             fprintf(stderr, "[fluxa] -dev: reload triggered\n");
         } else {
-            /* Script finished on its own (e.g. non-infinite loop) */
             pthread_join(tid, NULL);
             fprintf(stderr, "[fluxa] -dev: waiting for changes...\n");
         }
     }
+    if (ipc) ipc_server_stop(ipc);
+    if (ipc_view) ipc_rtview_destroy(ipc_view);
+    return 0;
+}
+
+/* Preflight: parse + resolve the new file and report any issues.
+ * Returns 0 if clean, 1 if there are warnings/errors. */
+static int run_preflight(const char *path) {
+    fprintf(stderr, "[fluxa] preflight: validating %s\n", path);
+    static ASTPool pool;
+    ASTNode *program = parse_file(path, &pool);
+    if (!program) {
+        fprintf(stderr, "[fluxa] preflight: FAIL — parse error\n");
+        pool_free(&pool);
+        return 1;
+    }
+    int slots = resolver_run(program);
+    pool_free(&pool);
+    if (slots < 0) {
+        fprintf(stderr, "[fluxa] preflight: FAIL — resolve error\n");
+        return 1;
+    }
+    fprintf(stderr, "[fluxa] preflight: OK (slots=%d)\n", slots);
     return 0;
 }
 
 /* Apply: one-shot reload of an existing project, preserving prst state.
- * In a real system this would IPC into a running runtime; here we
- * simulate by running with an empty pool (first apply = same as run). */
-static int run_apply(const char *path) {
+ * Flags:
+ *   preflight=1  — validate before applying; prompt operator
+ *   force=1      — apply even if preflight warns (prod only, no prompt)
+ */
+/* Forward declaration — run_apply_flags is defined below run_preflight */
+static int run_apply_flags(const char *path, int preflight, int force);
+
+static int run_apply_flags(const char *path, int preflight, int force) {
+    if (preflight) {
+        int pf = run_preflight(path);
+        if (pf != 0) {
+            if (force) {
+                fprintf(stderr,
+                    "[fluxa] apply: preflight failed — --force override, proceeding\n");
+            } else {
+                fprintf(stderr,
+                    "[fluxa] apply: preflight failed — apply aborted\n"
+                    "               use --force to override (prod only)\n");
+                return 1;
+            }
+        }
+    }
     fprintf(stderr, "[fluxa] apply: reloading %s with prst preservation\n", path);
     static ASTPool pool;
     ASTNode *program = parse_file(path, &pool);
     if (!program) return 1;
-    /* No prior pool — this simulates first apply */
     int result = runtime_apply(program, NULL);
     pool_free(&pool);
     return result;
 }
 
+
+/* ── Sprint 9: IPC client helpers ────────────────────────────────────────── */
+
+/* Connect to a running runtime.  Discovers PID from /tmp/fluxa-*.lock.
+ * Prints a user-friendly error and returns -1 if no runtime is found. */
+static int ipc_connect_auto(IpcClient *cli) {
+    int pid = ipc_discover_pid();
+    if (pid <= 0) {
+        fprintf(stderr,
+            "[fluxa] no running runtime found\n"
+            "        start one with: fluxa run <file.flx> -dev\n"
+            "                     or: fluxa run <file.flx> -prod\n");
+        return -1;
+    }
+    if (ipc_client_connect(cli, pid) < 0) {
+        fprintf(stderr, "[fluxa] cannot connect to runtime (pid %d)\n", pid);
+        return -1;
+    }
+    return pid;
+}
+
+/* fluxa observe <var>
+ * Watch a prst variable — polls every 500ms until Ctrl-C. */
+static int run_observe(const char *varname) {
+    IpcClient cli;
+    if (ipc_connect_auto(&cli) < 0) return 1;
+
+    fprintf(stderr, "[fluxa] observing '%s' (Ctrl-C to stop)\n", varname);
+
+    uint32_t seq = 1;
+    char last_val[IPC_LOG_LINE_MAX] = "";
+
+    /* Install SIGINT handler so we can print a final newline */
+    signal(SIGINT, SIG_DFL);
+
+    while (1) {
+        IpcRequest  req;
+        IpcResponse resp;
+        ipc_req_observe(&req, seq++, varname);
+
+        if (ipc_client_send(&cli, &req, &resp) < 0) {
+            /* Runtime may have reloaded and restarted its socket — retry once */
+            ipc_client_close(&cli);
+            int pid = ipc_discover_pid();
+            if (pid <= 0 || ipc_client_connect(&cli, pid) < 0) {
+                fprintf(stderr, "\n[fluxa] runtime disconnected\n");
+                break;
+            }
+            continue;
+        }
+
+        if (resp.status == IPC_STATUS_OK) {
+            /* Only print when value changes — avoids flooding stdout */
+            if (strcmp(resp.message, last_val) != 0) {
+                printf("%s\n", resp.message);
+                fflush(stdout);
+                memcpy(last_val, resp.message, sizeof(last_val) - 1); last_val[sizeof(last_val)-1] = '\0';
+            }
+        } else if (resp.status == IPC_STATUS_ERR_NOTFOUND) {
+            fprintf(stderr, "[fluxa] observe: variable not found: %s\n", varname);
+            ipc_client_close(&cli);
+            return 1;
+        }
+
+        /* 500ms poll interval */
+        struct timespec ts = { 0, 500000000L };
+        nanosleep(&ts, NULL);
+    }
+
+    ipc_client_close(&cli);
+    return 0;
+}
+
+/* fluxa set <var> <val>
+ * Mutate a prst variable in the running runtime without stopping execution.
+ * Type is inferred from the value string: integer, float, or bool. */
+static int run_set(const char *varname, const char *valstr) {
+    IpcClient cli;
+    if (ipc_connect_auto(&cli) < 0) return 1;
+
+    IpcRequest  req;
+    IpcResponse resp;
+
+    /* Infer type from value string */
+    if (strcmp(valstr, "true") == 0 || strcmp(valstr, "false") == 0) {
+        ipc_req_set_bool(&req, 1, varname, strcmp(valstr, "true") == 0);
+    } else {
+        /* Try integer first, then float */
+        char *end = NULL;
+        long long ival = strtoll(valstr, &end, 10);
+        if (end && *end == '\0') {
+            ipc_req_set_int(&req, 1, varname, (int64_t)ival);
+        } else {
+            double fval = strtod(valstr, &end);
+            if (end && *end == '\0') {
+                ipc_req_set_float(&req, 1, varname, fval);
+            } else {
+                fprintf(stderr,
+                    "[fluxa] set: cannot parse value '%s'\n"
+                    "        supported types: int, float, bool\n", valstr);
+                ipc_client_close(&cli);
+                return 1;
+            }
+        }
+    }
+
+    if (ipc_client_send(&cli, &req, &resp) < 0) {
+        fprintf(stderr, "[fluxa] set: IPC error\n");
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    if (resp.status == IPC_STATUS_OK) {
+        printf("%s\n", resp.message);
+    } else if (resp.status == IPC_STATUS_ERR_NOTFOUND) {
+        fprintf(stderr, "[fluxa] set: variable not found: %s\n", varname);
+        ipc_client_close(&cli);
+        return 1;
+    } else if (resp.status == IPC_STATUS_ERR_TYPE) {
+        fprintf(stderr, "[fluxa] set: type mismatch — %s\n", resp.message);
+        ipc_client_close(&cli);
+        return 1;
+    } else {
+        fprintf(stderr, "[fluxa] set: error %d — %s\n", resp.status, resp.message);
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    ipc_client_close(&cli);
+    return 0;
+}
+
+/* fluxa logs
+ * Print all entries from the runtime err_stack (most recent first). */
+static int run_logs(void) {
+    IpcClient cli;
+    int pid = ipc_connect_auto(&cli);
+    if (pid < 0) return 1;
+
+    fprintf(stderr, "[fluxa] logs from runtime pid=%d\n", pid);
+
+    IpcRequest  req;
+    IpcResponse resp;
+    ipc_req_logs(&req, 1);
+
+    if (ipc_client_send(&cli, &req, &resp) < 0) {
+        fprintf(stderr, "[fluxa] logs: IPC error\n");
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    if (resp.status == IPC_STATUS_OK) {
+        if (resp.err_count == 0) {
+            printf("(no errors)\n");
+        } else {
+            printf("[%d error(s) in stack]\n", resp.err_count);
+            printf("%s\n", resp.message);
+        }
+    } else {
+        fprintf(stderr, "[fluxa] logs: error %d\n", resp.status);
+    }
+
+    ipc_client_close(&cli);
+    return 0;
+}
+
+/* fluxa status
+ * Print a health snapshot of the running runtime. */
+static int run_status(void) {
+    IpcClient cli;
+    int pid = ipc_connect_auto(&cli);
+    if (pid < 0) return 1;
+
+    IpcRequest  req;
+    IpcResponse resp;
+    ipc_req_status(&req, 1);
+
+    if (ipc_client_send(&cli, &req, &resp) < 0) {
+        fprintf(stderr, "[fluxa] status: IPC error\n");
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    if (resp.status == IPC_STATUS_OK) {
+        printf("pid      : %d\n", pid);
+        printf("mode     : %s\n", resp.mode == 1 ? "project" : "script");
+        printf("cycle    : %d\n", resp.cycle_count);
+        printf("prst     : %d vars\n", resp.prst_count);
+        printf("errors   : %d\n", resp.err_count);
+        printf("dry_run  : %s\n", resp.dry_run ? "yes" : "no");
+    } else {
+        fprintf(stderr, "[fluxa] status: error %d\n", resp.status);
+    }
+
+    ipc_client_close(&cli);
+    return 0;
+}
+
+/* fluxa init [dir]
+ * Scaffold a new Fluxa project: creates dir/main.flx + dir/fluxa.toml */
+static int run_init(const char *dir) {
+    /* Default to current directory */
+    const char *target = (dir && *dir) ? dir : ".";
+
+    /* Create directory if it doesn't exist */
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "mkdir -p %s", target);
+    if (system(cmd) != 0) {
+        fprintf(stderr, "[fluxa] init: cannot create directory: %s\n", target);
+        return 1;
+    }
+
+    /* Write fluxa.toml */
+    char toml_path[512];
+    snprintf(toml_path, sizeof toml_path, "%s/fluxa.toml", target);
+    FILE *tf = fopen(toml_path, "wx");  /* O_EXCL equivalent — won't overwrite */
+    if (tf) {
+        fprintf(tf,
+            "# fluxa.toml — project configuration\n"
+            "\n"
+            "[runtime]\n"
+            "gc_cap          = 1024   # GC table ceiling (static array)\n"
+            "prst_cap        = 64     # initial PrstPool capacity (grows via realloc)\n"
+            "prst_graph_cap  = 256    # initial PrstGraph capacity (grows via realloc)\n"
+        );
+        fclose(tf);
+        fprintf(stderr, "[fluxa] init: created %s\n", toml_path);
+    } else {
+        fprintf(stderr, "[fluxa] init: %s already exists, skipping\n", toml_path);
+    }
+
+    /* Write main.flx */
+    char main_path[512];
+    snprintf(main_path, sizeof main_path, "%s/main.flx", target);
+    FILE *mf = fopen(main_path, "wx");
+    if (mf) {
+        fprintf(mf,
+            "// main.flx — entry point\n"
+            "//\n"
+            "// Run:  fluxa run main.flx\n"
+            "// Dev:  fluxa run main.flx -dev   (hot reload on save)\n"
+            "// Prod: fluxa run main.flx -prod\n"
+            "\n"
+            "prst int counter = 0\n"
+            "\n"
+            "counter = counter + 1\n"
+            "print(counter)\n"
+        );
+        fclose(mf);
+        fprintf(stderr, "[fluxa] init: created %s\n", main_path);
+    } else {
+        fprintf(stderr, "[fluxa] init: %s already exists, skipping\n", main_path);
+    }
+
+    fprintf(stderr, "[fluxa] init: project ready in %s/\n", target);
+    fprintf(stderr, "        run: fluxa run %s/main.flx\n", target);
+    return 0;
+}
 
 /* ── test-reload: internal dev tool, not in usage() ─────────────────────── */
 /* Simulates 3 successive -dev reloads with a shared pool and cancel_flag=1.
@@ -640,13 +968,52 @@ static int run_test_handover(void) {
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "test-reload")   == 0) return run_test_reload();
     if (argc >= 2 && strcmp(argv[1], "test-handover") == 0) return run_test_handover();
+
+    if (argc < 2) { usage(); return 1; }
+
+    const char *cmd = argv[1];
+
+    /* ── Commands with no mandatory file argument ── */
+
+    if (strcmp(cmd, "logs")   == 0) return run_logs();
+    if (strcmp(cmd, "status") == 0) return run_status();
+
+    if (strcmp(cmd, "init") == 0) {
+        const char *dir = (argc >= 3) ? argv[2] : ".";
+        return run_init(dir);
+    }
+
+    if (strcmp(cmd, "observe") == 0) {
+        if (argc < 3) { fprintf(stderr, "usage: fluxa observe <var>\n"); return 1; }
+        return run_observe(argv[2]);
+    }
+
+    if (strcmp(cmd, "set") == 0) {
+        if (argc < 4) { fprintf(stderr, "usage: fluxa set <var> <val>\n"); return 1; }
+        return run_set(argv[2], argv[3]);
+    }
+
+    /* ── Commands that require a file argument ── */
     if (argc < 3) { usage(); return 1; }
 
-    const char *cmd  = argv[1];
     const char *file = argv[2];
 
     if (strcmp(cmd, "explain") == 0) return run_once(file, 1);
-    if (strcmp(cmd, "apply")   == 0) return run_apply(file);
+
+    /* fluxa apply <file> [-p] [--force] */
+    if (strcmp(cmd, "apply") == 0) {
+        int preflight = 0, force = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "-p")      == 0) preflight = 1;
+            if (strcmp(argv[i], "--force") == 0) force     = 1;
+        }
+        if (force && !preflight) {
+            fprintf(stderr,
+                "[fluxa] --force requires -p: fluxa apply <file> -p --force\n");
+            return 1;
+        }
+        return run_apply_flags(file, preflight, force);
+    }
 
     /* fluxa handover <old.flx> <new.flx> */
     if (strcmp(cmd, "handover") == 0) {
@@ -657,14 +1024,17 @@ int main(int argc, char **argv) {
         return run_handover(file, argv[3]);
     }
 
+    /* fluxa run <file> [-dev] [-dev -p] [-prod] */
     if (strcmp(cmd, "run") == 0) {
-        int dev_mode = 0;
+        int dev_mode = 0, preflight = 0;
         for (int i = 3; i < argc; i++) {
-            if (strcmp(argv[i], "-dev")  == 0) dev_mode = 1;
+            if (strcmp(argv[i], "-dev")  == 0) dev_mode  = 1;
+            if (strcmp(argv[i], "-p")    == 0) preflight = 1;
             if (strcmp(argv[i], "-prod") == 0)
                 fprintf(stderr, "[fluxa] -prod: running in production mode\n");
         }
         if (dev_mode) return run_dev(file);
+        if (preflight && run_preflight(file) != 0) return 1;
         return run_once(file, 0);
     }
 
