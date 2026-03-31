@@ -2,6 +2,7 @@
  * Sprint 6:   danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
  * Sprint 8:   rt_error_line (linha nos erros), runtime_exec_with_rt (Handover)
  * Sprint 9:   IPC safe-point hook (ipc_apply_pending_set)
+ * Sprint 9.b: fluxa set writes to rt->stack[offset] so bytecode VM sees it immediately
  */
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
@@ -20,6 +21,8 @@
 extern void ipc_apply_pending_set(Runtime *rt);
 struct IpcRtView;
 extern void ipc_rtview_update(struct IpcRtView *view, Runtime *rt);
+/* Sprint 9.b: clear live_rt before Runtime teardown — defined in ipc_server.c. */
+extern void ipc_rtview_clear_live(struct IpcRtView *view);
 
 /* Global IPC view pointer — set by run_dev before each exec.
  * NULL in script mode and on RP2040. */
@@ -640,7 +643,6 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         int off = pe->stack_offset;
                         if (off >= 0 && off < rt->stack_size) {
                             Value sv = rt->stack[off];
-                            /* Only sync if type still matches declared type */
                             if (sv.type == pe->declared_type) {
                                 prst_pool_set(&rt->prst_pool, pe->name,
                                               sv, &rt->err_stack);
@@ -650,9 +652,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     }
                 }
             } else {
-                int limit = 100000000;
-                while (limit-- > 0) {
-                    /* -dev mode: stop if file changed */
+                /* cancel_flag is set in -dev mode — it's the exit mechanism.
+                 * Script mode (no cancel_flag) keeps the 100M safety limit. */
+                long limit = rt->cancel_flag ? -1L : 100000000L;
+                while (limit != 0) {
+                    if (limit > 0) limit--;
                     if (rt->cancel_flag && *rt->cancel_flag) break;
                     Value cond = eval(rt, node->as.while_stmt.condition);
                     if (rt->had_error || rt->ret.active) break;
@@ -1142,6 +1146,9 @@ int runtime_exec(ASTNode *program) {
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
+    /* Sprint 9.b: expose live rt so IPC SET can write to rt->stack directly */
+    if (g_ipc_view) ipc_rtview_update(g_ipc_view, &rt);
+
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
         rt.cycle_count++;
@@ -1151,6 +1158,8 @@ int runtime_exec(ASTNode *program) {
         }
         if (rt.had_error) break;
     }
+
+    if (g_ipc_view) ipc_rtview_clear_live(g_ipc_view);
 
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);
@@ -1368,6 +1377,8 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
+    if (g_ipc_view) ipc_rtview_update(g_ipc_view, &rt);
+
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
         rt.cycle_count++;
@@ -1377,6 +1388,8 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
         }
         if (rt.had_error) break;
     }
+
+    if (g_ipc_view) ipc_rtview_clear_live(g_ipc_view);
 
     int result = rt.had_error ? 1 : 0;
     /* If caller passed pool_in, update it with the final pool state.

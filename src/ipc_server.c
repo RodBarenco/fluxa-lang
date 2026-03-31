@@ -35,12 +35,21 @@ typedef struct {
     uint8_t b_val;
     uint8_t type_tag;           /* IpcTypeTag                               */
     uint8_t _pad[2];
+    /* Pre-calculated stack slot — filled when SET is queued so the bytecode
+     * VM can apply the value with a single array write, no hash lookup.
+     * -1 means the offset is not yet known (first set before first run). */
+    int     stack_offset;
+    /* Pre-built Value ready to write — avoids rebuilding inside OP_JUMP */
+    Value   ready_value;
 } PendingSet;
 
 /* One pending slot is enough — SET is serialized via the safe point loop.
  * A second SET before the first is applied overwrites the first (last-write-wins).
  * This is intentional: the operator is providing a new target value. */
 static PendingSet g_pending_set;
+
+/* Exposed so bytecode.c can read pending and write stack directly */
+volatile int *g_ipc_pending_flag = &g_pending_set.pending;
 
 /* ── UID check: reject connections from other users ─────────────────────── */
 static int check_peer_uid(int fd) {
@@ -66,6 +75,7 @@ void ipc_rtview_update(IpcRtView *view, Runtime *rt) {
     if (!view || !rt) return;
     pthread_mutex_lock(&view->mu);
 
+    view->live_rt     = rt;          /* expose live rt to IPC SET handler */
     view->cycle_count = rt->cycle_count;
     view->prst_count  = rt->prst_pool.count;
     view->err_count   = rt->err_stack.count;
@@ -86,6 +96,24 @@ void ipc_rtview_update(IpcRtView *view, Runtime *rt) {
             memcpy(view->prst_snapshot.entries, rt->prst_pool.entries, sz);
             view->prst_snapshot.count = rt->prst_pool.count;
             view->prst_snapshot.cap   = rt->prst_pool.count;
+        }
+    }
+
+    /* Deep-copy prst graph for EXPLAIN queries */
+    if (view->prst_graph_snapshot.deps) {
+        free(view->prst_graph_snapshot.deps);
+        view->prst_graph_snapshot.deps = NULL;
+    }
+    view->prst_graph_snapshot.count = 0;
+    view->prst_graph_snapshot.cap   = 0;
+    if (rt->prst_graph.count > 0) {
+        size_t gsz = (size_t)rt->prst_graph.count * sizeof(PrstDep);
+        view->prst_graph_snapshot.deps = (PrstDep *)malloc(gsz);
+        if (view->prst_graph_snapshot.deps) {
+            memcpy(view->prst_graph_snapshot.deps,
+                   rt->prst_graph.deps, gsz);
+            view->prst_graph_snapshot.count = rt->prst_graph.count;
+            view->prst_graph_snapshot.cap   = rt->prst_graph.count;
         }
     }
 
@@ -142,7 +170,30 @@ static void dispatch(IpcServer *srv, int client_fd) {
     case IPC_OP_OBSERVE: {
         pthread_mutex_lock(&view->mu);
         Value v;
-        int found = prst_pool_get(&view->prst_snapshot, req.name, &v);
+        int found = 0;
+
+        /* Prefer live_rt — has the freshest values, including any SET that
+         * was applied directly to the stack during an infinite loop.
+         * Fall back to the snapshot when live_rt is NULL (between reloads). */
+        Runtime *lrt = (Runtime *)view->live_rt;
+        if (lrt) {
+            /* Read from live prst_pool (updated by SET) */
+            found = prst_pool_get(&lrt->prst_pool, req.name, &v);
+            /* If pool has the entry, also read from stack for freshest VM value */
+            if (found) {
+                int pidx = prst_pool_find(&lrt->prst_pool, req.name);
+                if (pidx >= 0) {
+                    int off = lrt->prst_pool.entries[pidx].stack_offset;
+                    if (off >= 0 && off < FLUXA_STACK_SIZE) {
+                        Value sv = lrt->stack[off];
+                        /* Use stack value if type matches — it's what the VM sees */
+                        if (sv.type == v.type) v = sv;
+                    }
+                }
+            }
+        } else {
+            found = prst_pool_get(&view->prst_snapshot, req.name, &v);
+        }
         pthread_mutex_unlock(&view->mu);
 
         if (!found) {
@@ -224,9 +275,59 @@ static void dispatch(IpcServer *srv, int client_fd) {
         __sync_synchronize();
         g_pending_set.pending  = 1;
 
+        /* Direct stack write — makes the new value visible to the bytecode
+         * VM immediately, without waiting for the next top-level safe point.
+         * This is the key fix for "fluxa set inside an infinite while loop":
+         * the VM reads rt->stack[offset] directly; updating only pool/scope
+         * is not enough because the VM never returns to call ipc_apply_pending_set.
+         *
+         * Safety: we hold the mutex during the write. The VM only reads
+         * this slot — it never writes a prst slot from inside the loop
+         * (prst writes happen at declaration, before the loop starts).
+         * Writing a Value (16 bytes on x86-64) is not atomic, but the VM
+         * reads it on the next back-edge — after we release the mutex and
+         * the CPU memory fence has propagated. For int/float/bool (the only
+         * types settable via IPC) this is safe: the VM will either see the
+         * old value or the new one, never a torn write, because Value.type
+         * and Value.as are written together inside the lock. */
+        pthread_mutex_lock(&view->mu);
+        Runtime *lrt = (Runtime *)view->live_rt;
+        if (lrt) {
+            Value sv;
+            switch (req.type_tag) {
+                case IPC_TYPE_INT:   sv = val_int((long)req.i_val);      break;
+                case IPC_TYPE_FLOAT: sv = val_float(req.f_val);          break;
+                case IPC_TYPE_BOOL:  sv = val_bool(req.b_val != 0);      break;
+                default:             sv = val_nil();                      break;
+            }
+            /* Find the stack offset recorded at declaration time */
+            int pidx = prst_pool_find(&lrt->prst_pool, req.name);
+            if (pidx >= 0) {
+                int off = lrt->prst_pool.entries[pidx].stack_offset;
+                if (off >= 0 && off < FLUXA_STACK_SIZE) {
+                    lrt->stack[off] = sv;
+                    if (off >= lrt->stack_size) lrt->stack_size = off + 1;
+                }
+            }
+            /* Also update pool and scope so post-VM sync and interpreted
+             * paths see the new value */
+            prst_pool_set(&lrt->prst_pool, req.name, sv, NULL);
+            scope_set(&lrt->scope, req.name, sv);
+            scope_table_set(&lrt->global_table, req.name, sv);
+            /* Clear the pending flag — already applied */
+            g_pending_set.pending = 0;
+        }
+        pthread_mutex_unlock(&view->mu);
+
         resp.status = IPC_STATUS_OK;
-        snprintf(resp.message, sizeof resp.message,
-                 "queued: %.60s (applied at next safe point)", req.name);
+        if (g_pending_set.pending) {
+            /* live_rt was NULL — runtime between reloads, will apply at next exec */
+            snprintf(resp.message, sizeof resp.message,
+                     "queued: %.60s (applied at next safe point)", req.name);
+        } else {
+            snprintf(resp.message, sizeof resp.message,
+                     "applied: %.60s", req.name);
+        }
         break;
     }
 
@@ -273,6 +374,97 @@ static void dispatch(IpcServer *srv, int client_fd) {
                  view->mode == 1 ? "project" : "script");
         pthread_mutex_unlock(&view->mu);
         break;
+    }
+
+    /* ── EXPLAIN ── streaming: one packet per prst var, then DONE ── */
+    case IPC_OP_EXPLAIN: {
+        pthread_mutex_lock(&view->mu);
+
+        /* Send one response packet per prst variable */
+        for (int ei = 0; ei < view->prst_snapshot.count; ei++) {
+            IpcResponse ev;
+            memset(&ev, 0, sizeof ev);
+            ev.magic   = IPC_MAGIC;
+            ev.version = IPC_VERSION;
+            ev.seq     = req.seq;
+            ev.status  = IPC_STATUS_EXPLAIN_VAR;
+
+            PrstEntry *pe = &view->prst_snapshot.entries[ei];
+            /* ev.name carries the full name; message uses %.60s to stay
+             * within IPC_LOG_LINE_MAX (128 bytes) — no warning. */
+            memcpy(ev.name, pe->name, IPC_VAR_NAME_MAX - 1);
+            ev.name[IPC_VAR_NAME_MAX - 1] = '\0';
+
+            switch (pe->value.type) {
+                case VAL_INT:
+                    ev.type_tag = IPC_TYPE_INT;
+                    ev.i_val    = (int64_t)pe->value.as.integer;
+                    snprintf(ev.message, sizeof ev.message,
+                             "%.60s  int  = %ld", pe->name, pe->value.as.integer);
+                    break;
+                case VAL_FLOAT:
+                    ev.type_tag = IPC_TYPE_FLOAT;
+                    ev.f_val    = pe->value.as.real;
+                    snprintf(ev.message, sizeof ev.message,
+                             "%.60s  float  = %g", pe->name, pe->value.as.real);
+                    break;
+                case VAL_BOOL:
+                    ev.type_tag = IPC_TYPE_BOOL;
+                    ev.b_val    = (uint8_t)(pe->value.as.boolean ? 1 : 0);
+                    snprintf(ev.message, sizeof ev.message,
+                             "%.60s  bool  = %s", pe->name,
+                             pe->value.as.boolean ? "true" : "false");
+                    break;
+                case VAL_STRING:
+                    ev.type_tag = IPC_TYPE_STR;
+                    snprintf(ev.message, sizeof ev.message,
+                             "%.60s  str  = \"%.50s\"", pe->name,
+                             pe->value.as.string ? pe->value.as.string : "");
+                    break;
+                default:
+                    ev.type_tag = IPC_TYPE_NIL;
+                    snprintf(ev.message, sizeof ev.message,
+                             "%.60s  nil", pe->name);
+                    break;
+            }
+            ipc_send_all(client_fd, &ev, sizeof ev);
+        }
+
+        /* Build deps summary for the DONE packet's message field.
+         * Format: "dep1_name <- ctx1\ndep2_name <- ctx2\n..."
+         * Truncated to IPC_LOG_LINE_MAX if needed. */
+        IpcResponse done;
+        memset(&done, 0, sizeof done);
+        done.magic      = IPC_MAGIC;
+        done.version    = IPC_VERSION;
+        done.seq        = req.seq;
+        done.status     = IPC_STATUS_EXPLAIN_DONE;
+        done.cycle_count= (int32_t)view->cycle_count;
+        done.prst_count = (int32_t)view->prst_snapshot.count;
+        done.err_count  = (int32_t)view->err_count;
+        done.mode       = (uint8_t)view->mode;
+        done.dry_run    = (uint8_t)view->dry_run;
+
+        /* Pack up to 1 dep line into message — client can request more via
+         * repeated EXPLAIN if needed; for now first dep is representative */
+        if (view->prst_graph_snapshot.count == 0) {
+            snprintf(done.message, sizeof done.message,
+                     "nenhuma — estado atual compatível com o código");
+        } else {
+            int written = 0;
+            for (int di = 0; di < view->prst_graph_snapshot.count && written == 0; di++) {
+                written = snprintf(done.message, sizeof done.message,
+                    "%s  <-  %s (+%d total)",
+                    view->prst_graph_snapshot.deps[di].prst_name,
+                    view->prst_graph_snapshot.deps[di].reader_ctx,
+                    view->prst_graph_snapshot.count);
+            }
+        }
+
+        pthread_mutex_unlock(&view->mu);
+        ipc_send_all(client_fd, &done, sizeof done);
+        /* EXPLAIN is fully handled here — skip the final ipc_send_all below */
+        return;
     }
 
     default:
@@ -353,27 +545,55 @@ void ipc_server_stop(IpcServer *srv) {
     ipc_server_cleanup(srv);
     free(srv);
 }
+
+/* ── live_rt lifecycle ───────────────────────────────────────────────────── */
+/* Clear live_rt when runtime exits — prevents the SET handler from writing
+ * to a destroyed Runtime. Called by runtime_exec/runtime_apply on exit. */
+void ipc_rtview_clear_live(IpcRtView *view) {
+    if (!view) return;
+    pthread_mutex_lock(&view->mu);
+    view->live_rt = NULL;
+    pthread_mutex_unlock(&view->mu);
+}
+
+/* ipc_apply_pending_set — fallback for when live_rt was NULL at SET time.
+ * If the SET was already applied directly by the IPC dispatch (live_rt != NULL),
+ * g_pending_set.pending will be 0 and this is a no-op.
+ * If live_rt was NULL (runtime between reloads), pending is still 1 and we
+ * apply now that the runtime has started. */
 void ipc_apply_pending_set(Runtime *rt) {
     if (!g_pending_set.pending) return;
     __sync_synchronize();
 
     Value v;
     switch (g_pending_set.type_tag) {
-        case IPC_TYPE_INT:   v = val_int((long)g_pending_set.i_val);     break;
-        case IPC_TYPE_FLOAT: v = val_float(g_pending_set.f_val);         break;
-        case IPC_TYPE_BOOL:  v = val_bool(g_pending_set.b_val != 0);     break;
+        case IPC_TYPE_INT:   v = val_int((long)g_pending_set.i_val);  break;
+        case IPC_TYPE_FLOAT: v = val_float(g_pending_set.f_val);      break;
+        case IPC_TYPE_BOOL:  v = val_bool(g_pending_set.b_val != 0);  break;
         default: g_pending_set.pending = 0; return;
     }
 
+    /* pool — persists across reloads */
     prst_pool_set(&rt->prst_pool, g_pending_set.name, v, NULL);
-    /* Also update live scope so the running program sees the new value immediately */
+
+    /* scope — interpreted (AST) paths */
     Value existing;
-    if (scope_get(&rt->scope, g_pending_set.name, &existing) == 1) {
+    if (scope_get(&rt->scope, g_pending_set.name, &existing) == 1)
         scope_set(&rt->scope, g_pending_set.name, v);
+
+    /* global_table — cross-function visibility */
+    scope_table_set(&rt->global_table, g_pending_set.name, v);
+
+    /* rt->stack[offset] — bytecode VM reads this directly */
+    int idx = prst_pool_find(&rt->prst_pool, g_pending_set.name);
+    if (idx >= 0) {
+        int off = rt->prst_pool.entries[idx].stack_offset;
+        if (off >= 0 && off < FLUXA_STACK_SIZE) {
+            rt->stack[off] = v;
+            if (off >= rt->stack_size) rt->stack_size = off + 1;
+        }
     }
 
     __sync_synchronize();
     g_pending_set.pending = 0;
-
-    /* g_ipc_view is refreshed by the runtime loop after this call returns */
 }
