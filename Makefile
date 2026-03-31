@@ -1,6 +1,19 @@
-# Fluxa — Makefile (Sprint 5)
+# Fluxa — Makefile (Sprint 9.b)
+#
+# Targets principais:
+#   make build              → binário nativo (Linux/macOS)
+#   make build-rp2040       → cross-compile para Raspberry Pi Pico (RP2040)
+#   make build-esp32        → cross-compile para ESP32 (Xtensa lx6)
+#   make build-embedded     → alias: rp2040 + esp32
+#   make test-runner        → suite PASS/FAIL automatizada
+#   make bench              → benchmarks de performance
+#   make examples           → roda todos os exemplos
+#   make clean              → remove binários
+
+# ── Compilador nativo ─────────────────────────────────────────────────────────
 CC      = gcc
-# libffi: portable via pkg-config (Linux x86/ARM, macOS)
+
+# libffi: portável via pkg-config (Linux x86/ARM, macOS)
 HAVE_FFI := $(shell pkg-config --exists libffi 2>/dev/null && echo 1 || echo 0)
 ifeq ($(HAVE_FFI),1)
     FFI_CFLAGS  := $(shell pkg-config --cflags libffi) -DFLUXA_HAS_FFI=1
@@ -13,6 +26,7 @@ endif
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
            -Isrc -Ivendor $(FFI_CFLAGS)
 LDFLAGS = $(FFI_LDFLAGS) -ldl -lm -lpthread
+
 SRCS    = src/main.c \
           src/lexer.c \
           src/parser.c \
@@ -25,17 +39,159 @@ SRCS    = src/main.c \
           src/runtime.c \
           src/handover.c \
           src/ipc_server.c
+
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 test-sprint8 test-sprint9 test-runner bench examples clean \
-        test-integration test-integration-s1 test-integration-s2 test-all
+# ── Flags comuns para targets embedded ───────────────────────────────────────
+#
+# FLUXA_IPC_NONE     → desativa todo o IPC unix socket (ipc_server.c não compila)
+# FLUXA_HAS_FFI=0    → desativa libffi (não existe em bare-metal)
+# FLUXA_EMBEDDED=1   → flag genérica para guards futuros no código
+#
+# O que é excluído no embedded (via preprocessador):
+#   - ipc_discover_pid, ipc_server_bind, ipc_client_connect (unix socket)
+#   - glob(), pthread (não existem em bare-metal)
+#   - fluxa observe / set / logs / status (CLI IPC commands)
+#   - Handover via memória paralela → usa HANDOVER_MODE_FLASH
+#
+EMBEDDED_CFLAGS = -std=c99 -Wall -Wextra -O2 \
+                  -Isrc -Ivendor \
+                  -DFLUXA_IPC_NONE=1 \
+                  -DFLUXA_HAS_FFI=0 \
+                  -DFLUXA_EMBEDDED=1
+
+# Fontes embedded: sem ipc_server.c (unix socket), sem ffi.c (libffi)
+SRCS_EMBEDDED = src/lexer.c \
+                src/parser.c \
+                src/scope.c \
+                src/resolver.c \
+                src/bytecode.c \
+                src/builtins.c \
+                src/block.c \
+                src/runtime.c \
+                src/handover.c
+
+# ── RP2040 / Raspberry Pi Pico ────────────────────────────────────────────────
+#
+# Toolchain: arm-none-eabi-gcc (parte do pico-sdk ou standalone)
+# Instalar: sudo apt install gcc-arm-none-eabi  (Ubuntu/Debian)
+#           brew install --cask gcc-arm-embedded  (macOS)
+#
+# O binário gerado (.elf) deve ser convertido para .uf2 via elf2uf2
+# ou integrado ao pico-sdk CMake build system.
+#
+# Flags específicas do RP2040 (Cortex-M0+):
+#   -mcpu=cortex-m0plus   → core do RP2040
+#   -mthumb               → conjunto de instruções Thumb-2
+#   -mfloat-abi=soft      → sem FPU hardware no M0+
+#   -nostdlib             → sem libc padrão (fornecer sua própria)
+#   --specs=nosys.specs   → stubs de syscall (sem OS)
+#
+# NOTA: para integração completa com pico-sdk, use CMakeLists.txt.
+# Este target gera um .o linkável para verificar que o código compila
+# para o target — o link final é feito pelo pico-sdk.
+#
+CC_RP2040    = arm-none-eabi-gcc
+TARGET_RP2040 = fluxa-rp2040
+
+RP2040_CFLAGS = $(EMBEDDED_CFLAGS) \
+                -mcpu=cortex-m0plus \
+                -mthumb \
+                -mfloat-abi=soft \
+                -DFLUXA_TARGET_RP2040=1
+
+# ── ESP32 (Xtensa lx6) ────────────────────────────────────────────────────────
+#
+# Toolchain: xtensa-esp32-elf-gcc (parte do esp-idf)
+# Instalar: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/
+#           ou: pip install espidf
+#
+# ESP32 tem FPU — usa hard float.
+# Para ESP32-S2/S3 (RISC-V): usar riscv32-esp-elf-gcc com -march=rv32imc
+#
+CC_ESP32    = xtensa-esp32-elf-gcc
+TARGET_ESP32 = fluxa-esp32
+
+ESP32_CFLAGS = $(EMBEDDED_CFLAGS) \
+               -mlongcalls \
+               -DFLUXA_TARGET_ESP32=1
+
+# ── ARM Cortex-M genérico (STM32, nRF52, etc.) ───────────────────────────────
+#
+# Mesmo toolchain do RP2040 mas flags de CPU configuráveis.
+# Exemplos:
+#   STM32F4 (Cortex-M4 com FPU):  -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard
+#   nRF52840 (Cortex-M4F):        -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard
+#   STM32G0 (Cortex-M0+):         -mcpu=cortex-m0plus -mthumb -mfloat-abi=soft
+#
+CC_CORTEXM    = arm-none-eabi-gcc
+TARGET_CORTEXM = fluxa-cortex-m
+
+CORTEXM_CFLAGS = $(EMBEDDED_CFLAGS) \
+                 -mcpu=cortex-m4 \
+                 -mthumb \
+                 -mfpu=fpv4-sp-d16 \
+                 -mfloat-abi=hard \
+                 -DFLUXA_TARGET_CORTEX_M=1
+
+# ═════════════════════════════════════════════════════════════════════════════
+.PHONY: all build build-rp2040 build-esp32 build-cortex-m build-embedded \
+        test test-sprint5 test-sprint8 test-sprint9 test-sprint9b \
+        test-runner bench examples clean \
+        test-integration test-integration-s1 test-integration-s2 test-all \
+        check-toolchain-rp2040 check-toolchain-esp32
 
 all: build
 
+# ── Build nativo ──────────────────────────────────────────────────────────────
 build:
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS)
 	@echo "✓ build ok → ./$(TARGET)"
 
+# ── Build RP2040 ──────────────────────────────────────────────────────────────
+build-rp2040: check-toolchain-rp2040
+	@echo "── cross-compile: RP2040 (Cortex-M0+) ──────────────────────────────"
+	$(CC_RP2040) $(RP2040_CFLAGS) -c $(SRCS_EMBEDDED)
+	@echo "✓ rp2040 objects ok (link via pico-sdk CMake)"
+	@echo "  dica: copie os .o para seu projeto pico-sdk e adicione ao CMakeLists.txt"
+
+check-toolchain-rp2040:
+	@which $(CC_RP2040) > /dev/null 2>&1 || \
+	  (echo "✗ $(CC_RP2040) não encontrado." && \
+	   echo "  Ubuntu/Debian: sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi" && \
+	   echo "  macOS:         brew install --cask gcc-arm-embedded" && \
+	   exit 1)
+
+# ── Build ESP32 ───────────────────────────────────────────────────────────────
+build-esp32: check-toolchain-esp32
+	@echo "── cross-compile: ESP32 (Xtensa lx6) ──────────────────────────────"
+	$(CC_ESP32) $(ESP32_CFLAGS) -c $(SRCS_EMBEDDED)
+	@echo "✓ esp32 objects ok (link via esp-idf CMake)"
+	@echo "  dica: adicione os .o ao seu componente esp-idf"
+
+check-toolchain-esp32:
+	@which $(CC_ESP32) > /dev/null 2>&1 || \
+	  (echo "✗ $(CC_ESP32) não encontrado." && \
+	   echo "  Instale o esp-idf: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/" && \
+	   echo "  ou: pip install espidf" && \
+	   exit 1)
+
+# ── Build Cortex-M genérico ───────────────────────────────────────────────────
+# Personalize CORTEXM_CFLAGS acima para seu chip específico.
+build-cortex-m: check-toolchain-rp2040
+	@echo "── cross-compile: ARM Cortex-M genérico ────────────────────────────"
+	$(CC_CORTEXM) $(CORTEXM_CFLAGS) -c $(SRCS_EMBEDDED)
+	@echo "✓ cortex-m objects ok"
+
+# ── Build todos os embedded ───────────────────────────────────────────────────
+# Tenta cada toolchain; continua mesmo se algum não estiver instalado.
+build-embedded:
+	@echo "── build embedded targets ──────────────────────────────────────────"
+	@$(MAKE) build-rp2040  2>/dev/null && echo "  RP2040:   ✓" || echo "  RP2040:   ✗ (toolchain não instalado)"
+	@$(MAKE) build-esp32   2>/dev/null && echo "  ESP32:    ✓" || echo "  ESP32:    ✗ (toolchain não instalado)"
+	@echo "── embedded build concluído ────────────────────────────────────────"
+
+# ── Testes ───────────────────────────────────────────────────────────────────
 test: build
 	@echo "── Sprint 1 test ──────────────────────────────"
 	@./$(TARGET) run tests/hello.flx
@@ -112,14 +268,7 @@ test-sprint5: build
 	@echo "── typeof instance error (expect error) ───────"
 	@./$(TARGET) run tests/block_no_instance_typeof.flx || true
 
-test-sprint9: build
-	@echo "── Sprint 9: CLI & IPC ────────────────────────────────────────────────────"
-	@chmod +x tests/sprint9_cli.sh tests/sprint9_ipc.sh
-	@bash tests/sprint9_cli.sh --fluxa ./$(TARGET)
-	@bash tests/sprint9_ipc.sh --fluxa ./$(TARGET)
-	@echo "── sprint 9 tests OK ──────────────────────────────────────────────────────"
-
-
+test-sprint8: build
 	@echo "── Sprint 8: Handover Atômico ─────────────────────────────────────────"
 	@echo "── handover básico ─────────────────────────────────────────────────────"
 	@./$(TARGET) run tests/sprint8_handover_basic.flx
@@ -132,6 +281,19 @@ test-sprint9: build
 	@echo "── linha nos erros ─────────────────────────────────────────────────────"
 	@./$(TARGET) run tests/sprint8_error_line.flx || true
 	@echo "── all sprint8 tests OK ────────────────────────────────────────────────"
+
+test-sprint9: build
+	@echo "── Sprint 9: CLI & IPC ────────────────────────────────────────────────────"
+	@chmod +x tests/sprint9_cli.sh tests/sprint9_ipc.sh
+	@bash tests/sprint9_cli.sh --fluxa ./$(TARGET)
+	@bash tests/sprint9_ipc.sh --fluxa ./$(TARGET)
+	@echo "── sprint 9 tests OK ──────────────────────────────────────────────────────"
+
+test-sprint9b: build
+	@echo "── Sprint 9.b: Safe point no back-edge do while ───────────────────────────"
+	@chmod +x tests/sprint9b_set_in_loop.sh
+	@bash tests/sprint9b_set_in_loop.sh --fluxa ./$(TARGET)
+	@echo "── sprint 9.b tests OK ────────────────────────────────────────────────────"
 
 bench: build
 	@echo "── bench (global while) ───────────────────────"
@@ -202,4 +364,16 @@ test-all: build
 	@./tests/integration/run_all.sh --fluxa ./$(TARGET)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET_RP2040) $(TARGET_ESP32) $(TARGET_CORTEXM)
+	rm -f $(TARGET)_asan $(TARGET)_debug
+	rm -f *.o
+
+# build-asan: debug build com AddressSanitizer — para investigação de crashes
+# Não incluir no pacote de distribuição (binário 3-4x maior)
+build-asan:
+	$(CC) -std=c99 -Wall -Wextra -g -fsanitize=address,undefined \
+	  -Isrc -Ivendor -DFLUXA_HAS_FFI=1 \
+	  $(SRCS) -o $(TARGET)_asan \
+	  $(FFI_LDFLAGS) -ldl -lm -lpthread
+	@echo "✓ asan build ok → ./$(TARGET)_asan  (não distribuir)"
+
