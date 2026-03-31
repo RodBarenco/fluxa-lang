@@ -72,6 +72,7 @@ typedef struct Runtime {
     long           cycle_count;   /* incremented per top-level statement    */
     int            dry_run;       /* 1 = suppress all output (print, FFI)   */
     volatile int  *cancel_flag;   /* non-NULL in -dev: set to 1 to abort VM */
+    int            current_line;  /* Sprint 8: linha atual em execução      */
 } Runtime;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -97,3 +98,11 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in);
 void runtime_set_cancel_flag(volatile int *flag);
 
 #endif /* FLUXA_RUNTIME_H */
+
+/* Sprint 8: Handover Atômico
+ * Executa um programa em um Runtime já inicializado pelo chamador.
+ * Usado pelo Ciclo Imaginário (dry_run=1) e pelo runtime_apply de B.
+ * O Runtime deve ter sido zero-init pelo caller; esta fn preenche
+ * scope, stack e executa o program_node. Não aloca nem libera rt. */
+int runtime_exec_with_rt(Runtime *rt, ASTNode *program);
+

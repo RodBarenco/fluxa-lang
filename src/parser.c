@@ -57,6 +57,7 @@ static ASTNode *p_assign(Parser *p, const char *name, ASTNode *val) {
 static ASTNode *p_binary(Parser *p, const char *op,
                           ASTNode *left, ASTNode *right) {
     ASTNode *n = P_NODE(); n->type = NODE_BINARY_EXPR;
+    n->line            = p->current.line;
     n->as.binary.op    = P_STR(op);
     n->as.binary.left  = left;
     n->as.binary.right = right; return n;
@@ -115,25 +116,26 @@ static void parse_args_into(Parser *p, ASTNode ***args_out, int *count_out) {
 
 /* ── Expression parsing ──────────────────────────────────────────────────── */
 static ASTNode *parse_primary(Parser *p) {
+    int cur_line = p->current.line;   /* Sprint 8: linha do token atual */
     if (check(p, TOK_STRING)) {
         ASTNode *n = p_string(p, p->current.value);
-        parser_advance(p); return n;
+        n->line = cur_line; parser_advance(p); return n;
     }
     if (check(p, TOK_INT)) {
         ASTNode *n = p_integer(p, atol(p->current.value));
-        parser_advance(p); return n;
+        n->line = cur_line; parser_advance(p); return n;
     }
     if (check(p, TOK_FLOAT)) {
         ASTNode *n = p_float(p, atof(p->current.value));
-        parser_advance(p); return n;
+        n->line = cur_line; parser_advance(p); return n;
     }
     if (check(p, TOK_BOOL)) {
         ASTNode *n = p_bool(p, strcmp(p->current.value,"true")==0 ? 1 : 0);
-        parser_advance(p); return n;
+        n->line = cur_line; parser_advance(p); return n;
     }
     if (check(p, TOK_NIL)) {
         ASTNode *n = p_ident(p, "nil");
-        parser_advance(p); return n;
+        n->line = cur_line; parser_advance(p); return n;
     }
     if (check(p, TOK_IDENT) || check(p, TOK_ERR)) {
         char name[256];
@@ -522,7 +524,8 @@ static ASTNode *parse_body(Parser *p) {
 /* ── Statement parsing ───────────────────────────────────────────────────── */
 static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
-    if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); }
+    int stmt_line = p->current.line;   /* Sprint 8: captura linha do statement */
+    if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); stmt_line = p->current.line; }
 
     /* Sprint 6.b: import c libname [as alias] */
     if (check(p, TOK_IMPORT)) {
@@ -633,6 +636,7 @@ static ASTNode *parse_statement(Parser *p) {
 
         ASTNode *n = P_NODE();
         n->type = NODE_FUNC_DECL;
+        n->line = stmt_line;
         n->as.func_decl.name        = P_STR(fn_name);
         n->as.func_decl.param_names = param_names;
         n->as.func_decl.param_types = param_types;
@@ -647,6 +651,7 @@ static ASTNode *parse_statement(Parser *p) {
         parser_advance(p);
         ASTNode *n = P_NODE();
         n->type = NODE_RETURN;
+        n->line = stmt_line;
         if (check(p, TOK_RBRACE) || check(p, TOK_EOF))
             n->as.ret.value = NULL;
         else
@@ -837,7 +842,7 @@ static ASTNode *parse_statement(Parser *p) {
         if (!expect(p, TOK_EQ, "after variable name")) return NULL;
         ASTNode *init = parse_expr(p);
         if (!init) return NULL;
-        return p_var_decl(p, type_name, var_name, init, persistent);
+        { ASTNode *_sn = p_var_decl(p, type_name, var_name, init, persistent); _sn->line = stmt_line; return _sn; }
     }
 
     if (persistent) { parse_error(p, "expected type after 'prst'"); return NULL; }

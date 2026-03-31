@@ -1,5 +1,6 @@
 /* runtime.c — Fluxa Runtime
- * Sprint 6: danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
+ * Sprint 6:   danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
+ * Sprint 8:   rt_error_line (linha nos erros), runtime_exec_with_rt (Handover)
  */
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
@@ -15,28 +16,34 @@
 #include <string.h>
 
 /* ── Global cancel flag for -dev mode ────────────────────────────────────── */
-/* Set by the watcher thread to abort an infinite loop in the VM.
- * Only one Runtime runs at a time in -dev mode, so a global is safe. */
 static volatile int  *g_cancel_flag = NULL;
 
 void runtime_set_cancel_flag(volatile int *flag) {
     g_cancel_flag = flag;
 }
 
-/* ── Error helper ─────────────────────────────────────────────────────────── */
-/* Sprint 6: if inside danger, accumulate in err_stack instead of aborting.
- * context_name is the current function/Block name for the ErrEntry. */
-static void rt_error(Runtime *rt, const char *msg) {
+/* ── Error helpers ────────────────────────────────────────────────────────── */
+/* Sprint 8: rt_error_line inclui número de linha na mensagem e no ErrEntry.
+ * rt_error é mantido para compatibilidade — chama rt_error_line com line=0. */
+static void rt_error_line(Runtime *rt, const char *msg, int line) {
+    /* Se não veio linha explícita, usa a última linha rastreada */
+    int eff_line = (line > 0) ? line : rt->current_line;
     if (rt->danger_depth > 0) {
-        /* inside danger — push to stack, do NOT set had_error */
         const char *ctx = rt->current_instance
                         ? rt->current_instance->name
                         : "<global>";
-        errstack_push(&rt->err_stack, ERR_FLUXA, msg, ctx, 0);
+        errstack_push(&rt->err_stack, ERR_FLUXA, msg, ctx, eff_line);
     } else {
-        fprintf(stderr, "[fluxa] Runtime error: %s\n", msg);
+        if (eff_line > 0)
+            fprintf(stderr, "[fluxa] Runtime error (line %d): %s\n", eff_line, msg);
+        else
+            fprintf(stderr, "[fluxa] Runtime error: %s\n", msg);
         rt->had_error = 1;
     }
+}
+
+static void rt_error(Runtime *rt, const char *msg) {
+    rt_error_line(rt, msg, 0);
 }
 
 /* ── Variable access ─────────────────────────────────────────────────────── */
@@ -334,6 +341,8 @@ static BlockInstance *resolve_instance(Runtime *rt, const char *owner_name) {
 /* ── Eval ────────────────────────────────────────────────────────────────── */
 static Value eval(Runtime *rt, ASTNode *node) {
     if (!node || rt->had_error) return val_nil();
+    /* Sprint 8: atualiza linha atual para mensagens de erro precisas */
+    if (node->line > 0) rt->current_line = node->line;
 
     switch (node->type) {
         case NODE_STRING_LIT: return val_string(node->as.str.value);
@@ -1089,6 +1098,7 @@ int runtime_exec(ASTNode *program) {
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
+    rt.current_line     = 0;
     rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = mode;
     rt.config           = config;
@@ -1097,14 +1107,23 @@ int runtime_exec(ASTNode *program) {
     ffi_registry_init(&rt.ffi);
 
     if (mode == FLUXA_MODE_PROJECT) {
-        prst_pool_init(&rt.prst_pool);
-        prst_graph_init(&rt.prst_graph);
+        prst_pool_init(&rt.prst_pool);   /* pool é dinâmico; prst_cap usado abaixo */
+        /* prst_pool não tem init_cap: o cap inicial fixo é PRST_POOL_INIT_CAP;
+         * aqui pré-alocamos conforme config se diferente do default */
+        if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
+            PrstEntry *ne = (PrstEntry *)realloc(rt.prst_pool.entries,
+                                sizeof(PrstEntry) * (size_t)config.prst_cap);
+            if (ne) { rt.prst_pool.entries = ne; rt.prst_pool.cap = config.prst_cap; }
+        }
+        prst_graph_init_cap(&rt.prst_graph, config.prst_graph_cap);
     } else {
         /* Script mode: zero out pool/graph so free() calls are safe */
         rt.prst_pool.entries = NULL;
         rt.prst_pool.count   = 0;
         rt.prst_pool.cap     = 0;
+        rt.prst_graph.deps   = NULL;
         rt.prst_graph.count  = 0;
+        rt.prst_graph.cap    = 0;
     }
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
@@ -1159,6 +1178,7 @@ int runtime_exec_explain(ASTNode *program) {
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
+    rt.current_line     = 0;
     rt.cancel_flag      = g_cancel_flag;
     rt.mode             = FLUXA_MODE_PROJECT;  /* always project for explain */
     rt.config           = config;
@@ -1166,7 +1186,12 @@ int runtime_exec_explain(ASTNode *program) {
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
     prst_pool_init(&rt.prst_pool);
-    prst_graph_init(&rt.prst_graph);
+    if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
+        PrstEntry *ne = (PrstEntry *)realloc(rt.prst_pool.entries,
+                            sizeof(PrstEntry) * (size_t)config.prst_cap);
+        if (ne) { rt.prst_pool.entries = ne; rt.prst_pool.cap = config.prst_cap; }
+    }
+    prst_graph_init_cap(&rt.prst_graph, config.prst_graph_cap);
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
 
@@ -1296,23 +1321,27 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
+    rt.current_line     = 0;
     rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = FLUXA_MODE_PROJECT;
     rt.config           = config;
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
-    prst_graph_init(&rt.prst_graph);
+    prst_graph_init_cap(&rt.prst_graph, config.prst_graph_cap);
 
     /* Transfer pool from previous run — prst values survive the reload */
     if (pool_in && pool_in->count > 0) {
         rt.prst_pool = *pool_in;   /* shallow copy — we own it now */
-        /* Invalidate all graph deps so they re-register during eval */
-        /* (Sprint 7.c will also abort in-flight executions here)    */
         for (int i = 0; i < rt.prst_pool.count; i++)
             prst_graph_invalidate(&rt.prst_graph, rt.prst_pool.entries[i].name);
     } else {
         prst_pool_init(&rt.prst_pool);
+        if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
+            PrstEntry *ne = (PrstEntry *)realloc(rt.prst_pool.entries,
+                                sizeof(PrstEntry) * (size_t)config.prst_cap);
+            if (ne) { rt.prst_pool.entries = ne; rt.prst_pool.cap = config.prst_cap; }
+        }
     }
 
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt.stack[i].type = VAL_NIL;
@@ -1337,4 +1366,46 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     prst_graph_free(&rt.prst_graph);
     ffi_registry_free(&rt.ffi);
     return result;
+}
+
+/* ── runtime_exec_with_rt — Sprint 8 ────────────────────────────────────── */
+/* Executa um programa em um Runtime já alocado e parcialmente inicializado
+ * pelo caller (handover_step3_dry_run ou runtime_apply estendido).
+ *
+ * Contrato de entrada:
+ *   - rt->scope, rt->stack, rt->prst_pool, rt->prst_graph foram inicializados
+ *   - rt->dry_run = 1 para Ciclo Imaginário, 0 para execução real
+ *   - rt->mode = FLUXA_MODE_PROJECT ou FLUXA_MODE_SCRIPT
+ *
+ * Contrato de saída:
+ *   - rt->prst_pool atualizado com valores finais
+ *   - rt->err_stack populado com qualquer erro encontrado
+ *   - Retorna 0 (sucesso) ou 1 (had_error)
+ *
+ * NÃO faz cleanup — o caller é responsável por scope_free, gc_collect_all etc.
+ */
+int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
+    if (!rt || !program || program->type != NODE_PROGRAM) return 1;
+
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt->stack[i].type = VAL_NIL;
+    rt->stack_size = 0;
+
+    /* Invalida deps do grafo — serão re-registrados durante execução */
+    for (int i = 0; i < rt->prst_pool.count; i++)
+        prst_graph_invalidate(&rt->prst_graph, rt->prst_pool.entries[i].name);
+
+    for (int i = 0; i < program->as.list.count; i++) {
+        eval(rt, program->as.list.children[i]);
+        rt->cycle_count++;
+        if (rt->had_error) break;
+        /* Sprint 8: em Ciclo Imaginário, qualquer entrada na err_stack
+         * conta como falha mesmo que had_error não esteja setado —
+         * pois danger bloqueia had_error mas o handover precisa saber. */
+        if (rt->dry_run && rt->err_stack.count > 0) {
+            rt->had_error = 1;
+            break;
+        }
+    }
+
+    return rt->had_error ? 1 : 0;
 }

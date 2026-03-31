@@ -54,6 +54,7 @@ typedef struct ASTNode ASTNode;
 struct ASTNode {
     NodeType type;
     int      resolved_offset;  /* set by resolver — -1 = unresolved */
+    int      line;             /* source line — set by parser (Sprint 8) */
 
     union {
         /* NODE_PROGRAM / NODE_FUNC_CALL / NODE_BLOCK_STMT */
