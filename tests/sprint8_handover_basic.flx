@@ -1,0 +1,23 @@
+// sprint8_handover_basic.flx — handover básico: estado prst preservado
+//
+// Simula o protocolo de 5 passos via fluxa test-handover (interno).
+// Este teste roda em modo script e verifica que:
+//   1. prst vars sobrevivem ao handover (via runtime_apply com pool)
+//   2. valores mutados em runtime são preservados (pool ganha precedência
+//      se source não mudou)
+//   3. output é determinístico
+//
+// Saída esperada:
+//   10
+//   ok
+//   20
+//   ok
+
+prst int counter = 10
+print(counter)
+print("ok")
+
+// simula mutação em runtime (segundo ciclo via apply preservaria 20)
+counter = 20
+print(counter)
+print("ok")

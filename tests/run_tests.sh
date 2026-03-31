@@ -250,6 +250,47 @@ else
 $(echo "$prst_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── Sprint 8: Handover Atômico ────────────────────────────────────────────────
+run_test "sprint8/handover_basic"    tests/sprint8_handover_basic.flx    "10
+ok
+20
+ok"
+run_test "sprint8/handover_dryrun"   tests/sprint8_handover_dry_run_fail.flx "antes
+depois"
+run_test "sprint8/handover_prst"     tests/sprint8_handover_prst.flx     "1
+2
+3
+4
+5
+15"
+run_test "sprint8/handover_version"  tests/sprint8_handover_version.flx  "1000
+ok"
+run_test "sprint8/prst_cap"          tests/sprint8_prst_cap.flx          "1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+55"
+
+# ── Sprint 8: test-handover protocol suite ───────────────────────────────────
+printf "  %-56s" "handover (5-step protocol suite)"
+ho_out=$("$FLUXA" test-handover 2>&1)
+if echo "$ho_out" | grep -q "ALL PASS"; then
+    echo "PASS"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS
+  handover:
+$(echo "$ho_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then

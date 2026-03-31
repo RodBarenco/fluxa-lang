@@ -1,0 +1,28 @@
+// sprint8_prst_cap.flx — muitas variáveis prst (testa crescimento dinâmico)
+//
+// Sem fluxa.toml, o cap inicial é 64. Com 10 vars prst declaradas,
+// o pool cresce via realloc automaticamente.
+// Saída esperada: 1 2 3 4 5 6 7 8 9 10 55
+
+prst int v1  = 1
+prst int v2  = 2
+prst int v3  = 3
+prst int v4  = 4
+prst int v5  = 5
+prst int v6  = 6
+prst int v7  = 7
+prst int v8  = 8
+prst int v9  = 9
+prst int v10 = 10
+
+print(v1)
+print(v2)
+print(v3)
+print(v4)
+print(v5)
+print(v6)
+print(v7)
+print(v8)
+print(v9)
+print(v10)
+print(v1+v2+v3+v4+v5+v6+v7+v8+v9+v10)

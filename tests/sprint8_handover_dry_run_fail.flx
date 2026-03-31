@@ -1,0 +1,18 @@
+// sprint8_handover_dry_run_fail.flx — Ciclo Imaginário rejeita programa inválido
+//
+// Verifica que dry_run detecta erro em divisão por zero e
+// acumula em err_stack sem abortar o runtime externo.
+// Saída esperada:
+//   antes
+//   depois
+
+print("antes")
+
+danger {
+    // em dry_run, danger ainda isola — mas o handover verifica err_stack.count
+    // este teste roda normalmente (não em dry_run), confirma que o código
+    // que causaria falha no Ciclo Imaginário não aborta em execução normal.
+    int x = 1 / 0
+}
+
+print("depois")

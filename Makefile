@@ -22,10 +22,11 @@ SRCS    = src/main.c \
           src/builtins.c \
           src/block.c \
           src/ffi.c \
-          src/runtime.c
+          src/runtime.c \
+          src/handover.c
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 test-runner bench examples clean
+.PHONY: all build test test-sprint5 test-sprint8 test-runner bench examples clean
 
 all: build
 
@@ -108,6 +109,20 @@ test-sprint5: build
 	@./$(TARGET) run tests/block_methods.flx
 	@echo "── typeof instance error (expect error) ───────"
 	@./$(TARGET) run tests/block_no_instance_typeof.flx || true
+
+test-sprint8: build
+	@echo "── Sprint 8: Handover Atômico ─────────────────────────────────────────"
+	@echo "── handover básico ─────────────────────────────────────────────────────"
+	@./$(TARGET) run tests/sprint8_handover_basic.flx
+	@echo "── handover dry run falha (espera erro) ────────────────────────────────"
+	@./$(TARGET) run tests/sprint8_handover_dry_run_fail.flx
+	@echo "── handover prst preservado ────────────────────────────────────────────"
+	@./$(TARGET) run tests/sprint8_handover_prst.flx
+	@echo "── handover versão de protocolo ────────────────────────────────────────"
+	@./$(TARGET) run tests/sprint8_handover_version.flx
+	@echo "── linha nos erros ─────────────────────────────────────────────────────"
+	@./$(TARGET) run tests/sprint8_error_line.flx || true
+	@echo "── all sprint8 tests OK ────────────────────────────────────────────────"
 
 bench: build
 	@echo "── bench (global while) ───────────────────────"

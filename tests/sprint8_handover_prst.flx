@@ -1,0 +1,25 @@
+// sprint8_handover_prst.flx — prst com caps grandes via código
+//
+// Verifica que um programa com muitas variáveis prst funciona corretamente.
+// Não depende de fluxa.toml — testa o comportamento dinâmico do pool.
+//
+// Saída esperada:
+//   1
+//   2
+//   3
+//   4
+//   5
+//   15
+
+prst int a = 1
+prst int b = 2
+prst int c = 3
+prst int d = 4
+prst int e = 5
+
+print(a)
+print(b)
+print(c)
+print(d)
+print(e)
+print(a + b + c + d + e)

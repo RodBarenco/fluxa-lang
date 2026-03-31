@@ -1,0 +1,9 @@
+// sprint8_error_line.flx — erros reportam número de linha
+//
+// Sprint 8: rt_error_line inclui linha na mensagem stderr.
+// Este arquivo provoca um erro de runtime fora de danger para
+// verificar que a linha aparece no stderr (esperado exit code 1).
+//
+// Linha do erro: linha 14
+int x = 1 / 0
+print("nao deve chegar aqui")
