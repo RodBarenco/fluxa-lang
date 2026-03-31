@@ -1,6 +1,7 @@
 /* runtime.c — Fluxa Runtime
  * Sprint 6:   danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
  * Sprint 8:   rt_error_line (linha nos erros), runtime_exec_with_rt (Handover)
+ * Sprint 9:   IPC safe-point hook (ipc_apply_pending_set)
  */
 #define _POSIX_C_SOURCE 200809L
 #include "runtime.h"
@@ -14,6 +15,19 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Sprint 9: IPC pending-set hook — defined in ipc_server.c. */
+extern void ipc_apply_pending_set(Runtime *rt);
+struct IpcRtView;
+extern void ipc_rtview_update(struct IpcRtView *view, Runtime *rt);
+
+/* Global IPC view pointer — set by run_dev before each exec.
+ * NULL in script mode and on RP2040. */
+static struct IpcRtView *g_ipc_view = NULL;
+
+void runtime_set_ipc_view(void *view) {
+    g_ipc_view = (struct IpcRtView *)view;
+}
 
 /* ── Global cancel flag for -dev mode ────────────────────────────────────── */
 static volatile int  *g_cancel_flag = NULL;
@@ -1131,6 +1145,10 @@ int runtime_exec(ASTNode *program) {
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
         rt.cycle_count++;
+        if (runtime_is_safe_point(&rt)) {
+            ipc_apply_pending_set(&rt);
+            if (g_ipc_view) ipc_rtview_update(g_ipc_view, &rt);
+        }
         if (rt.had_error) break;
     }
 
@@ -1198,6 +1216,10 @@ int runtime_exec_explain(ASTNode *program) {
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
         rt.cycle_count++;
+        if (runtime_is_safe_point(&rt)) {
+            ipc_apply_pending_set(&rt);
+            if (g_ipc_view) ipc_rtview_update(g_ipc_view, &rt);
+        }
         if (rt.had_error) break;
     }
     runtime_explain(&rt);
@@ -1349,11 +1371,14 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     for (int i = 0; i < program->as.list.count; i++) {
         eval(&rt, program->as.list.children[i]);
         rt.cycle_count++;
+        if (runtime_is_safe_point(&rt)) {
+            ipc_apply_pending_set(&rt);
+            if (g_ipc_view) ipc_rtview_update(g_ipc_view, &rt);
+        }
         if (rt.had_error) break;
     }
 
     int result = rt.had_error ? 1 : 0;
-
     /* If caller passed pool_in, update it with the final pool state.
      * This allows chained applies (next reload gets current values). */
     if (pool_in) *pool_in = rt.prst_pool;

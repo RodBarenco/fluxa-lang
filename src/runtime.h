@@ -97,6 +97,10 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in);
  * Call with NULL to clear (after thread joins). */
 void runtime_set_cancel_flag(volatile int *flag);
 
+/* Sprint 9: register the stable IpcRtView updated at every safe point.
+ * Pass NULL to disable (script mode / RP2040). */
+void runtime_set_ipc_view(void *view);
+
 #endif /* FLUXA_RUNTIME_H */
 
 /* Sprint 8: Handover Atômico
