@@ -1,0 +1,37 @@
+version: "3.9"
+
+# docker-compose.yml — Fluxa IoT Simulation
+#
+# Simula ambiente de dispositivo embedded com volume NVS persistente.
+# O volume 'fluxa-nvs' sobrevive a restarts do container — simula Flash.
+#
+# Uso:
+#   docker-compose build
+#   docker-compose run --rm fluxa-sim              # ambos os cenários
+#   docker-compose run --rm fluxa-sim --scenario 1 # Cenário 1 apenas
+#   docker-compose run --rm fluxa-sim --verbose    # com log detalhado
+#
+# Para testar persistência após restart:
+#   docker-compose run --rm fluxa-sim --scenario 1
+#   docker-compose run --rm fluxa-sim --scenario 1  # mesmo volume NVS
+#
+# Para limpar estado do volume:
+#   docker-compose down -v
+
+services:
+  fluxa-sim:
+    build:
+      context: ../..            # raiz do projeto (contém src/ e Makefile)
+      dockerfile: tests/integration/Dockerfile
+    volumes:
+      - fluxa-nvs:/nvs          # volume persistente simulando Flash/NVS
+    environment:
+      - FLUXA_LOG_LEVEL=info
+    # Argumentos extras passados diretamente para run_all.sh
+    # Ex: docker-compose run --rm fluxa-sim --verbose --scenario 2
+
+volumes:
+  fluxa-nvs:
+    driver: local
+    # Em produção real: substituir por um volume backed por tmpfs ou bind mount
+    # para simular NVS com limites de escrita como Flash real

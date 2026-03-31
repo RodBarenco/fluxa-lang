@@ -26,7 +26,8 @@ SRCS    = src/main.c \
           src/handover.c
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 test-sprint8 test-runner bench examples clean
+.PHONY: all build test test-sprint5 test-sprint8 test-runner bench examples clean \
+        test-integration test-integration-s1 test-integration-s2 test-all
 
 all: build
 
@@ -164,6 +165,33 @@ examples: build
 	@echo "── 08_pagerank ─────────────────────────────────────"
 	@./$(TARGET) run examples/problems/08_pagerank.flx
 	@echo "── all examples ok ─────────────────────────────"
+
+# Integration tests — Cenários de simulação do Handover Atômico
+# Requerem bash e python3. Não dependem de Docker para rodar localmente.
+#
+#   make test-integration      → ambos os cenários
+#   make test-integration-s1   → Cenário 1 apenas (IoT Simples)
+#   make test-integration-s2   → Cenário 2 apenas (Fault Injection)
+#   make test-all              → unit tests (runner) + integration tests
+#
+test-integration: build
+	@chmod +x tests/integration/run_all.sh \
+	           tests/integration/scenario1/run.sh \
+	           tests/integration/scenario2/run.sh
+	@./tests/integration/run_all.sh --fluxa ./$(TARGET)
+
+test-integration-s1: build
+	@chmod +x tests/integration/scenario1/run.sh
+	@./tests/integration/run_all.sh --fluxa ./$(TARGET) --scenario 1
+
+test-integration-s2: build
+	@chmod +x tests/integration/scenario2/run.sh
+	@./tests/integration/run_all.sh --fluxa ./$(TARGET) --scenario 2
+
+# Roda tudo: unit tests automatizados + integration tests
+test-all: build
+	@./tests/run_tests.sh ./$(TARGET)
+	@./tests/integration/run_all.sh --fluxa ./$(TARGET)
 
 clean:
 	rm -f $(TARGET)

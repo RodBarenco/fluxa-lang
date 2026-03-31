@@ -1,0 +1,24 @@
+// v1/main.flx — Estado inicial (versão 1)
+// Simula dispositivo IoT com variáveis de controle persistentes.
+//
+// prst vars:
+//   x     int  = 100   (parâmetro de controle principal)
+//   modo  int  = 1     (modo de operação)
+//   ciclo int  = 0     (contador de ciclos — mutado em runtime)
+
+prst int x     = 100
+prst int modo  = 1
+prst int ciclo = 0
+
+// Registra estado inicial
+print("v1:x=")
+print(x)
+print("v1:modo=")
+print(modo)
+print("v1:ciclo=")
+print(ciclo)
+
+// Simula incremento de ciclo
+ciclo = ciclo + 1
+print("v1:ciclo_after=")
+print(ciclo)

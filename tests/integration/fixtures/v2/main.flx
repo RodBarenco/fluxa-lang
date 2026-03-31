@@ -1,0 +1,23 @@
+// v2/main.flx — Versão 2 (alvo do handover)
+// Mantém as mesmas variáveis prst de v1 + adiciona nova.
+// Transformação: speed = 2 (novo parâmetro)
+//
+// Regras de handover:
+//   x     → preservado do runtime A (prst existia em v1)
+//   modo  → preservado do runtime A
+//   ciclo → preservado do runtime A (valor mutado)
+//   speed → inicializado pela fonte (novo em v2)
+
+prst int x     = 100
+prst int modo  = 1
+prst int ciclo = 0
+prst int speed = 2
+
+print("v2:x=")
+print(x)
+print("v2:modo=")
+print(modo)
+print("v2:ciclo=")
+print(ciclo)
+print("v2:speed=")
+print(speed)

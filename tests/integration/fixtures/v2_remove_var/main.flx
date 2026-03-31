@@ -1,0 +1,13 @@
+// v2_remove_var/main.flx — Versão com remoção de variável prst
+// Remove 'modo' — testa que GC ocorre e memória é liberada corretamente.
+// 'ciclo' é mantido para validar que remoção é seletiva.
+
+prst int x     = 100
+prst int ciclo = 0
+
+// 'modo' foi removido — não deve aparecer no pool após handover
+print("v2r:x=")
+print(x)
+print("v2r:ciclo=")
+print(ciclo)
+print("v2r:modo_ausente=ok")
