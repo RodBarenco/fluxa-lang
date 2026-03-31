@@ -93,8 +93,13 @@ static inline int prst_pool_set(PrstPool *p, const char *name,
         p->entries = ne;
         p->cap     = new_cap;
     }
-    strncpy(p->entries[p->count].name, name, 255);
-    p->entries[p->count].name[255]     = '\0';
+    {
+        size_t _nlen = strlen(name);
+        size_t _ncap = sizeof(p->entries[p->count].name) - 1;
+        if (_nlen > _ncap) _nlen = _ncap;
+        memcpy(p->entries[p->count].name, name, _nlen);
+        p->entries[p->count].name[_nlen] = '\0';
+    }
     p->entries[p->count].declared_type = value.type;
     if (value.type == VAL_STRING && value.as.string)
         value.as.string = strdup(value.as.string);
@@ -182,10 +187,13 @@ static inline uint32_t prst_pool_checksum(const PrstPool *p) {
  */
 static inline int prst_pool_serialize(const PrstPool *p,
                                        void **out_buf, size_t *out_size) {
-    /* Two-pass: first calculate size, then fill */
+    /* Two-pass: first calculate size, then fill
+     * Per entry: name[256] + dt(int32) + so(int32) + iv(int64) + fv(double)
+     *            + bv(int32) + slen(int32) + str_data[slen]
+     * = 256 + 4 + 4 + 8 + 8 + 4 + 4 + slen = 288 + slen  */
     size_t sz = sizeof(int32_t);
     for (int i = 0; i < p->count; i++) {
-        sz += 256 + sizeof(int32_t)*3 + sizeof(int64_t) + sizeof(double);
+        sz += 256 + sizeof(int32_t)*4 + sizeof(int64_t) + sizeof(double);
         if (p->entries[i].value.type == VAL_STRING && p->entries[i].value.as.string)
             sz += (size_t)strlen(p->entries[i].value.as.string);
     }

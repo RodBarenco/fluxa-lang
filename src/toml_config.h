@@ -1,23 +1,15 @@
-/* toml_config.h — Minimal fluxa.toml configuration loader (Sprint 7)
- *
- * Parses only the [runtime] section of fluxa.toml.
- * No external toml library — hand-written line parser sufficient
- * for the small number of keys we need.
+/* toml_config.h — Minimal fluxa.toml configuration loader (Sprint 7 / Sprint 8)
  *
  * Supported keys (fluxa.toml):
  *   [runtime]
- *   gc_cap = 1024     # max GC-tracked objects (default: GC_TABLE_CAP)
+ *   gc_cap        = 1024   # max objetos rastreados pelo GC (default GC_TABLE_CAP)
+ *   prst_cap      = 64     # cap inicial do PrstPool (default PRST_POOL_INIT_CAP)
+ *   prst_graph_cap= 256    # cap inicial do PrstGraph (default PRST_GRAPH_CAP_DEFAULT)
  *
- * Format rules (strict subset of TOML):
- *   - Lines starting with '#' are comments
- *   - Section headers: [section_name]
- *   - Key-value: key = value  (integer values only for now)
- *   - Whitespace around '=' is ignored
- *   - Unknown keys silently ignored
+ * Todos os caps são dinâmicos — crescem via realloc até o máximo compilado.
+ * O valor no toml é o tamanho inicial da alocação, não um teto absoluto.
  *
- * Usage:
- *   FluxaConfig cfg = fluxa_config_load("fluxa.toml");
- *   gc_init(&rt.gc, cfg.gc_cap);
+ * Exceção: gc_cap É um teto absoluto (GCTable usa array estático).
  */
 #ifndef FLUXA_TOML_CONFIG_H
 #define FLUXA_TOML_CONFIG_H
@@ -28,18 +20,33 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+/* Defaults espelhados aqui para evitar dupla inclusão de headers
+ * com static inline (prst_pool.h / prst_graph.h).
+ * Os valores reais são definidos nesses headers e devem permanecer em sync. */
+#ifndef PRST_POOL_INIT_CAP
+#  define PRST_POOL_INIT_CAP     64
+#endif
+#ifndef PRST_GRAPH_CAP_DEFAULT
+#  define PRST_GRAPH_CAP_DEFAULT 256
+#endif
+#ifndef PRST_GRAPH_CAP_MAX
+#  define PRST_GRAPH_CAP_MAX     65536
+#endif
+
 typedef struct {
-    int gc_cap;     /* [runtime] gc_cap — default GC_TABLE_CAP */
+    int gc_cap;          /* teto absoluto do GC (array estático)       */
+    int prst_cap;        /* cap inicial do PrstPool (dinâmico)         */
+    int prst_graph_cap;  /* cap inicial do PrstGraph (dinâmico)        */
 } FluxaConfig;
 
 static inline FluxaConfig fluxa_config_defaults(void) {
     FluxaConfig c;
-    c.gc_cap = GC_TABLE_CAP;
+    c.gc_cap         = GC_TABLE_CAP;
+    c.prst_cap       = PRST_POOL_INIT_CAP;
+    c.prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
     return c;
 }
 
-/* Trim leading and trailing whitespace in-place.
- * Returns pointer into s (no allocation). */
 static inline char *cfg_trim(char *s) {
     while (*s && isspace((unsigned char)*s)) s++;
     char *end = s + strlen(s);
@@ -48,60 +55,74 @@ static inline char *cfg_trim(char *s) {
     return s;
 }
 
-/* Load fluxa.toml from path. If file not found or unreadable,
- * returns defaults silently — fluxa.toml is optional. */
 static inline FluxaConfig fluxa_config_load(const char *path) {
     FluxaConfig cfg = fluxa_config_defaults();
     if (!path) return cfg;
 
     FILE *f = fopen(path, "r");
-    if (!f) return cfg;   /* no toml = all defaults */
+    if (!f) return cfg;
 
-    char   line[512];
-    int    in_runtime = 0;
+    char line[512];
+    int  in_runtime = 0;
 
     while (fgets(line, sizeof(line), f)) {
         char *l = cfg_trim(line);
         if (!*l || *l == '#') continue;
 
-        /* Section header */
         if (*l == '[') {
             in_runtime = (strncmp(l, "[runtime]", 9) == 0);
             continue;
         }
-
         if (!in_runtime) continue;
 
-        /* key = value */
         char *eq = strchr(l, '=');
         if (!eq) continue;
-
         *eq = '\0';
         char *key = cfg_trim(l);
         char *val = cfg_trim(eq + 1);
-
-        /* Strip inline comment */
         char *hash = strchr(val, '#');
         if (hash) { *hash = '\0'; cfg_trim(val); }
 
+        int v = atoi(val);
+
         if (strcmp(key, "gc_cap") == 0) {
-            int v = atoi(val);
+            /* gc_cap: teto absoluto — não pode exceder o compilado */
             if (v > 0 && v <= GC_TABLE_CAP)
                 cfg.gc_cap = v;
             else if (v > GC_TABLE_CAP)
                 fprintf(stderr,
-                    "[fluxa] fluxa.toml: gc_cap %d exceeds compiled max %d — using %d\n",
-                    v, GC_TABLE_CAP, GC_TABLE_CAP);
+                    "[fluxa] fluxa.toml: gc_cap %d excede máximo compilado %d"
+                    " — usando %d\n", v, GC_TABLE_CAP, GC_TABLE_CAP);
         }
-        /* Future keys: thread_cap, prst_cap, etc. */
+        else if (strcmp(key, "prst_cap") == 0) {
+            /* prst_cap: cap inicial do PrstPool; dinâmico, sem teto rígido */
+            if (v > 0)
+                cfg.prst_cap = v;
+            else
+                fprintf(stderr,
+                    "[fluxa] fluxa.toml: prst_cap inválido (%d) — usando %d\n",
+                    v, PRST_POOL_INIT_CAP);
+        }
+        else if (strcmp(key, "prst_graph_cap") == 0) {
+            /* prst_graph_cap: cap inicial do PrstGraph; dinâmico */
+            if (v > 0 && v <= PRST_GRAPH_CAP_MAX)
+                cfg.prst_graph_cap = v;
+            else if (v > PRST_GRAPH_CAP_MAX)
+                fprintf(stderr,
+                    "[fluxa] fluxa.toml: prst_graph_cap %d excede máximo %d"
+                    " — usando %d\n", v, PRST_GRAPH_CAP_MAX, PRST_GRAPH_CAP_MAX);
+            else
+                fprintf(stderr,
+                    "[fluxa] fluxa.toml: prst_graph_cap inválido (%d)"
+                    " — usando %d\n", v, PRST_GRAPH_CAP_DEFAULT);
+        }
+        /* Future keys: thread_cap, etc. */
     }
 
     fclose(f);
     return cfg;
 }
 
-/* Search for fluxa.toml in current directory (simple heuristic for Sprint 7).
- * Sprint 8 (CLI) will do proper project root discovery. */
 static inline FluxaConfig fluxa_config_find_and_load(void) {
     return fluxa_config_load("fluxa.toml");
 }
