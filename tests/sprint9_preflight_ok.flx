@@ -1,0 +1,8 @@
+// sprint9_preflight_ok.flx — valid program for preflight test
+// fluxa apply sprint9_preflight_ok.flx -p should exit 0
+
+prst int x = 10
+prst int y = 20
+print(x)
+print(y)
+print(x + y)

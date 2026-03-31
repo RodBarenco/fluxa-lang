@@ -1,0 +1,7 @@
+// sprint9_init_main.flx — reference for what fluxa init scaffolds
+// This is not executed directly — the shell test checks the scaffolded file
+
+prst int counter = 0
+
+counter = counter + 1
+print(counter)

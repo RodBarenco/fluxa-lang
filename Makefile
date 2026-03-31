@@ -23,10 +23,11 @@ SRCS    = src/main.c \
           src/block.c \
           src/ffi.c \
           src/runtime.c \
-          src/handover.c
+          src/handover.c \
+          src/ipc_server.c
 TARGET  = fluxa
 
-.PHONY: all build test test-sprint5 test-sprint8 test-runner bench examples clean \
+.PHONY: all build test test-sprint5 test-sprint8 test-sprint9 test-runner bench examples clean \
         test-integration test-integration-s1 test-integration-s2 test-all
 
 all: build
@@ -111,7 +112,14 @@ test-sprint5: build
 	@echo "── typeof instance error (expect error) ───────"
 	@./$(TARGET) run tests/block_no_instance_typeof.flx || true
 
-test-sprint8: build
+test-sprint9: build
+	@echo "── Sprint 9: CLI & IPC ────────────────────────────────────────────────────"
+	@chmod +x tests/sprint9_cli.sh tests/sprint9_ipc.sh
+	@bash tests/sprint9_cli.sh --fluxa ./$(TARGET)
+	@bash tests/sprint9_ipc.sh --fluxa ./$(TARGET)
+	@echo "── sprint 9 tests OK ──────────────────────────────────────────────────────"
+
+
 	@echo "── Sprint 8: Handover Atômico ─────────────────────────────────────────"
 	@echo "── handover básico ─────────────────────────────────────────────────────"
 	@./$(TARGET) run tests/sprint8_handover_basic.flx
