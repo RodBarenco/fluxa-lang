@@ -56,6 +56,7 @@ typedef enum {
     IPC_OP_SET         = 0x03,  /* set value of a prst var                  */
     IPC_OP_LOGS        = 0x04,  /* get N most recent log entries            */
     IPC_OP_STATUS      = 0x05,  /* get runtime status snapshot              */
+    IPC_OP_EXPLAIN     = 0x06,  /* streaming explain: N var packets + DONE  */
 } IpcOpcode;
 
 /* ── Value type tags (mirrors FluxaType, self-contained for wire format) ── */
@@ -123,6 +124,9 @@ typedef struct {
 #define IPC_STATUS_ERR_AUTH     0x04  /* UID mismatch                      */
 #define IPC_STATUS_ERR_MAGIC    0x05  /* bad magic in request              */
 #define IPC_STATUS_ERR_TIMEOUT  0x06
+/* EXPLAIN streaming — one packet per prst var, then a terminal DONE packet */
+#define IPC_STATUS_EXPLAIN_VAR  0x10  /* packet carries one prst var       */
+#define IPC_STATUS_EXPLAIN_DONE 0x11  /* final packet: runtime meta + deps */
 
 /* ── IpcRtView — forward declaration only ───────────────────────────────── */
 /* Full definition, ipc_rtview_create(), and ipc_rtview_destroy() are in
@@ -205,6 +209,14 @@ static inline void ipc_req_status(IpcRequest *r, uint32_t seq) {
     r->magic   = IPC_MAGIC;
     r->version = IPC_VERSION;
     r->opcode  = IPC_OP_STATUS;
+    r->seq     = seq;
+}
+
+static inline void ipc_req_explain(IpcRequest *r, uint32_t seq) {
+    memset(r, 0, sizeof *r);
+    r->magic   = IPC_MAGIC;
+    r->version = IPC_VERSION;
+    r->opcode  = IPC_OP_EXPLAIN;
     r->seq     = seq;
 }
 
@@ -372,7 +384,42 @@ static inline int ipc_discover_pid(void) {
         int pid = 0;
         if (fscanf(f, "%d", &pid) != 1) pid = 0;
         fclose(f);
-        if (pid > 0 && kill(pid, 0) == 0) { found = pid; break; }
+        if (pid <= 0) continue;
+
+        /* Derive socket path from lock path */
+        char sock_path[108];
+        snprintf(sock_path, sizeof sock_path, IPC_SOCKET_FMT, pid);
+
+        /* Socket must exist and be owned by current user */
+        struct stat st;
+        if (stat(sock_path, &st) != 0)   continue;   /* no socket — stale lock */
+        if (!S_ISSOCK(st.st_mode))        continue;   /* not a socket */
+        if (st.st_uid != getuid())        continue;   /* wrong owner */
+
+        /* Prove liveness by actually connecting — works across PID namespaces
+         * (kill(pid,0) fails inside Docker containers but connect() does not) */
+        int probe_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (probe_fd < 0) continue;
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof addr);
+        addr.sun_family = AF_UNIX;
+        memcpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
+        /* Non-blocking connect with immediate close — just tests reachability */
+        struct timeval tv = { 0, 50000 };   /* 50ms timeout */
+        setsockopt(probe_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        setsockopt(probe_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        int ok = (connect(probe_fd, (struct sockaddr *)&addr, sizeof addr) == 0);
+        close(probe_fd);
+
+        if (!ok) {
+            /* Server not accepting — stale socket/lock, clean up */
+            unlink(sock_path);
+            unlink(gl.gl_pathv[i]);
+            continue;
+        }
+
+        found = pid;
+        break;
     }
     globfree(&gl);
     return found;
