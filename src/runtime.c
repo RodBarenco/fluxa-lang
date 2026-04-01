@@ -63,6 +63,55 @@ static void rt_error(Runtime *rt, const char *msg) {
     rt_error_line(rt, msg, 0);
 }
 
+/* ── Type checking ────────────────────────────────────────────────────────── */
+/* Map a declared type name (from the AST) to the corresponding ValType.
+ * Returns VAL_NIL when the type name is unknown or does not constrain
+ * (e.g. "nil" return type on functions — not used in var declarations). */
+static ValType type_name_to_val(const char *t) {
+    if (!t) return VAL_NIL;
+    if (strcmp(t, "int")   == 0) return VAL_INT;
+    if (strcmp(t, "float") == 0) return VAL_FLOAT;
+    if (strcmp(t, "bool")  == 0) return VAL_BOOL;
+    if (strcmp(t, "str")   == 0) return VAL_STRING;
+    if (strcmp(t, "dyn")   == 0) return VAL_NIL; /* dyn accepts any — checked separately */
+    return VAL_NIL; /* arr, nil, etc. — no runtime constraint here */
+}
+
+static const char *val_type_name(ValType t) {
+    switch (t) {
+        case VAL_INT:        return "int";
+        case VAL_FLOAT:      return "float";
+        case VAL_BOOL:       return "bool";
+        case VAL_STRING:     return "str";
+        case VAL_FUNC:       return "fn";
+        case VAL_BLOCK_INST: return "Block";
+        case VAL_ARR:        return "arr";
+        case VAL_ERR_STACK:  return "err";
+        case VAL_DYN:        return "dyn";
+        case VAL_PTR:        return "ptr";
+        case VAL_NIL:        return "nil";
+        default:             return "?";
+    }
+}
+
+/* Check that `v` is compatible with the declared type `decl_type_name`.
+ * Reports a runtime error and returns 0 on mismatch; returns 1 on OK.
+ * `context` is used in the error message (variable name). */
+static int rt_type_check(Runtime *rt, ASTNode *node,
+                         const char *decl_type_name, Value v,
+                         const char *context) {
+    ValType expected = type_name_to_val(decl_type_name);
+    if (expected == VAL_NIL) return 1; /* unknown / unconstrained — allow */
+    if (v.type == expected)  return 1; /* match */
+
+    char buf[320];
+    snprintf(buf, sizeof(buf),
+             "type error: '%s' declared as %s but assigned %s",
+             context, decl_type_name, val_type_name(v.type));
+    rt_error_line(rt, buf, node ? node->line : 0);
+    return 0;
+}
+
 /* ── Variable access ─────────────────────────────────────────────────────── */
 static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
     if (node && node->resolved_offset >= 0 &&
@@ -108,14 +157,62 @@ static inline void rt_set(Runtime *rt, ASTNode *node,
 /* ── Forward declaration ─────────────────────────────────────────────────── */
 static Value eval(Runtime *rt, ASTNode *node);
 
-/* ── Arithmetic ──────────────────────────────────────────────────────────── */
+/* ── Arithmetic & logical operators ─────────────────────────────────────── */
 static Value eval_binary(Runtime *rt, ASTNode *node) {
+    const char *op = node->as.binary.op;
+
+    /* ── Logical NOT (unary, right is NULL) ────────────────────────────── */
+    if (strcmp(op, "!") == 0) {
+        Value operand = eval(rt, node->as.binary.left);
+        if (rt->had_error) return val_nil();
+        int truthy = 0;
+        if      (operand.type == VAL_BOOL)  truthy = operand.as.boolean;
+        else if (operand.type == VAL_INT)   truthy = operand.as.integer != 0;
+        else if (operand.type == VAL_FLOAT) truthy = operand.as.real != 0.0;
+        else if (operand.type == VAL_NIL)   truthy = 0;
+        else truthy = 1; /* non-nil, non-zero = truthy */
+        return val_bool(!truthy);
+    }
+
+    /* ── Short-circuit logical AND ─────────────────────────────────────── */
+    if (strcmp(op, "&&") == 0) {
+        Value left = eval(rt, node->as.binary.left);
+        if (rt->had_error) return val_nil();
+        int l_truthy = (left.type==VAL_BOOL) ? left.as.boolean
+                     : (left.type==VAL_INT)  ? (left.as.integer != 0)
+                     : (left.type!=VAL_NIL);
+        if (!l_truthy) return val_bool(0); /* short-circuit */
+        Value right = eval(rt, node->as.binary.right);
+        if (rt->had_error) return val_nil();
+        int r_truthy = (right.type==VAL_BOOL) ? right.as.boolean
+                     : (right.type==VAL_INT)  ? (right.as.integer != 0)
+                     : (right.type!=VAL_NIL);
+        return val_bool(r_truthy);
+    }
+
+    /* ── Short-circuit logical OR ──────────────────────────────────────── */
+    if (strcmp(op, "||") == 0) {
+        Value left = eval(rt, node->as.binary.left);
+        if (rt->had_error) return val_nil();
+        int l_truthy = (left.type==VAL_BOOL) ? left.as.boolean
+                     : (left.type==VAL_INT)  ? (left.as.integer != 0)
+                     : (left.type!=VAL_NIL);
+        if (l_truthy) return val_bool(1); /* short-circuit */
+        Value right = eval(rt, node->as.binary.right);
+        if (rt->had_error) return val_nil();
+        int r_truthy = (right.type==VAL_BOOL) ? right.as.boolean
+                     : (right.type==VAL_INT)  ? (right.as.integer != 0)
+                     : (right.type!=VAL_NIL);
+        return val_bool(r_truthy);
+    }
+
+    /* ── All other ops: evaluate both sides first ──────────────────────── */
     Value      left  = eval(rt, node->as.binary.left);
+    if (rt->had_error) return val_nil();
     Value      right = eval(rt, node->as.binary.right);
-    const char *op   = node->as.binary.op;
+    if (rt->had_error) return val_nil();
 
     if (strcmp(op, "==") == 0) {
-        /* nil == nil is true; nil == anything_else is false */
         if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(1);
         if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(0);
         if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer==right.as.integer);
@@ -125,7 +222,6 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
         return val_bool(0);
     }
     if (strcmp(op, "!=") == 0) {
-        /* nil != nil is false; nil != anything_else is true */
         if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(0);
         if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(1);
         if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer!=right.as.integer);
@@ -139,10 +235,22 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
     int both_int = (left.type==VAL_INT && right.type==VAL_INT);
     if      (left.type==VAL_INT)   l = (double)left.as.integer;
     else if (left.type==VAL_FLOAT) l = left.as.real;
-    else { rt_error(rt, "arithmetic on non-numeric value"); return val_nil(); }
+    else {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "arithmetic on non-numeric value (got %s for '%s')",
+                 val_type_name(left.type), op);
+        rt_error_line(rt, buf, node->line);
+        return val_nil();
+    }
     if      (right.type==VAL_INT)   r = (double)right.as.integer;
     else if (right.type==VAL_FLOAT) r = right.as.real;
-    else { rt_error(rt, "arithmetic on non-numeric value"); return val_nil(); }
+    else {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "arithmetic on non-numeric value (got %s for '%s')",
+                 val_type_name(right.type), op);
+        rt_error_line(rt, buf, node->line);
+        return val_nil();
+    }
 
     if (strcmp(op,"+")==0) { double res=l+r; return both_int?val_int((long)res):val_float(res); }
     if (strcmp(op,"-")==0) { double res=l-r; return both_int?val_int((long)res):val_float(res); }
@@ -469,6 +577,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     /* First run: evaluate and register */
                     Value v = eval(rt, node->as.var_decl.initializer);
                     if (rt->had_error) return val_nil();
+                    if (!rt_type_check(rt, node, node->as.var_decl.type_name, v, vname))
+                        return val_nil();
                     int ok = prst_pool_set(&rt->prst_pool, vname, v, &rt->err_stack);
                     if (ok >= 0) {
                         rt_set(rt, node, vname, v);
@@ -481,15 +591,45 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 }
             }
 
+            int err_before = rt->err_stack.count;
             Value v = eval(rt, node->as.var_decl.initializer);
             if (rt->had_error) return val_nil();
+            /* Inside a danger block eval errors go to err_stack (not had_error).
+             * If the stack grew, the eval failed — skip the type check to avoid
+             * a spurious second error message. */
+            if (rt->err_stack.count > err_before) {
+                rt_set(rt, node, vname, v);
+                return val_nil();
+            }
+            if (!rt_type_check(rt, node, node->as.var_decl.type_name, v, vname))
+                return val_nil();
             rt_set(rt, node, vname, v);
             return val_nil();
         }
 
         case NODE_ASSIGN: {
+            int err_before = rt->err_stack.count;
             Value v = eval(rt, node->as.assign.value);
             if (rt->had_error) return val_nil();
+
+            /* Type check: new value must match the type of the variable as
+             * currently stored. We read the current value to get its type.
+             * Skip when: variable not in scope, current is NIL (uninitialized),
+             * or eval already pushed an error into err_stack (danger context). */
+            if (rt->err_stack.count == err_before) {
+                Value cur = rt_get(rt, node, node->as.assign.var_name);
+                if (cur.type != VAL_NIL && cur.type != v.type) {
+                    char buf[320];
+                    snprintf(buf, sizeof(buf),
+                             "type error: '%s' is %s, cannot assign %s",
+                             node->as.assign.var_name,
+                             val_type_name(cur.type),
+                             val_type_name(v.type));
+                    rt_error_line(rt, buf, node->line);
+                    return val_nil();
+                }
+            }
+
             if (rt->current_instance &&
                 scope_has(&rt->current_instance->scope, node->as.assign.var_name)) {
                 scope_set(&rt->current_instance->scope, node->as.assign.var_name, v);
@@ -713,8 +853,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
             Value arr_val;
             const char *arr_name = node->as.arr_access.arr_name;
 
-            /* Sprint 6: special case — err[i]
-             * Readable after danger block until next danger clears it */
+            /* Sprint 6: special case — err[i] */
             if (strcmp(arr_name, "err") == 0) {
                 if (rt->err_stack.count == 0)
                     return val_nil();
@@ -727,22 +866,38 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 return val_string(e->message);
             }
 
-            /* normal arr access — check stack first (fn params), then scope */
+            /* Load variable from stack or scope */
             arr_val.type = VAL_NIL;
             if (node->resolved_offset >= 0 &&
                 node->resolved_offset < rt->stack_size) {
                 arr_val = rt->stack[node->resolved_offset];
             }
-            if (arr_val.type != VAL_ARR) {
-                /* fall back to scope (declared in this scope or instance) */
+            if (arr_val.type == VAL_NIL) {
                 if (!scope_get(&rt->scope, arr_name, &arr_val)) {
                     if (rt->current_instance)
                         scope_get(&rt->current_instance->scope, arr_name, &arr_val);
                 }
             }
+
+            /* Sprint 9.c: dispatch to dyn if the variable is VAL_DYN */
+            if (arr_val.type == VAL_DYN) {
+                FluxaDyn *d = arr_val.as.dyn;
+                if (!d) { rt_error(rt, "dyn is nil"); return val_nil(); }
+                Value idx_val = eval(rt, node->as.arr_access.index);
+                if (idx_val.type != VAL_INT) { rt_error(rt, "dyn index must be int"); return val_nil(); }
+                long idx = idx_val.as.integer;
+                if (idx < 0 || idx >= d->count) {
+                    char buf[200];
+                    snprintf(buf, sizeof(buf), "dyn index out of bounds: %s[%ld] (count %d)",
+                             arr_name, idx, d->count);
+                    rt_error(rt, buf); return val_nil();
+                }
+                return d->items[idx];
+            }
+
             if (arr_val.type != VAL_ARR) {
                 char buf[280];
-                snprintf(buf, sizeof(buf), "'%s' is not an array", arr_name);
+                snprintf(buf, sizeof(buf), "'%s' is not an array or dyn", arr_name);
                 rt_error(rt, buf); return val_nil();
             }
             Value idx_val = eval(rt, node->as.arr_access.index);
@@ -761,6 +916,47 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
         case NODE_ARR_ASSIGN: {
             const char *arr_name = node->as.arr_assign.arr_name;
+
+            /* Sprint 9.c: dispatch to dyn if variable is VAL_DYN */
+            {
+                Value maybe_dyn; maybe_dyn.type = VAL_NIL;
+                if (node->resolved_offset >= 0 && node->resolved_offset < rt->stack_size)
+                    maybe_dyn = rt->stack[node->resolved_offset];
+                if (maybe_dyn.type != VAL_DYN) {
+                    ScopeEntry *de = NULL;
+                    if (rt->current_instance)
+                        HASH_FIND_STR(rt->current_instance->scope.table, arr_name, de);
+                    if (!de) HASH_FIND_STR(rt->scope.table, arr_name, de);
+                    if (de) maybe_dyn = de->value;
+                }
+                if (maybe_dyn.type == VAL_DYN) {
+                    FluxaDyn *d = maybe_dyn.as.dyn;
+                    Value idx_v = eval(rt, node->as.arr_assign.index);
+                    if (rt->had_error) return val_nil();
+                    if (idx_v.type != VAL_INT) { rt_error(rt, "dyn index must be int"); return val_nil(); }
+                    long idx = idx_v.as.integer;
+                    if (idx < 0) { rt_error(rt, "dyn index cannot be negative"); return val_nil(); }
+                    Value v = eval(rt, node->as.arr_assign.value);
+                    if (rt->had_error) return val_nil();
+                    /* Auto-grow */
+                    if (idx >= d->count) {
+                        while (idx >= d->cap) {
+                            d->cap = d->cap * 2 + 1;
+                            Value *nb = (Value*)realloc(d->items, sizeof(Value) * (size_t)d->cap);
+                            if (!nb) { rt_error(rt, "out of memory growing dyn"); return val_nil(); }
+                            d->items = nb;
+                        }
+                        for (long fi = d->count; fi < idx; fi++) d->items[fi] = val_nil();
+                        d->count = (int)idx + 1;
+                    }
+                    if (d->items[idx].type == VAL_STRING && d->items[idx].as.string)
+                        free(d->items[idx].as.string);
+                    if (v.type == VAL_STRING && v.as.string) v.as.string = strdup(v.as.string);
+                    d->items[idx] = v;
+                    return val_nil();
+                }
+            }
+
             Value idx_val = eval(rt, node->as.arr_assign.index);
             if (rt->had_error) return val_nil();
             if (idx_val.type != VAL_INT) {
@@ -797,8 +993,25 @@ static Value eval(Runtime *rt, ASTNode *node) {
                          arr_name, idx, target_arr->size);
                 rt_error(rt, buf); return val_nil();
             }
+            int err_before2 = rt->err_stack.count;
             Value v = eval(rt, node->as.arr_assign.value);
             if (rt->had_error) return val_nil();
+            /* Type check: arr is homogeneous — new element must match the
+             * type of the existing element at that index.
+             * Skip if eval already pushed a danger error, or if the slot
+             * is NIL (e.g. uninitialized default). */
+            if (rt->err_stack.count == err_before2) {
+                ValType elem_type = target_arr->data[idx].type;
+                if (elem_type != VAL_NIL && elem_type != v.type) {
+                    char buf[320];
+                    snprintf(buf, sizeof(buf),
+                             "type error: %s[%ld] is %s, cannot assign %s",
+                             arr_name, idx,
+                             val_type_name(elem_type), val_type_name(v.type));
+                    rt_error_line(rt, buf, node->line);
+                    return val_nil();
+                }
+            }
             /* free old string if needed */
             if (target_arr->data[idx].type == VAL_STRING &&
                 target_arr->data[idx].as.string)
@@ -807,6 +1020,100 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (v.type == VAL_STRING && v.as.string)
                 v.as.string = strdup(v.as.string);
             target_arr->data[idx] = v;
+            return val_nil();
+        }
+
+        /* ── Sprint 9.c: dyn literal ─────────────────────────────────────── */
+        case NODE_DYN_LIT: {
+            int count = node->as.dyn_lit.count;
+            FluxaDyn *d = (FluxaDyn*)malloc(sizeof(FluxaDyn));
+            if (!d) { rt_error(rt, "out of memory allocating dyn"); return val_nil(); }
+            d->cap   = count > 4 ? count : 4;
+            d->count = 0;
+            d->items = (Value*)malloc(sizeof(Value) * (size_t)d->cap);
+            if (!d->items) { free(d); rt_error(rt, "out of memory"); return val_nil(); }
+            for (int i = 0; i < count; i++) {
+                Value elem = eval(rt, node->as.dyn_lit.elements[i]);
+                if (rt->had_error) { free(d->items); free(d); return val_nil(); }
+                if (elem.type == VAL_STRING && elem.as.string)
+                    elem.as.string = strdup(elem.as.string);
+                d->items[d->count++] = elem;
+            }
+            return val_dyn(d);
+        }
+
+        case NODE_DYN_ACCESS: {
+            const char *dname = node->as.dyn_access.dyn_name;
+            Value dv; dv.type = VAL_NIL;
+            if (node->resolved_offset >= 0 && node->resolved_offset < rt->stack_size)
+                dv = rt->stack[node->resolved_offset];
+            if (dv.type != VAL_DYN) scope_get(&rt->scope, dname, &dv);
+            if (dv.type != VAL_DYN) {
+                char buf[200]; snprintf(buf, sizeof(buf), "'%s' is not a dyn", dname);
+                rt_error(rt, buf); return val_nil();
+            }
+            FluxaDyn *d = dv.as.dyn;
+            Value idx_v = eval(rt, node->as.dyn_access.index);
+            if (idx_v.type != VAL_INT) { rt_error(rt, "dyn index must be int"); return val_nil(); }
+            long idx = idx_v.as.integer;
+            if (idx < 0 || idx >= d->count) {
+                char buf[200];
+                snprintf(buf, sizeof(buf), "dyn index out of bounds: %s[%ld] (count %d)",
+                         dname, idx, d->count);
+                rt_error(rt, buf); return val_nil();
+            }
+            return d->items[idx];
+        }
+
+        case NODE_DYN_ASSIGN: {
+            const char *dname = node->as.dyn_assign.dyn_name;
+            Value dv; dv.type = VAL_NIL;
+            Value *stack_slot = NULL;
+            ScopeEntry *dyn_entry = NULL;
+            if (node->resolved_offset >= 0 && node->resolved_offset < rt->stack_size) {
+                stack_slot = &rt->stack[node->resolved_offset];
+                dv = *stack_slot;
+            }
+            if (dv.type != VAL_DYN) {
+                HASH_FIND_STR(rt->scope.table, dname, dyn_entry);
+                if (dyn_entry) dv = dyn_entry->value;
+            }
+            if (dv.type != VAL_DYN) {
+                char buf[200]; snprintf(buf, sizeof(buf), "'%s' is not a dyn", dname);
+                rt_error(rt, buf); return val_nil();
+            }
+            FluxaDyn *d = dv.as.dyn;
+
+            Value idx_v = eval(rt, node->as.dyn_assign.index);
+            if (rt->had_error) return val_nil();
+            if (idx_v.type != VAL_INT) { rt_error(rt, "dyn index must be int"); return val_nil(); }
+            long idx = idx_v.as.integer;
+            if (idx < 0) { rt_error(rt, "dyn index cannot be negative"); return val_nil(); }
+
+            Value v = eval(rt, node->as.dyn_assign.value);
+            if (rt->had_error) return val_nil();
+
+            /* Auto-grow: extend dyn to cover index */
+            if (idx >= d->count) {
+                /* Grow cap if needed */
+                while (idx >= d->cap) {
+                    d->cap = d->cap * 2 + 1;
+                    Value *newbuf = (Value*)realloc(d->items, sizeof(Value) * (size_t)d->cap);
+                    if (!newbuf) { rt_error(rt, "out of memory growing dyn"); return val_nil(); }
+                    d->items = newbuf;
+                }
+                /* Fill gap with nil */
+                for (long fi = d->count; fi < idx; fi++)
+                    d->items[fi] = val_nil();
+                d->count = (int)idx + 1;
+            }
+
+            /* Free old string if needed */
+            if (d->items[idx].type == VAL_STRING && d->items[idx].as.string)
+                free(d->items[idx].as.string);
+            if (v.type == VAL_STRING && v.as.string)
+                v.as.string = strdup(v.as.string);
+            d->items[idx] = v;
             return val_nil();
         }
 
