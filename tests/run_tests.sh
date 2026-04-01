@@ -347,6 +347,48 @@ else
 $(echo "$s96_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── type_check (static type enforcement) ──────────────────────────────────
+printf "  %-56s" "type_check (static type enforcement at runtime)"
+tc_out=$(bash "$SCRIPT_DIR/type_check.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$tc_out" | grep -q "type_check: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  type_check:
+$(echo "$tc_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
+# ── sprint9c/logical_ops ───────────────────────────────────────────────────
+printf "  %-56s" "sprint9c/logical_ops (&&, ||, ! with short-circuit)"
+lo_out=$(bash "$SCRIPT_DIR/sprint9c_logical_ops.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$lo_out" | grep -q "logical_ops: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint9c/logical_ops:
+$(echo "$lo_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
+# ── sprint9c/dyn ───────────────────────────────────────────────────────────
+printf "  %-56s" "sprint9c/dyn (heterogeneous dynamic array)"
+dyn_out=$(bash "$SCRIPT_DIR/sprint9c_dyn.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$dyn_out" | grep -q "dyn: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint9c/dyn:
+$(echo "$dyn_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then
