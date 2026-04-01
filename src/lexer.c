@@ -133,6 +133,9 @@ Token lexer_next(Lexer *l) {
     if (c == '=' && peek(l) == '=') { advance(l); return make_tok(TOK_EQEQ, "==", line); }
     if (c == '<' && peek(l) == '=') { advance(l); return make_tok(TOK_LTE,  "<=", line); }
     if (c == '>' && peek(l) == '=') { advance(l); return make_tok(TOK_GTE,  ">=", line); }
+    if (c == '&' && peek(l) == '&') { advance(l); return make_tok(TOK_AND,  "&&", line); }
+    if (c == '|' && peek(l) == '|') { advance(l); return make_tok(TOK_OR,   "||", line); }
+    if (c == '!' )                  {              return make_tok(TOK_NOT,  "!",  line); }
 
     switch (c) {
         case '(': return make_tok(TOK_LPAREN,   "(", line);
@@ -210,6 +213,9 @@ const char *token_type_name(TokenType t) {
         case TOK_STAR:      return "*";
         case TOK_SLASH:     return "/";
         case TOK_PERCENT:   return "%";
+        case TOK_AND:       return "&&";
+        case TOK_OR:        return "||";
+        case TOK_NOT:       return "!";
         case TOK_EOF:       return "EOF";
         case TOK_ERROR:     return "ERROR";
         default:            return "?";

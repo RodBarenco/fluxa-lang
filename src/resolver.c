@@ -59,7 +59,8 @@ static void resolve_expr(Resolver *r, ASTNode *node) {
 
         case NODE_BINARY_EXPR:
             resolve_expr(r, node->as.binary.left);
-            resolve_expr(r, node->as.binary.right);
+            if (node->as.binary.right)
+                resolve_expr(r, node->as.binary.right);
             break;
 
         case NODE_FUNC_CALL:
@@ -84,6 +85,31 @@ static void resolve_expr(Resolver *r, ASTNode *node) {
                     resolve_expr(r, node->as.member_call.args[i]);
             }
             node->resolved_offset = -1;
+            break;
+
+        /* Sprint 9.c: logical ! — right operand is NULL */
+        /* Sprint 9.c: dyn literal — resolve each element */
+        case NODE_DYN_LIT:
+            for (int i = 0; i < node->as.dyn_lit.count; i++)
+                resolve_expr(r, node->as.dyn_lit.elements[i]);
+            node->resolved_offset = -1;
+            break;
+
+        case NODE_DYN_ACCESS:
+            resolve_expr(r, node->as.dyn_access.index);
+            {
+                int off = symtable_find(r->current, node->as.dyn_access.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
+            break;
+
+        case NODE_DYN_ASSIGN:
+            resolve_expr(r, node->as.dyn_assign.index);
+            resolve_expr(r, node->as.dyn_assign.value);
+            {
+                int off = symtable_find(r->current, node->as.dyn_assign.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
             break;
 
         default:
