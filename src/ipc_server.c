@@ -380,8 +380,14 @@ static void dispatch(IpcServer *srv, int client_fd) {
     case IPC_OP_EXPLAIN: {
         pthread_mutex_lock(&view->mu);
 
-        /* Send one response packet per prst variable */
-        for (int ei = 0; ei < view->prst_snapshot.count; ei++) {
+        /* Use live_rt for fresh values when runtime is inside a loop.
+         * Falls back to snapshot when live_rt is NULL (between reloads). */
+        Runtime *lrt = (Runtime *)view->live_rt;
+
+        int var_count = lrt ? lrt->prst_pool.count
+                             : view->prst_snapshot.count;
+
+        for (int ei = 0; ei < var_count; ei++) {
             IpcResponse ev;
             memset(&ev, 0, sizeof ev);
             ev.magic   = IPC_MAGIC;
@@ -389,81 +395,111 @@ static void dispatch(IpcServer *srv, int client_fd) {
             ev.seq     = req.seq;
             ev.status  = IPC_STATUS_EXPLAIN_VAR;
 
-            PrstEntry *pe = &view->prst_snapshot.entries[ei];
-            /* ev.name carries the full name; message uses %.60s to stay
-             * within IPC_LOG_LINE_MAX (128 bytes) — no warning. */
-            memcpy(ev.name, pe->name, IPC_VAR_NAME_MAX - 1);
+            /* Pick entry from live pool or snapshot */
+            const char *name;
+            Value v;
+            if (lrt) {
+                PrstEntry *pe = &lrt->prst_pool.entries[ei];
+                name = pe->name;
+                /* Read from stack if available — freshest value */
+                int off = pe->stack_offset;
+                if (off >= 0 && off < lrt->stack_size &&
+                    lrt->stack[off].type != VAL_NIL)
+                    v = lrt->stack[off];
+                else
+                    v = pe->value;
+            } else {
+                PrstEntry *pe = &view->prst_snapshot.entries[ei];
+                name = pe->name;
+                v    = pe->value;
+            }
+
+            memcpy(ev.name, name, IPC_VAR_NAME_MAX - 1);
             ev.name[IPC_VAR_NAME_MAX - 1] = '\0';
 
-            switch (pe->value.type) {
+            switch (v.type) {
                 case VAL_INT:
                     ev.type_tag = IPC_TYPE_INT;
-                    ev.i_val    = (int64_t)pe->value.as.integer;
+                    ev.i_val    = (int64_t)v.as.integer;
                     snprintf(ev.message, sizeof ev.message,
-                             "%.60s  int  = %ld", pe->name, pe->value.as.integer);
+                             "%.50s  int  = %ld", name, v.as.integer);
                     break;
                 case VAL_FLOAT:
                     ev.type_tag = IPC_TYPE_FLOAT;
-                    ev.f_val    = pe->value.as.real;
+                    ev.f_val    = v.as.real;
                     snprintf(ev.message, sizeof ev.message,
-                             "%.60s  float  = %g", pe->name, pe->value.as.real);
+                             "%.50s  float  = %g", name, v.as.real);
                     break;
                 case VAL_BOOL:
                     ev.type_tag = IPC_TYPE_BOOL;
-                    ev.b_val    = (uint8_t)(pe->value.as.boolean ? 1 : 0);
+                    ev.b_val    = (uint8_t)(v.as.boolean ? 1 : 0);
                     snprintf(ev.message, sizeof ev.message,
-                             "%.60s  bool  = %s", pe->name,
-                             pe->value.as.boolean ? "true" : "false");
+                             "%.50s  bool  = %s", name,
+                             v.as.boolean ? "true" : "false");
                     break;
                 case VAL_STRING:
                     ev.type_tag = IPC_TYPE_STR;
                     snprintf(ev.message, sizeof ev.message,
-                             "%.60s  str  = \"%.50s\"", pe->name,
-                             pe->value.as.string ? pe->value.as.string : "");
+                             "%.50s  str  = \"%.50s\"", name,
+                             v.as.string ? v.as.string : "");
                     break;
                 default:
                     ev.type_tag = IPC_TYPE_NIL;
                     snprintf(ev.message, sizeof ev.message,
-                             "%.60s  nil", pe->name);
+                             "%.50s  nil", name);
                     break;
             }
             ipc_send_all(client_fd, &ev, sizeof ev);
         }
 
-        /* Build deps summary for the DONE packet's message field.
-         * Format: "dep1_name <- ctx1\ndep2_name <- ctx2\n..."
-         * Truncated to IPC_LOG_LINE_MAX if needed. */
+        /* DONE packet — deps from live_rt graph or snapshot */
         IpcResponse done;
         memset(&done, 0, sizeof done);
-        done.magic      = IPC_MAGIC;
-        done.version    = IPC_VERSION;
-        done.seq        = req.seq;
-        done.status     = IPC_STATUS_EXPLAIN_DONE;
-        done.cycle_count= (int32_t)view->cycle_count;
-        done.prst_count = (int32_t)view->prst_snapshot.count;
-        done.err_count  = (int32_t)view->err_count;
-        done.mode       = (uint8_t)view->mode;
-        done.dry_run    = (uint8_t)view->dry_run;
+        done.magic   = IPC_MAGIC;
+        done.version = IPC_VERSION;
+        done.seq     = req.seq;
+        done.status  = IPC_STATUS_EXPLAIN_DONE;
 
-        /* Pack up to 1 dep line into message — client can request more via
-         * repeated EXPLAIN if needed; for now first dep is representative */
-        if (view->prst_graph_snapshot.count == 0) {
-            snprintf(done.message, sizeof done.message,
-                     "nenhuma — estado atual compatível com o código");
+        if (lrt) {
+            done.cycle_count = (int32_t)lrt->cycle_count;
+            done.prst_count  = (int32_t)lrt->prst_pool.count;
+            done.err_count   = (int32_t)lrt->err_stack.count;
+            done.mode        = (uint8_t)lrt->mode;
+            done.dry_run     = (uint8_t)lrt->dry_run;
         } else {
-            int written = 0;
-            for (int di = 0; di < view->prst_graph_snapshot.count && written == 0; di++) {
-                written = snprintf(done.message, sizeof done.message,
-                    "%s  <-  %s (+%d total)",
-                    view->prst_graph_snapshot.deps[di].prst_name,
-                    view->prst_graph_snapshot.deps[di].reader_ctx,
-                    view->prst_graph_snapshot.count);
+            done.cycle_count = (int32_t)view->cycle_count;
+            done.prst_count  = (int32_t)view->prst_snapshot.count;
+            done.err_count   = (int32_t)view->err_count;
+            done.mode        = (uint8_t)view->mode;
+            done.dry_run     = (uint8_t)view->dry_run;
+        }
+
+        /* Pack dep graph into message — all deps, one per line, truncated */
+        int dep_count = lrt ? lrt->prst_graph.count
+                             : view->prst_graph_snapshot.count;
+        if (dep_count == 0) {
+            snprintf(done.message, sizeof done.message,
+                     "none — state is consistent with the code");
+        } else {
+            int pos = 0;
+            for (int di = 0; di < dep_count; di++) {
+                const char *pn = lrt
+                    ? lrt->prst_graph.deps[di].prst_name
+                    : view->prst_graph_snapshot.deps[di].prst_name;
+                const char *ctx = lrt
+                    ? lrt->prst_graph.deps[di].reader_ctx
+                    : view->prst_graph_snapshot.deps[di].reader_ctx;
+                int rem = (int)sizeof(done.message) - pos - 1;
+                if (rem <= 0) break;
+                int n = snprintf(done.message + pos, (size_t)rem,
+                                 "%s%s <- %s",
+                                 di > 0 ? ", " : "", pn, ctx);
+                if (n > 0) pos += (n < rem ? n : rem - 1);
             }
         }
 
         pthread_mutex_unlock(&view->mu);
         ipc_send_all(client_fd, &done, sizeof done);
-        /* EXPLAIN is fully handled here — skip the final ipc_send_all below */
         return;
     }
 
