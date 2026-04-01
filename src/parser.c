@@ -233,6 +233,13 @@ static ASTNode *parse_primary(Parser *p) {
         zero->as.integer.value = 0;
         return p_binary(p, "-", zero, operand);
     }
+    /* logical not: !expr */
+    if (check(p, TOK_NOT)) {
+        parser_advance(p);
+        ASTNode *operand = parse_primary(p);
+        if (!operand) return NULL;
+        return p_binary(p, "!", operand, NULL);
+    }
     parse_error(p, "unexpected token in expression");
     return NULL;
 }
@@ -272,7 +279,7 @@ static ASTNode *parse_arith(Parser *p) {
     }
     return left;
 }
-static ASTNode *parse_expr(Parser *p) {
+static ASTNode *parse_comparison(Parser *p) {
     ASTNode *left = parse_arith(p);
     if (left && is_comparison(p)) {
         char op[4]; strncpy(op, p->current.value, 3); op[3]='\0';
@@ -280,6 +287,26 @@ static ASTNode *parse_expr(Parser *p) {
         ASTNode *right = parse_arith(p);
         if (!right) return NULL;
         left = p_binary(p, op, left, right);
+    }
+    return left;
+}
+static ASTNode *parse_logic_and(Parser *p) {
+    ASTNode *left = parse_comparison(p);
+    while (left && p->current.type == TOK_AND) {
+        parser_advance(p);
+        ASTNode *right = parse_comparison(p);
+        if (!right) return NULL;
+        left = p_binary(p, "&&", left, right);
+    }
+    return left;
+}
+static ASTNode *parse_expr(Parser *p) {
+    ASTNode *left = parse_logic_and(p);
+    while (left && p->current.type == TOK_OR) {
+        parser_advance(p);
+        ASTNode *right = parse_logic_and(p);
+        if (!right) return NULL;
+        left = p_binary(p, "||", left, right);
     }
     return left;
 }
@@ -460,14 +487,22 @@ static ASTNode *parse_block_decl(Parser *p) {
                 } else {
                     /* explicit list */
                     if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
-                    ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*)*arr_size);
+                    ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*)*(arr_size > 0 ? arr_size : 1));
                     int ec = 0;
                     while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
                         if (ec < arr_size) elems[ec++] = parse_expr(p);
-                        else parse_expr(p);
+                        else { parse_expr(p); ec++; }
                         if (!match(p, TOK_COMMA)) break;
                     }
                     if (!expect(p, TOK_RBRACKET, "to close array literal")) {
+                        free(elems); return NULL;
+                    }
+                    if (ec != arr_size) {
+                        char errmsg[128];
+                        snprintf(errmsg, sizeof(errmsg),
+                                 "array literal has %d element(s) but '%s' was declared with size %d",
+                                 ec, arr_name, arr_size);
+                        parse_error(p, errmsg);
                         free(elems); return NULL;
                     }
                     arr_node->as.arr_decl.default_init  = 0;
@@ -813,14 +848,23 @@ static ASTNode *parse_statement(Parser *p) {
 
             /* explicit list initializer */
             if (!expect(p, TOK_LBRACKET, "to open array literal")) return NULL;
-            ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*) * size);
+            ASTNode **elems = (ASTNode**)malloc(sizeof(ASTNode*) * (size > 0 ? size : 1));
             int count = 0;
             while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
                 if (count < size) elems[count++] = parse_expr(p);
-                else parse_expr(p);
+                else { parse_expr(p); count++; } /* consume extra for error msg */
                 if (!match(p, TOK_COMMA)) break;
             }
             if (!expect(p, TOK_RBRACKET, "to close array literal")) {
+                free(elems); return NULL;
+            }
+            if (count != size) {
+                char errmsg[1024];
+                snprintf(errmsg, sizeof(errmsg),
+                         "array literal has %d element(s) but '%s' was declared with size %d "
+                         "(use scalar initializer: %s arr %s[%d] = <value>)",
+                         count, arr_name, size, type_name, arr_name, size);
+                parse_error(p, errmsg);
                 free(elems); return NULL;
             }
             n->as.arr_decl.default_init  = 0;
@@ -840,7 +884,30 @@ static ASTNode *parse_statement(Parser *p) {
         parser_advance(p);
 
         if (!expect(p, TOK_EQ, "after variable name")) return NULL;
-        ASTNode *init = parse_expr(p);
+
+        /* dyn literal initializer: dyn lista = [expr, expr, ...] */
+        ASTNode *init = NULL;
+        if (strcmp(type_name, "dyn") == 0 && check(p, TOK_LBRACKET)) {
+            parser_advance(p); /* consume [ */
+            ASTNode *lit = P_NODE();
+            lit->type              = NODE_DYN_LIT;
+            lit->as.dyn_lit.elements = NULL;
+            lit->as.dyn_lit.count    = 0;
+            while (!check(p, TOK_RBRACKET) && !check(p, TOK_EOF)) {
+                ASTNode *elem = parse_expr(p);
+                if (!elem) return NULL;
+                lit->as.dyn_lit.count++;
+                lit->as.dyn_lit.elements = (ASTNode**)realloc(
+                    lit->as.dyn_lit.elements,
+                    sizeof(ASTNode*) * lit->as.dyn_lit.count);
+                lit->as.dyn_lit.elements[lit->as.dyn_lit.count - 1] = elem;
+                if (!match(p, TOK_COMMA)) break;
+            }
+            if (!expect(p, TOK_RBRACKET, "to close dyn literal")) return NULL;
+            init = lit;
+        } else {
+            init = parse_expr(p);
+        }
         if (!init) return NULL;
         { ASTNode *_sn = p_var_decl(p, type_name, var_name, init, persistent); _sn->line = stmt_line; return _sn; }
     }
