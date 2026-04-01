@@ -145,7 +145,7 @@ static inline void prst_pool_invalidate(PrstPool *p, const char *name) {
 
 /* FNV-32 checksum over all pool entries (names + types + int values).
  * String values are not checksummed (pointer instability across reloads).
- * Used by Sprint 8 Handover Atômico for bit-to-bit integrity verification. */
+ * Used by Sprint 8 Atomic Handover for bit-to-bit integrity verification. */
 static inline uint32_t prst_pool_checksum(const PrstPool *p) {
     uint32_t h = 2166136261u;
     for (int i = 0; i < p->count; i++) {

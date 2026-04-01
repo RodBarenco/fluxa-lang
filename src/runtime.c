@@ -40,10 +40,10 @@ void runtime_set_cancel_flag(volatile int *flag) {
 }
 
 /* ── Error helpers ────────────────────────────────────────────────────────── */
-/* Sprint 8: rt_error_line inclui número de linha na mensagem e no ErrEntry.
- * rt_error é mantido para compatibilidade — chama rt_error_line com line=0. */
+/* Sprint 8: rt_error_line includes line number in message and ErrEntry.
+ * rt_error kept for compatibility — calls rt_error_line with line=0. */
 static void rt_error_line(Runtime *rt, const char *msg, int line) {
-    /* Se não veio linha explícita, usa a última linha rastreada */
+    /* If no explicit line given, use the last tracked line */
     int eff_line = (line > 0) ? line : rt->current_line;
     if (rt->danger_depth > 0) {
         const char *ctx = rt->current_instance
@@ -1125,9 +1125,9 @@ int runtime_exec(ASTNode *program) {
     ffi_registry_init(&rt.ffi);
 
     if (mode == FLUXA_MODE_PROJECT) {
-        prst_pool_init(&rt.prst_pool);   /* pool é dinâmico; prst_cap usado abaixo */
-        /* prst_pool não tem init_cap: o cap inicial fixo é PRST_POOL_INIT_CAP;
-         * aqui pré-alocamos conforme config se diferente do default */
+        prst_pool_init(&rt.prst_pool);   /* pool is dynamic; prst_cap used below */
+        /* prst_pool has no init_cap: the fixed initial cap is PRST_POOL_INIT_CAP;
+         * here we pre-allocate per config if different from default */
         if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
             PrstEntry *ne = (PrstEntry *)realloc(rt.prst_pool.entries,
                                 sizeof(PrstEntry) * (size_t)config.prst_cap);
@@ -1248,10 +1248,10 @@ int runtime_exec_explain(ASTNode *program) {
  * Called after program execution completes in PROJECT mode.
  * Shows: prst variables, non-prst variables, Blocks, and dep graph. */
 void runtime_explain(Runtime *rt) {
-    printf("\n── prst (sobrevivem ao reload) ");
+    printf("\n── prst (persist across reloads) ");
     printf("────────────────────────────────────\n");
     if (rt->prst_pool.count == 0) {
-        printf("  (nenhuma)\n");
+        printf("  (none)\n");
     } else {
         for (int i = 0; i < rt->prst_pool.count; i++) {
             PrstEntry *e = &rt->prst_pool.entries[i];
@@ -1283,7 +1283,7 @@ void runtime_explain(Runtime *rt) {
             if (m->type == NODE_FUNC_DECL) fn_count++;
         }
         if (inst && inst->is_root) {
-            printf("  %-16s (raiz)  — %d prst, %d fn\n",
+            printf("  %-16s (root)  — %d prst, %d fn\n",
                    def->name, prst_count, fn_count);
         }
         block_count++;
@@ -1296,11 +1296,11 @@ void runtime_explain(Runtime *rt) {
             printf("  %-16s typeof %s\n", inst->name, inst->def->name);
         }
     }
-    if (block_count == 0) printf("  (nenhum)\n");
+    if (block_count == 0) printf("  (none)\n");
 
-    printf("\n── Dependências registradas ───────────────────────────────────\n");
+    printf("\n── Registered dependencies ────────────────────────────────────\n");
     if (rt->prst_graph.count == 0) {
-        printf("  nenhuma — estado atual compatível com o código\n");
+        printf("  none — state is consistent with the code\n");
     } else {
         for (int i = 0; i < rt->prst_graph.count; i++) {
             printf("  %-20s  <-  %s\n",
@@ -1407,20 +1407,20 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
 }
 
 /* ── runtime_exec_with_rt — Sprint 8 ────────────────────────────────────── */
-/* Executa um programa em um Runtime já alocado e parcialmente inicializado
+/* Execute a program in an already-allocated and partially-initialized Runtime
  * pelo caller (handover_step3_dry_run ou runtime_apply estendido).
  *
  * Contrato de entrada:
  *   - rt->scope, rt->stack, rt->prst_pool, rt->prst_graph foram inicializados
- *   - rt->dry_run = 1 para Ciclo Imaginário, 0 para execução real
+ *   - rt->dry_run = 1 for Dry Run, 0 for real execution
  *   - rt->mode = FLUXA_MODE_PROJECT ou FLUXA_MODE_SCRIPT
  *
- * Contrato de saída:
+ * Exit contract:
  *   - rt->prst_pool atualizado com valores finais
  *   - rt->err_stack populado com qualquer erro encontrado
  *   - Retorna 0 (sucesso) ou 1 (had_error)
  *
- * NÃO faz cleanup — o caller é responsável por scope_free, gc_collect_all etc.
+ * Does NOT cleanup — caller is responsible for scope_free, gc_collect_all etc.
  */
 int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
     if (!rt || !program || program->type != NODE_PROGRAM) return 1;
@@ -1428,7 +1428,7 @@ int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
     for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt->stack[i].type = VAL_NIL;
     rt->stack_size = 0;
 
-    /* Invalida deps do grafo — serão re-registrados durante execução */
+    /* Invalidate graph deps — will be re-registered during execution */
     for (int i = 0; i < rt->prst_pool.count; i++)
         prst_graph_invalidate(&rt->prst_graph, rt->prst_pool.entries[i].name);
 
@@ -1436,8 +1436,8 @@ int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
         eval(rt, program->as.list.children[i]);
         rt->cycle_count++;
         if (rt->had_error) break;
-        /* Sprint 8: em Ciclo Imaginário, qualquer entrada na err_stack
-         * conta como falha mesmo que had_error não esteja setado —
+        /* Sprint 8: in Dry Run, any entry in err_stack
+         * counts as failure even if had_error is not set —
          * pois danger bloqueia had_error mas o handover precisa saber. */
         if (rt->dry_run && rt->err_stack.count > 0) {
             rt->had_error = 1;

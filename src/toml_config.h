@@ -6,10 +6,10 @@
  *   prst_cap      = 64     # cap inicial do PrstPool (default PRST_POOL_INIT_CAP)
  *   prst_graph_cap= 256    # cap inicial do PrstGraph (default PRST_GRAPH_CAP_DEFAULT)
  *
- * Todos os caps são dinâmicos — crescem via realloc até o máximo compilado.
- * O valor no toml é o tamanho inicial da alocação, não um teto absoluto.
+ * All caps are dynamic — grow via realloc up to the compiled maximum.
+ * The toml value is the initial allocation size, not an absolute ceiling.
  *
- * Exceção: gc_cap É um teto absoluto (GCTable usa array estático).
+ * Exception: gc_cap IS an absolute ceiling (GCTable uses a static array).
  */
 #ifndef FLUXA_TOML_CONFIG_H
 #define FLUXA_TOML_CONFIG_H
@@ -20,9 +20,9 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-/* Defaults espelhados aqui para evitar dupla inclusão de headers
+/* Defaults mirrored here to avoid double-inclusion of headers
  * com static inline (prst_pool.h / prst_graph.h).
- * Os valores reais são definidos nesses headers e devem permanecer em sync. */
+ * The real values are defined in those headers and must stay in sync. */
 #ifndef PRST_POOL_INIT_CAP
 #  define PRST_POOL_INIT_CAP     64
 #endif
@@ -34,9 +34,9 @@
 #endif
 
 typedef struct {
-    int gc_cap;          /* teto absoluto do GC (array estático)       */
-    int prst_cap;        /* cap inicial do PrstPool (dinâmico)         */
-    int prst_graph_cap;  /* cap inicial do PrstGraph (dinâmico)        */
+    int gc_cap;          /* absolute ceiling for GC (static array)       */
+    int prst_cap;        /* initial cap for PrstPool (dynamic)         */
+    int prst_graph_cap;  /* initial cap for PrstGraph (dynamic)        */
 } FluxaConfig;
 
 static inline FluxaConfig fluxa_config_defaults(void) {
@@ -86,34 +86,34 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
         int v = atoi(val);
 
         if (strcmp(key, "gc_cap") == 0) {
-            /* gc_cap: teto absoluto — não pode exceder o compilado */
+            /* gc_cap: absolute ceiling — cannot exceed compiled maximum */
             if (v > 0 && v <= GC_TABLE_CAP)
                 cfg.gc_cap = v;
             else if (v > GC_TABLE_CAP)
                 fprintf(stderr,
-                    "[fluxa] fluxa.toml: gc_cap %d excede máximo compilado %d"
+                    "[fluxa] fluxa.toml: gc_cap %d exceeds compiled maximum %d"
                     " — usando %d\n", v, GC_TABLE_CAP, GC_TABLE_CAP);
         }
         else if (strcmp(key, "prst_cap") == 0) {
-            /* prst_cap: cap inicial do PrstPool; dinâmico, sem teto rígido */
+            /* prst_cap: initial cap for PrstPool; dynamic, no hard ceiling */
             if (v > 0)
                 cfg.prst_cap = v;
             else
                 fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_cap inválido (%d) — usando %d\n",
+                    "[fluxa] fluxa.toml: prst_cap invalid (%d) — using %d\n",
                     v, PRST_POOL_INIT_CAP);
         }
         else if (strcmp(key, "prst_graph_cap") == 0) {
-            /* prst_graph_cap: cap inicial do PrstGraph; dinâmico */
+            /* prst_graph_cap: initial cap for PrstGraph; dynamic */
             if (v > 0 && v <= PRST_GRAPH_CAP_MAX)
                 cfg.prst_graph_cap = v;
             else if (v > PRST_GRAPH_CAP_MAX)
                 fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_graph_cap %d excede máximo %d"
+                    "[fluxa] fluxa.toml: prst_graph_cap %d exceeds maximum %d"
                     " — usando %d\n", v, PRST_GRAPH_CAP_MAX, PRST_GRAPH_CAP_MAX);
             else
                 fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_graph_cap inválido (%d)"
+                    "[fluxa] fluxa.toml: prst_graph_cap invalid (%d)"
                     " — usando %d\n", v, PRST_GRAPH_CAP_DEFAULT);
         }
         /* Future keys: thread_cap, etc. */

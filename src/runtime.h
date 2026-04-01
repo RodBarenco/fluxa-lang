@@ -72,7 +72,7 @@ typedef struct Runtime {
     long           cycle_count;   /* incremented per top-level statement    */
     int            dry_run;       /* 1 = suppress all output (print, FFI)   */
     volatile int  *cancel_flag;   /* non-NULL in -dev: set to 1 to abort VM */
-    int            current_line;  /* Sprint 8: linha atual em execução      */
+    int            current_line;  /* Sprint 8: current line being executed      */
 } Runtime;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -103,10 +103,10 @@ void runtime_set_ipc_view(void *view);
 
 #endif /* FLUXA_RUNTIME_H */
 
-/* Sprint 8: Handover Atômico
- * Executa um programa em um Runtime já inicializado pelo chamador.
- * Usado pelo Ciclo Imaginário (dry_run=1) e pelo runtime_apply de B.
+/* Sprint 8: Atomic Handover
+ * Execute a program in a Runtime already initialized by the caller.
+ * Usado pelo Dry Run (dry_run=1) e pelo runtime_apply de B.
  * O Runtime deve ter sido zero-init pelo caller; esta fn preenche
- * scope, stack e executa o program_node. Não aloca nem libera rt. */
+ * scope, stack and executes program_node. Does not allocate or free rt. */
 int runtime_exec_with_rt(Runtime *rt, ASTNode *program);
 

@@ -333,6 +333,20 @@ else
 $(echo "$s9b_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── Sprint 9.b: fluxa explain ao vivo (Issue #96) ────────────────────────────
+printf "  %-56s" "sprint9b/explain_live (fluxa explain via IPC + file mode)"
+s96_out=$(bash "$SCRIPT_DIR/sprint9b_explain_live.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$s96_out" | grep -q "0 failed"; then
+    echo "PASS"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS
+  sprint9b/explain_live:
+$(echo "$s96_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then

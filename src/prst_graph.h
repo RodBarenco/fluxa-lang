@@ -2,10 +2,10 @@
  *
  * Sprint 7:   record, query, print (fluxa explain), deduplication.
  * Sprint 7.b: checksum FNV-32, serialization, real invalidation mark.
- * Sprint 8:   array dinâmico (malloc/realloc) — cap configurável via
+ * Sprint 8:   dynamic array (malloc/realloc) — cap configurable via
  *             fluxa.toml [runtime] prst_cap (default PRST_GRAPH_CAP_DEFAULT).
  *             prst_graph_init_cap(g, cap) substitui prst_graph_init(g).
- *             prst_graph_init(g) mantido como alias com cap padrão.
+ *             prst_graph_init(g) kept as alias with default cap.
  */
 #ifndef FLUXA_PRST_GRAPH_H
 #define FLUXA_PRST_GRAPH_H
@@ -15,9 +15,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-/* Cap padrão — usado quando fluxa.toml não especifica prst_cap */
+/* Default cap — used when fluxa.toml does not specify prst_cap */
 #define PRST_GRAPH_CAP_DEFAULT 256
-/* Cap máximo absoluto compilado — barreira de segurança */
+/* Absolute compiled maximum cap — safety barrier */
 #define PRST_GRAPH_CAP_MAX     65536
 
 typedef struct {
@@ -28,10 +28,10 @@ typedef struct {
 typedef struct {
     PrstDep *deps;   /* heap-allocated — realloc conforme cresce */
     int      count;
-    int      cap;    /* cap atual — configurável via fluxa.toml   */
+    int      cap;    /* current cap — configurable via fluxa.toml   */
 } PrstGraph;
 
-/* ── Inicialização ───────────────────────────────────────────────────────── */
+/* ── Initialization ───────────────────────────────────────────────────────── */
 static inline void prst_graph_init_cap(PrstGraph *g, int cap) {
     if (cap <= 0 || cap > PRST_GRAPH_CAP_MAX) cap = PRST_GRAPH_CAP_DEFAULT;
     g->deps  = (PrstDep *)malloc(sizeof(PrstDep) * (size_t)cap);
@@ -39,7 +39,7 @@ static inline void prst_graph_init_cap(PrstGraph *g, int cap) {
     g->cap   = g->deps ? cap : 0;
 }
 
-/* Compatibilidade com código anterior — usa cap padrão */
+/* Backward compatibility — uses default cap */
 static inline void prst_graph_init(PrstGraph *g) {
     prst_graph_init_cap(g, PRST_GRAPH_CAP_DEFAULT);
 }
@@ -56,25 +56,25 @@ static inline void prst_graph_record(PrstGraph *g,
                                       const char *prst_name,
                                       const char *reader_ctx) {
     const char *ctx = reader_ctx ? reader_ctx : "<global>";
-    /* deduplicação */
+    /* deduplication */
     for (int i = 0; i < g->count; i++)
         if (strcmp(g->deps[i].prst_name, prst_name) == 0 &&
             strcmp(g->deps[i].reader_ctx, ctx) == 0)
             return;
-    /* grow se necessário */
+    /* grow if needed */
     if (g->count >= g->cap) {
         int new_cap = g->cap > 0 ? g->cap * 2 : PRST_GRAPH_CAP_DEFAULT;
         if (new_cap > PRST_GRAPH_CAP_MAX) new_cap = PRST_GRAPH_CAP_MAX;
         if (g->count >= new_cap) {
             fprintf(stderr,
-                "[fluxa] prst_graph: cap máximo (%d) atingido — dep descartado\n",
+                "[fluxa] prst_graph: max cap (%d) reached — dependency dropped\n",
                 PRST_GRAPH_CAP_MAX);
             return;
         }
         PrstDep *nd = (PrstDep *)realloc(g->deps,
                           sizeof(PrstDep) * (size_t)new_cap);
         if (!nd) {
-            fprintf(stderr, "[fluxa] prst_graph: realloc falhou — dep descartado\n");
+            fprintf(stderr, "[fluxa] prst_graph: realloc failed — dependency dropped\n");
             return;
         }
         g->deps = nd;

@@ -1,13 +1,13 @@
 /* handover.c — Fluxa Atomic Handover Protocol (Sprint 8)
  *
- * Implementa os 5 passos do protocolo:
+ * Implementa os 5 steps do protocolo:
  *   1. standby    — aloca B, resolve novo programa
  *   2. migration  — serializa A → snapshot → desserializa em B
- *   3. dry_run    — Ciclo Imaginário: B executa com dry_run=1
- *   4. switchover — aguarda safe point em A; swap atômico de pool
- *   5. cleanup    — destrói B temporário, grace period
+ *   3. dry_run    — Dry Run: B executes with dry_run=1
+ *   4. switchover — wait for safe point in A; atomic pool swap
+ *   5. cleanup    — destroy temporary B, grace period
  *
- * Invariante central: rt_a NUNCA é modificado durante nenhum passo.
+ * Core invariant: rt_a is NEVER modified during any step.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "handover.h"
@@ -30,7 +30,7 @@ static long ms_now(void) {
     return (long)(ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
 }
 
-/* ── falha com rollback total ────────────────────────────────────────────── */
+/* ── fail with full rollback ────────────────────────────────────────────── */
 static void ctx_fail(HandoverCtx *ctx, HandoverResult r, const char *detail) {
     ctx->last_result = r;
     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
@@ -46,7 +46,7 @@ static void ctx_fail(HandoverCtx *ctx, HandoverResult r, const char *detail) {
     handover_ctx_abort(ctx);
 }
 
-/* ── API pública ─────────────────────────────────────────────────────────── */
+/* ── Public API ─────────────────────────────────────────────────────────── */
 void handover_ctx_init(HandoverCtx *ctx, struct Runtime *rt_a,
                         HandoverMode mode) {
     memset(ctx, 0, sizeof(HandoverCtx));
@@ -62,16 +62,16 @@ void handover_ctx_init(HandoverCtx *ctx, struct Runtime *rt_a,
 }
 
 void handover_ctx_abort(HandoverCtx *ctx) {
-    /* Libera snapshot */
+    /* Free snapshot */
     if (ctx->snapshot) { free(ctx->snapshot); ctx->snapshot = NULL; }
     ctx->snapshot_size = 0;
 
-    /* Destrói rt_b completamente — rt_a permanece intacto */
+    /* Destroy rt_b completely — rt_a remains intact */
     if (ctx->rt_b) {
-        /* Limpa qualquer estado parcial que rt_b possa ter */
+        /* Clear qualquer estado parcial que rt_b possa ter */
         scope_free(&ctx->rt_b->scope);
         scope_table_free(&ctx->rt_b->global_table);
-        /* block_registry_free() é global — só chamar se B foi executado */
+        /* block_registry_free() is global — only call if B was executed */
         gc_collect_all(&ctx->rt_b->gc);
         if (ctx->rt_b->prst_pool.entries) prst_pool_free(&ctx->rt_b->prst_pool);
         prst_graph_free(&ctx->rt_b->prst_graph);
@@ -79,12 +79,12 @@ void handover_ctx_abort(HandoverCtx *ctx) {
         free(ctx->rt_b);
         ctx->rt_b = NULL;
     }
-    /* pool_b (ASTPool) é gerenciado pelo caller — não liberar aqui */
+    /* pool_b (ASTPool) is managed by caller — do not free here */
     ctx->program_b = NULL;
     ctx->state     = HANDOVER_STATE_FAILED;
 }
 
-/* ── Passo 1: Standby ────────────────────────────────────────────────────── */
+/* ── Step 1: Standby ────────────────────────────────────────────────────── */
 HandoverResult handover_step1_standby(HandoverCtx *ctx, ASTNode *program_b,
                                        ASTPool *pool_b) {
     ctx->state = HANDOVER_STATE_STANDBY;
@@ -102,7 +102,7 @@ HandoverResult handover_step1_standby(HandoverCtx *ctx, ASTNode *program_b,
         return HANDOVER_ERR_RESOLVE;
     }
 
-    /* Aloca rt_b — zero-init */
+    /* Allocate rt_b — zero-init */
     ctx->rt_b = (Runtime *)calloc(1, sizeof(Runtime));
     if (!ctx->rt_b) {
         ctx_fail(ctx, HANDOVER_ERR_ALLOC, "calloc Runtime B failed");
@@ -116,11 +116,11 @@ HandoverResult handover_step1_standby(HandoverCtx *ctx, ASTNode *program_b,
     return HANDOVER_OK;
 }
 
-/* ── Serialização ────────────────────────────────────────────────────────── */
+/* ── Serialization ────────────────────────────────────────────────────────── */
 HandoverResult handover_serialize_state(HandoverCtx *ctx) {
     Runtime *rt_a = ctx->rt_a;
 
-    /* Checksums pré-serialização — referência de integridade */
+    /* Pre-serialization checksums — integrity reference */
     uint32_t pool_cs  = prst_pool_checksum(&rt_a->prst_pool);
     uint32_t graph_cs = prst_graph_checksum(&rt_a->prst_graph);
 
@@ -166,7 +166,7 @@ HandoverResult handover_serialize_state(HandoverCtx *ctx) {
     return HANDOVER_OK;
 }
 
-/* ── Desserialização ─────────────────────────────────────────────────────── */
+/* ── Deserialization ─────────────────────────────────────────────────────── */
 HandoverResult handover_deserialize_state(HandoverCtx *ctx) {
     if (!ctx->snapshot || ctx->snapshot_size < sizeof(HandoverSnapshotHeader))
         return HANDOVER_ERR_DESERIALIZE;
@@ -211,7 +211,7 @@ HandoverResult handover_deserialize_state(HandoverCtx *ctx) {
     return HANDOVER_OK;
 }
 
-/* ── Passo 2: Migration ──────────────────────────────────────────────────── */
+/* ── Step 2: Migration ──────────────────────────────────────────────────── */
 HandoverResult handover_step2_migrate(HandoverCtx *ctx) {
     ctx->state = HANDOVER_STATE_MIGRATION;
     fprintf(stderr, "[handover] step 2: migration (pool=%d, graph=%d)\n",
@@ -228,14 +228,14 @@ HandoverResult handover_step2_migrate(HandoverCtx *ctx) {
     return HANDOVER_OK;
 }
 
-/* ── Passo 3: Dry Run (Ciclo Imaginário) ─────────────────────────────────── */
+/* ── Step 3: Dry Run ─────────────────────────────────── */
 HandoverResult handover_step3_dry_run(HandoverCtx *ctx) {
     ctx->state = HANDOVER_STATE_DRY_RUN;
-    fprintf(stderr, "[handover] step 3: Ciclo Imaginário (dry_run=1)\n");
+    fprintf(stderr, "[handover] step 3: Dry Run (dry_run=1)\n");
 
     Runtime *rt_b = ctx->rt_b;
 
-    /* Inicializa rt_b — Ciclo Imaginário */
+    /* Initialize rt_b — Dry Run */
     rt_b->scope            = scope_new();
     rt_b->global_table     = NULL;
     rt_b->stack_size       = 0;
@@ -250,27 +250,27 @@ HandoverResult handover_step3_dry_run(HandoverCtx *ctx) {
     rt_b->danger_depth     = 0;
     rt_b->cycle_count      = 0;
     rt_b->dry_run          = 1;
-    rt_b->current_line     = 0;    /* ← Ciclo Imaginário: suprime output */
+    rt_b->current_line     = 0;    /* ← Dry Run: suppress output */
     rt_b->cancel_flag      = NULL;
     rt_b->mode             = FLUXA_MODE_PROJECT;
     rt_b->config           = ctx->rt_a->config;
     errstack_clear(&rt_b->err_stack);
     gc_init(&rt_b->gc, rt_b->config.gc_cap);
     ffi_registry_init(&rt_b->ffi);
-    /* prst_pool e prst_graph já populados pelo passo 2 */
+    /* prst_pool and prst_graph already populated by step 2 */
 
     int result = runtime_exec_with_rt(rt_b, ctx->program_b);
 
-    /* Qualquer erro — incluindo danger — aborta o handover */
+    /* Any error — including danger — aborts the handover */
     int failed = (result != 0) || rt_b->had_error || (rt_b->err_stack.count > 0);
 
-    /* Cleanup do estado de execução de B (escopo, GC, FFI, blocks) */
+    /* Cleanup of B execution state (escopo, GC, FFI, blocks) */
     scope_free(&rt_b->scope);
     scope_table_free(&rt_b->global_table);
     block_registry_free();
     gc_collect_all(&rt_b->gc);
     ffi_registry_free(&rt_b->ffi);
-    /* prst_pool e prst_graph SOBREVIVEM — usados pelo passo 4 */
+    /* prst_pool and prst_graph SURVIVE — used by step 4 */
 
     if (failed) {
         char buf[512] = "dry run failed";
@@ -283,12 +283,12 @@ HandoverResult handover_step3_dry_run(HandoverCtx *ctx) {
     }
 
     fprintf(stderr,
-            "[handover] step 3: Ciclo Imaginário OK (B cycle=%ld)\n",
+            "[handover] step 3: Dry Run OK (B cycle=%ld)\n",
             rt_b->cycle_count);
     return HANDOVER_OK;
 }
 
-/* ── Passo 4: Switchover ─────────────────────────────────────────────────── */
+/* ── Step 4: Switchover ─────────────────────────────────────────────────── */
 HandoverResult handover_step4_switchover(HandoverCtx *ctx) {
     ctx->state = HANDOVER_STATE_SWITCHOVER;
     fprintf(stderr,
@@ -297,7 +297,7 @@ HandoverResult handover_step4_switchover(HandoverCtx *ctx) {
 
     Runtime *rt_a = ctx->rt_a;
 
-    /* Aguarda safe point em A com timeout */
+    /* Wait for safe point in A with timeout */
     long deadline = ms_now() + ctx->safe_point_timeout_ms;
     while (!runtime_is_safe_point(rt_a)) {
         if (ms_now() >= deadline) {
@@ -311,10 +311,10 @@ HandoverResult handover_step4_switchover(HandoverCtx *ctx) {
 
     ctx->rt_a_cycle_at_swap = rt_a->cycle_count;
 
-    /* Swap atômico: transfere o pool de B para pool_after.
-     * O caller usa pool_after para o próximo runtime_apply(). */
+    /* Atomic swap: transfer B pool to pool_after.
+     * Caller uses pool_after for the next runtime_apply(). */
     ctx->pool_after           = ctx->rt_b->prst_pool;
-    /* Zera o ponteiro em rt_b para evitar double-free */
+    /* Zero pointer in rt_b to avoid double-free */
     ctx->rt_b->prst_pool.entries = NULL;
     ctx->rt_b->prst_pool.count   = 0;
     ctx->rt_b->prst_pool.cap     = 0;
@@ -325,7 +325,7 @@ HandoverResult handover_step4_switchover(HandoverCtx *ctx) {
     return HANDOVER_OK;
 }
 
-/* ── Passo 5: Cleanup ────────────────────────────────────────────────────── */
+/* ── Step 5: Cleanup ────────────────────────────────────────────────────── */
 HandoverResult handover_step5_cleanup(HandoverCtx *ctx) {
     ctx->state = HANDOVER_STATE_CLEANUP;
     fprintf(stderr, "[handover] step 5: cleanup (grace=%dms)\n",
@@ -338,13 +338,13 @@ HandoverResult handover_step5_cleanup(HandoverCtx *ctx) {
         nanosleep(&ts_grace, NULL);
     }
 
-    /* Libera snapshot */
+    /* Free snapshot */
     if (ctx->snapshot) { free(ctx->snapshot); ctx->snapshot = NULL; }
     ctx->snapshot_size = 0;
 
-    /* Destrói rt_b — o prst_pool já foi transferido no passo 4 */
+    /* Destroy rt_b — prst_pool was already transferred in step 4 */
     if (ctx->rt_b) {
-        /* prst_graph ainda precisa ser liberado */
+        /* prst_graph still needs to be freed */
         prst_graph_free(&ctx->rt_b->prst_graph);
         free(ctx->rt_b);
         ctx->rt_b = NULL;
@@ -356,7 +356,7 @@ HandoverResult handover_step5_cleanup(HandoverCtx *ctx) {
     return HANDOVER_OK;
 }
 
-/* ── Protocolo completo ──────────────────────────────────────────────────── */
+/* ── Full protocol ──────────────────────────────────────────────────── */
 HandoverResult handover_execute(HandoverCtx *ctx, ASTNode *program_b,
                                  ASTPool *pool_b) {
     HandoverResult r;

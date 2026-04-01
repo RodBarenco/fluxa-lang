@@ -1,31 +1,31 @@
 /* handover.h — Fluxa Atomic Handover Protocol (Sprint 8)
  *
- * Protocolo de 5 passos para substituição zero-downtime de runtime:
+ * 5-step protocol for zero-downtime runtime replacement:
  *
  *   1. STANDBY      — Runtime B criado, programa parseado e resolvido
  *   2. MIGRATION    — PrstPool + PrstGraph serializados A → snapshot → B
- *   3. DRY_RUN      — "Ciclo Imaginário": B executa com dry_run=1
- *   4. SWITCHOVER   — Aguarda safe point em A; swap atômico
- *   5. CLEANUP      — Runtime A destruído após período de grace
+ *   3. DRY_RUN      — Dry Run: B executes with dry_run=1
+ *   4. SWITCHOVER   — Wait for safe point in A; atomic swap
+ *   5. CLEANUP      — Runtime A destroyed after grace period
  *
  * Garantias de invariante:
- *   - Runtime A NUNCA é modificado durante tentativa de handover
- *   - Qualquer falha em B mantém A ativo sem corrupção
- *   - dry_run suprime stdout/FFI side-effects, não a lógica interna
- *   - ERR_HANDOVER gerado em A se B falhar em qualquer passo
- *   - Múltiplas tentativas não acumulam estado inválido
- *   - GC não interfere: gc_collect_all() chamado antes do swap
- *   - danger não mascara falhas críticas: err_stack de B verificado
+ *   - Runtime A is NEVER modified during a handover attempt
+ *   - Any failure in B keeps A active without corruption
+ *   - dry_run suppresses stdout/FFI side-effects, not internal logic
+ *   - ERR_HANDOVER gerado em A se B falhar em qualquer step
+ *   - Multiple attempts do not accumulate invalid state
+ *   - GC does not interfere: gc_collect_all() called before swap
+ *   - danger does not mask critical failures: B err_stack is checked
  *
  * Versionamento (beta 0.001):
- *   v1.000 — primeira versão estável do protocolo
- *   v1.xxx — compatível com v1.000 (mesmo major)
- *   v2.000 — breaking change; rejeita snapshots v1.xxx
+ *   v1.000 — first stable protocol version
+ *   v1.xxx — compatible with v1.000 (mesmo major)
+ *   v2.000 — breaking change; rejects snapshots v1.xxx
  *
  * RP2040 (264KB SRAM / 2MB Flash):
- *   Dois runtimes paralelos não cabem em SRAM.
- *   HANDOVER_MODE_FLASH: serializa → Flash → reboot → deserializa → dry_run
- *   O snapshot é flat binary sem ponteiros — safe para escrita em Flash.
+ *   Two parallel runtimes do not fit in SRAM.
+ *   HANDOVER_MODE_FLASH: serialize → Flash → reboot → deserialize → dry_run
+ *   Snapshot is flat binary without pointers — safe for Flash writes.
  */
 #ifndef FLUXA_HANDOVER_H
 #define FLUXA_HANDOVER_H
@@ -38,17 +38,17 @@
 #include <stdio.h>
 #include <unistd.h>
 
-/* ── Versão do protocolo ─────────────────────────────────────────────────── */
+/* ── Protocol version ─────────────────────────────────────────────────── */
 #define FLUXA_HANDOVER_VERSION  1000u   /* v1.000 */
 #define FLUXA_HANDOVER_MAGIC    0xF10A8888u
 
-/* ── Modo de handover ────────────────────────────────────────────────────── */
+/* ── Handover mode ────────────────────────────────────────────────────── */
 typedef enum {
     HANDOVER_MODE_MEMORY,  /* dois runtimes em paralelo (x86/ARM64)   */
     HANDOVER_MODE_FLASH,   /* serialize→Flash→reboot→deserialize (RP2040) */
 } HandoverMode;
 
-/* ── Estado do protocolo ─────────────────────────────────────────────────── */
+/* ── Protocol state ─────────────────────────────────────────────────── */
 typedef enum {
     HANDOVER_STATE_IDLE,
     HANDOVER_STATE_STANDBY,
@@ -60,7 +60,7 @@ typedef enum {
     HANDOVER_STATE_COMMITTED,
 } HandoverState;
 
-/* ── Códigos de resultado ────────────────────────────────────────────────── */
+/* ── Result codes ────────────────────────────────────────────────── */
 typedef enum {
     HANDOVER_OK = 0,
     HANDOVER_ERR_ALLOC,
@@ -77,7 +77,7 @@ typedef enum {
     HANDOVER_ERR_NULL_PROGRAM,
 } HandoverResult;
 
-/* ── Cabeçalho do snapshot ───────────────────────────────────────────────── */
+/* ── Snapshot header ───────────────────────────────────────────────── */
 /* Layout do buffer flat binary:
  *   [HandoverSnapshotHeader]
  *   [pool_size bytes  — PrstPool serializado]
@@ -96,14 +96,14 @@ typedef struct {
     uint8_t  _pad[4];
 } HandoverSnapshotHeader;
 
-/* ── Contexto do handover ────────────────────────────────────────────────── */
+/* ── Handover context ────────────────────────────────────────────────── */
 typedef struct {
     HandoverMode   mode;
     HandoverState  state;
     HandoverResult last_result;
 
-    Runtime *rt_a;      /* ativo — NUNCA modificado             */
-    Runtime *rt_b;      /* candidato — descartado se falhar     */
+    Runtime *rt_a;      /* active — NEVER modified             */
+    Runtime *rt_b;      /* candidate — discarded on failure     */
     ASTPool        *pool_b;
     ASTNode        *program_b;
 
@@ -116,11 +116,11 @@ typedef struct {
     char           error_msg[512];
     long           rt_a_cycle_at_swap;
 
-    /* Pool resultante após handover completo — passado para runtime_apply */
+    /* Resulting pool after full handover — passed to runtime_apply */
     PrstPool       pool_after;
 } HandoverCtx;
 
-/* ── Strings legíveis ────────────────────────────────────────────────────── */
+/* ── Human-readable strings ────────────────────────────────────────────────────── */
 static inline const char *handover_state_str(HandoverState s) {
     switch (s) {
         case HANDOVER_STATE_IDLE:       return "IDLE";
@@ -154,7 +154,7 @@ static inline const char *handover_result_str(HandoverResult r) {
     return "UNKNOWN";
 }
 
-/* ── Verificação de versão ───────────────────────────────────────────────── */
+/* ── Version check ───────────────────────────────────────────────── */
 static inline HandoverResult handover_check_version(uint32_t snap_ver) {
     uint32_t snap_major = snap_ver / 1000u;
     uint32_t cur_major  = FLUXA_HANDOVER_VERSION / 1000u;
@@ -163,7 +163,7 @@ static inline HandoverResult handover_check_version(uint32_t snap_ver) {
     return HANDOVER_OK;
 }
 
-/* ── API pública ─────────────────────────────────────────────────────────── */
+/* ── Public API ─────────────────────────────────────────────────────────── */
 void           handover_ctx_init(HandoverCtx *ctx, Runtime *rt_a,
                                   HandoverMode mode);
 void           handover_ctx_abort(HandoverCtx *ctx);
