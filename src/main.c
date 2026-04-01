@@ -1,11 +1,12 @@
-/* main.c — Fluxa CLI entry point (Sprint 9)
+/* main.c — Fluxa CLI entry point (Sprint 9 / Sprint 9.b)
  *
  * Commands:
  *   fluxa run <file.flx>                     execute (auto-detects script vs project)
  *   fluxa run <file.flx> -dev                dev mode: watch + auto-reload on change
  *   fluxa run <file.flx> -dev -p             dev mode with preflight validation
  *   fluxa run <file.flx> -prod               prod mode (manual apply via IPC)
- *   fluxa explain <file.flx>                 print prst state + dep graph
+ *   fluxa explain                            live prst state from running runtime (IPC)
+ *   fluxa explain <file.flx>                 execute file and print prst state + dep graph
  *   fluxa apply <file.flx>                   one-shot reload preserving prst state
  *   fluxa apply <file.flx> -p               preflight before applying
  *   fluxa apply <file.flx> -p --force       force apply even with warnings (prod only)
@@ -22,6 +23,10 @@
  *   fluxa init: scaffold project directory
  *   preflight (-p): validate before applying, operator decides
  *   --force: apply with warnings (prod only)
+ *
+ * Sprint 9.b additions:
+ *   Issue #95: safe point on every while back-edge (fluxa set works in infinite loops)
+ *   Issue #96: fluxa explain without file → IPC_OP_EXPLAIN streaming from live runtime
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -63,7 +68,8 @@ static void usage(void) {
         "  fluxa run <file.flx> -dev               dev mode: watch + reload on save\n"
         "  fluxa run <file.flx> -dev -p            dev mode with preflight validation\n"
         "  fluxa run <file.flx> -prod              prod mode (manual apply)\n"
-        "  fluxa explain <file.flx>                show prst state + dependency graph\n"
+        "  fluxa explain                           live state from running runtime (IPC)\n"
+        "  fluxa explain <file.flx>                execute file and show prst + deps\n"
         "  fluxa apply <file.flx>                  reload preserving prst state\n"
         "  fluxa apply <file.flx> -p               preflight before applying\n"
         "  fluxa apply <file.flx> -p --force       force apply with warnings (prod only)\n"
@@ -223,8 +229,40 @@ static int run_dev(const char *path) {
     return 0;
 }
 
-/* Preflight: parse + resolve the new file and report any issues.
- * Returns 0 if clean, 1 if there are warnings/errors. */
+/* Prod mode: start IPC server, run program once (no file watcher, no reload).
+ * Stays alive as long as the program runs (e.g. infinite loop).
+ * IPC commands (observe, set, logs, status, explain) all work. */
+static int run_prod(const char *path) {
+    fprintf(stderr, "[fluxa] -prod: running %s\n", path);
+
+    static ASTPool ast_pool;
+
+    /* Create stable IPC view — IPC server uses this for all queries */
+    IpcRtView *ipc_view = ipc_rtview_create();
+    IpcServer *ipc = ipc_view ? ipc_server_start(ipc_view) : NULL;
+
+    if (!ipc) {
+        fprintf(stderr, "[fluxa] -prod: IPC server failed to start\n");
+        if (ipc_view) ipc_rtview_destroy(ipc_view);
+        return 1;
+    }
+
+    ASTNode *program = parse_file(path, &ast_pool);
+    if (!program) {
+        ipc_server_stop(ipc);
+        ipc_rtview_destroy(ipc_view);
+        return 1;
+    }
+
+    runtime_set_ipc_view(ipc_view);
+    int result = runtime_exec(program);
+    runtime_set_ipc_view(NULL);
+
+    pool_free(&ast_pool);
+    ipc_server_stop(ipc);
+    ipc_rtview_destroy(ipc_view);
+    return result;
+}
 static int run_preflight(const char *path) {
     fprintf(stderr, "[fluxa] preflight: validating %s\n", path);
     static ASTPool pool;
@@ -602,18 +640,102 @@ static int run_test_reload(void) {
     return all_ok ? 0 : 1;
 }
 
-/* ── fluxa handover <old.flx> <new.flx> ──────────────────────────────────── */
-/* Protocolo completo de 5 passos:
+/* ── fluxa explain — Sprint 9.b (Issue #96) ──────────────────────────────── */
+/* Modo 1 (sem arquivo): conecta via IPC ao runtime rodando — valores ao vivo.
+ * Modo 2 (com arquivo): executa o arquivo e imprime estado final. */
+static int run_explain_live(void) {
+    IpcClient cli;
+    int pid = ipc_connect_auto(&cli);
+    if (pid < 0) return 1;
+
+    IpcRequest  req;
+    IpcResponse resp;
+    ipc_req_explain(&req, 1);
+
+    if (ipc_send_all(cli.fd, &req, sizeof req) < 0) {
+        fprintf(stderr, "[fluxa] explain: IPC send error\n");
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    printf("\n── prst (persist across reloads) ──────────────────────────────────\n");
+
+    int var_count = 0;
+    int done = 0;
+
+    while (!done) {
+        /* Each var packet has its own timeout — allow up to 2s total */
+        if (ipc_recv_timed(cli.fd, &resp, sizeof resp) < 0) {
+            if (var_count == 0)
+                fprintf(stderr, "[fluxa] explain: IPC recv timeout\n");
+            break;
+        }
+        if (resp.magic != IPC_MAGIC) {
+            fprintf(stderr, "[fluxa] explain: bad magic in response\n");
+            ipc_client_close(&cli);
+            return 1;
+        }
+
+        if (resp.status == IPC_STATUS_EXPLAIN_VAR) {
+            /* resp.name has the var name; resp.message has "name  type  = val"
+             * Re-format with alignment using the raw fields for precision */
+            switch (resp.type_tag) {
+                case IPC_TYPE_INT:
+                    printf("  %-20s int   = %ld\n",  resp.name, (long)resp.i_val);
+                    break;
+                case IPC_TYPE_FLOAT:
+                    printf("  %-20s float = %g\n",   resp.name, resp.f_val);
+                    break;
+                case IPC_TYPE_BOOL:
+                    printf("  %-20s bool  = %s\n",   resp.name,
+                           resp.b_val ? "true" : "false");
+                    break;
+                default:
+                    /* str or nil — message already formatted */
+                    printf("  %s\n", resp.message);
+                    break;
+            }
+            var_count++;
+
+        } else if (resp.status == IPC_STATUS_EXPLAIN_DONE) {
+            if (var_count == 0)
+                printf("  (none)\n");
+
+            printf("\n── Registered dependencies ─────────────────────────────────────────\n");
+            printf("  %s\n", resp.message);
+
+            printf("\n── Runtime ─────────────────────────────────────────────────────────\n");
+            printf("  pid      : %d\n",  pid);
+            printf("  mode     : %s\n",  resp.mode == 1 ? "project" : "script");
+            printf("  cycle    : %d\n",  resp.cycle_count);
+            printf("  prst     : %d vars\n", resp.prst_count);
+            printf("  errors   : %d\n",  resp.err_count);
+            printf("  dry_run  : %s\n",  resp.dry_run ? "yes" : "no");
+            printf("\n");
+            done = 1;
+
+        } else {
+            fprintf(stderr, "[fluxa] explain: server error %d — %s\n",
+                    resp.status, resp.message);
+            ipc_client_close(&cli);
+            return 1;
+        }
+    }
+
+    ipc_client_close(&cli);
+    return 0;
+}
+/* Full protocol de 5 steps:
  *   1. Executa old.flx normalmente (Runtime A)
  *   2. Parseia new.flx (programa candidato)
- *   3. Executa o handover: migration → Ciclo Imaginário → switchover → cleanup
+ *   3. Executa o handover: migration → Dry Run → switchover → cleanup
  *   4. Se sucesso: executa new.flx com o pool transferido (Runtime B real)
  *   5. Se falha: Runtime A continua; ERR_HANDOVER no err_stack
  */
 static int run_handover(const char *old_path, const char *new_path) {
     fprintf(stderr, "[fluxa] handover: %s → %s\n", old_path, new_path);
 
-    /* ── Passo 0: executa old.flx para popular o estado ── */
+    /* ── Step 0: executa old.flx para popular o estado ── */
     static ASTPool pool_a;
     ASTNode *prog_a = parse_file(old_path, &pool_a);
     if (!prog_a) return 1;
@@ -677,7 +799,7 @@ static int run_handover(const char *old_path, const char *new_path) {
     fprintf(stderr, "[fluxa] handover: Runtime A OK (prst=%d, deps=%d)\n",
             rt_a->prst_pool.count, rt_a->prst_graph.count);
 
-    /* Limpa escopo de A (mantém apenas pool e graph para o handover) */
+    /* Clean A scope (keep only pool and graph for handover) */
     scope_free(&rt_a->scope);
     rt_a->scope = scope_new();
     scope_table_free(&rt_a->global_table);
@@ -711,7 +833,7 @@ static int run_handover(const char *old_path, const char *new_path) {
     if (r != HANDOVER_OK) {
         fprintf(stderr, "[fluxa] handover FAILED at %s: %s\n",
                 handover_state_str(ctx.state), ctx.error_msg);
-        /* Runtime A permanece intacto — executar continuação de A */
+        /* Runtime A remains intact — continue execution of A */
         fprintf(stderr, "[fluxa] handover: Runtime A maintains control\n");
         scope_free(&rt_a->scope);
         prst_pool_free(&rt_a->prst_pool);
@@ -726,7 +848,7 @@ static int run_handover(const char *old_path, const char *new_path) {
 
     fprintf(stderr, "[fluxa] handover: committed — starting Runtime B\n");
 
-    /* ── Passo final: executa new.flx com pool transferido ── */
+    /* ── Step final: executa new.flx com pool transferido ── */
     int result = runtime_apply(prog_b, &ctx.pool_after);
 
     /* Cleanup */
@@ -743,9 +865,9 @@ static int run_handover(const char *old_path, const char *new_path) {
 }
 
 /* ── test-handover: suite interna PASS/FAIL ──────────────────────────────── */
-/* Valida os 5 passos do protocolo com programas inline.
- * Testa: serialize→deserialize, checksum, Ciclo Imaginário (ok e fail),
- * transferência de prst, rollback em caso de falha. */
+/* Valida os 5 steps do protocolo com programas inline.
+ * Tests: serialize→deserialize, checksum, Dry Run (ok and fail),
+ * prst transfer, rollback on failure. */
 static int run_test_handover(void) {
     int all_ok = 1;
     fprintf(stderr, "── Fluxa Handover Test Suite ──────────────────────────────\n");
@@ -753,7 +875,7 @@ static int run_test_handover(void) {
     /* ── Teste 1: serialize → deserialize → checksum ── */
     fprintf(stderr, "  [1] serialize/deserialize/checksum... ");
     {
-        /* Monta um Runtime A mínimo com pool populado */
+        /* Build a minimal Runtime A with populated pool */
         Runtime *rt_a = (Runtime *)calloc(1, sizeof(Runtime));
         prst_pool_init(&rt_a->prst_pool);
         prst_graph_init(&rt_a->prst_graph);
@@ -808,8 +930,8 @@ static int run_test_handover(void) {
         free(rt_a);
     }
 
-    /* ── Teste 2: Ciclo Imaginário com programa válido ── */
-    fprintf(stderr, "  [2] Ciclo Imaginário (programa válido)... ");
+    /* ── Teste 2: Dry Run with valid program ── */
+    fprintf(stderr, "  [2] Dry Run (valid program)... ");
     {
         static const char *src_ok =
             "prst int x = 42\nprint(x)\n";
@@ -857,8 +979,8 @@ static int run_test_handover(void) {
         pool_free(&ap2);
     }
 
-    /* ── Teste 3: Ciclo Imaginário detecta erro → rollback ── */
-    fprintf(stderr, "  [3] Ciclo Imaginário (programa com erro → rollback)... ");
+    /* ── Teste 3: Dry Run detects error → rollback ── */
+    fprintf(stderr, "  [3] Dry Run (program with error → rollback)... ");
     {
         static const char *src_bad =
             "prst int y = 10\nint boom = 1 / 0\nprint(y)\n";
@@ -899,7 +1021,7 @@ static int run_test_handover(void) {
 
         if (ctx3.snapshot) free(ctx3.snapshot);
         if (ctx3.rt_b && ctx3.state == HANDOVER_STATE_FAILED) {
-            /* já foi abortado — rt_b foi liberado em ctx_abort */
+            /* already aborted — rt_b was freed in ctx_abort */
         }
         prst_pool_free(&rt_a3->prst_pool);
         prst_graph_free(&rt_a3->prst_graph);
@@ -909,30 +1031,30 @@ static int run_test_handover(void) {
         pool_free(&ap3);
     }
 
-    /* ── Teste 4: versão de protocolo ── */
-    fprintf(stderr, "  [4] versão de protocolo (v1.000)... ");
+    /* ── Teste 4: protocol version ── */
+    fprintf(stderr, "  [4] protocol version (v1.000)... ");
     {
         int ok4 = 1;
-        /* Mesma versão: OK */
+        /* Same version: OK */
         if (handover_check_version(FLUXA_HANDOVER_VERSION) != HANDOVER_OK) ok4 = 0;
-        /* Minor menor: compatível */
+        /* Lower minor: compatible */
         if (FLUXA_HANDOVER_VERSION > 1000) {
             if (handover_check_version(FLUXA_HANDOVER_VERSION - 1) != HANDOVER_OK) ok4 = 0;
         }
-        /* Major diferente: incompatível */
+        /* Different major: incompatible */
         if (handover_check_version(FLUXA_HANDOVER_VERSION + 1000u) != HANDOVER_ERR_VERSION) ok4 = 0;
         if (ok4) fprintf(stderr, "PASS\n");
         else   { fprintf(stderr, "FAIL\n"); all_ok = 0; }
     }
 
     /* ── Teste 5: prst_cap e prst_graph_cap via config ── */
-    fprintf(stderr, "  [5] prst_cap / prst_graph_cap configuráveis... ");
+    fprintf(stderr, "  [5] prst_cap / prst_graph_cap configurable... ");
     {
         int ok5 = 1;
         PrstGraph g;
         prst_graph_init_cap(&g, 4);
         if (g.cap != 4) ok5 = 0;
-        /* Força crescimento além do cap inicial */
+        /* Force growth beyond initial cap */
         for (int i = 0; i < 10; i++) {
             char name[32]; char ctx[32];
             snprintf(name, sizeof(name), "prst%d", i);
@@ -994,10 +1116,17 @@ int main(int argc, char **argv) {
     }
 
     /* ── Commands that require a file argument ── */
-    if (argc < 3) { usage(); return 1; }
+    if (argc < 3) {
+        /* Special case: explain without a file → live IPC mode */
+        if (strcmp(cmd, "explain") == 0) return run_explain_live();
+        usage();
+        return 1;
+    }
 
     const char *file = argv[2];
 
+    /* fluxa explain [file] — with file: execute once and print state;
+     *                        without file (handled above): live IPC mode */
     if (strcmp(cmd, "explain") == 0) return run_once(file, 1);
 
     /* fluxa apply <file> [-p] [--force] */
@@ -1026,14 +1155,14 @@ int main(int argc, char **argv) {
 
     /* fluxa run <file> [-dev] [-dev -p] [-prod] */
     if (strcmp(cmd, "run") == 0) {
-        int dev_mode = 0, preflight = 0;
+        int dev_mode = 0, prod_mode = 0, preflight = 0;
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "-dev")  == 0) dev_mode  = 1;
             if (strcmp(argv[i], "-p")    == 0) preflight = 1;
-            if (strcmp(argv[i], "-prod") == 0)
-                fprintf(stderr, "[fluxa] -prod: running in production mode\n");
+            if (strcmp(argv[i], "-prod") == 0) prod_mode = 1;
         }
         if (dev_mode) return run_dev(file);
+        if (prod_mode) return run_prod(file);
         if (preflight && run_preflight(file) != 0) return 1;
         return run_once(file, 0);
     }
