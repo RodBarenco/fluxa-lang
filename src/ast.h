@@ -44,6 +44,10 @@ typedef enum {
     /* Sprint 6.b */
     NODE_IMPORT_C,      /* import c libm   */
     NODE_FFI_CALL,      /* libm.sqrt(x)    */
+    /* Sprint 9.c */
+    NODE_DYN_LIT,       /* [1, "x", true]  — heterogeneous literal  */
+    NODE_DYN_ACCESS,    /* lista[i]        — dyn read               */
+    NODE_DYN_ASSIGN,    /* lista[i] = v    — dyn write (auto-grow)  */
 } NodeType;
 
 #ifndef FLUXA_AST_NODE_DECLARED
@@ -209,6 +213,25 @@ struct ASTNode {
             ASTNode **args;
             int       arg_count;
         } ffi_call;
+
+        /* NODE_DYN_LIT (Sprint 9.c): [expr, expr, ...] heterogeneous */
+        struct {
+            ASTNode **elements;
+            int       count;
+        } dyn_lit;
+
+        /* NODE_DYN_ACCESS (Sprint 9.c): lista[i] */
+        struct {
+            char    *dyn_name;
+            ASTNode *index;
+        } dyn_access;
+
+        /* NODE_DYN_ASSIGN (Sprint 9.c): lista[i] = v  (auto-grow) */
+        struct {
+            char    *dyn_name;
+            ASTNode *index;
+            ASTNode *value;
+        } dyn_assign;
 
     } as;
 };

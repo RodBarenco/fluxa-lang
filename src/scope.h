@@ -20,6 +20,8 @@ typedef enum {
     VAL_BLOCK_INST,
     VAL_ARR,          /* Sprint 6: contiguous heap array                   */
     VAL_ERR_STACK,    /* Sprint 6: reference to Runtime ErrStack           */
+    VAL_DYN,          /* Sprint 9.c: heterogeneous dynamic array           */
+    VAL_PTR,          /* Sprint 9.c: opaque C pointer — GC never touches   */
 } ValType;
 
 /* Forward declarations */
@@ -42,6 +44,15 @@ typedef struct {
                           /* 0 = reference, caller owns data               */
 } FluxaArr;
 
+/* ── FluxaDyn — heterogeneous dynamic array ──────────────────────────────── */
+/* Grows via realloc. Each element carries its own ValType tag.
+ * VAL_PTR elements are stored but never freed by Fluxa GC. */
+typedef struct {
+    struct Value *items;   /* heap-allocated, grows via realloc             */
+    int           count;
+    int           cap;
+} FluxaDyn;
+
 /* ── Value ───────────────────────────────────────────────────────────────── */
 typedef struct Value {
     ValType type;
@@ -54,6 +65,8 @@ typedef struct Value {
         struct BlockInstance *block_inst;
         FluxaArr          arr;
         ErrStack         *err_stack;
+        FluxaDyn         *dyn;   /* heap pointer — owned by scope/stack     */
+        void             *ptr;   /* opaque C pointer — VAL_PTR              */
     } as;
 } Value;
 
@@ -87,6 +100,14 @@ static inline Value val_arr_ref(Value *data, int size) {
     v.as.arr.size  = size;
     v.as.arr.owned = 0;   /* reference — do NOT free data */
     return v;
+}
+
+static inline Value val_dyn(FluxaDyn *d) {
+    Value v; v.type = VAL_DYN; v.as.dyn = d; return v;
+}
+
+static inline Value val_ptr(void *p) {
+    Value v; v.type = VAL_PTR; v.as.ptr = p; return v;
 }
 
 /* ── Scope entry ─────────────────────────────────────────────────────────── */
