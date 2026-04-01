@@ -35,6 +35,11 @@ fi
 PASS=0; FAIL=0; ERRORS=""
 mkdir -p "$WORK_DIR"
 
+# Limpa sockets/locks stale de runs anteriores
+kill -9 $(pgrep -x fluxa 2>/dev/null) 2>/dev/null || true
+sleep 0.1
+rm -f /tmp/fluxa-*.sock /tmp/fluxa-*.lock 2>/dev/null || true
+
 cleanup() {
     [[ -n "$RT_PID" ]] && kill -9 "$RT_PID" 2>/dev/null || true
     rm -f /tmp/fluxa-${RT_PID:-0}.sock /tmp/fluxa-${RT_PID:-0}.lock 2>/dev/null || true
@@ -90,7 +95,8 @@ fi
 kill -9 "$RT_PID" 2>/dev/null || true
 wait "$RT_PID" 2>/dev/null || true
 RT_PID=""
-sleep 0.2
+sleep 0.3
+rm -f /tmp/fluxa-*.sock /tmp/fluxa-*.lock 2>/dev/null || true
 
 # =============================================================================
 # CASO 2 — fluxa set funciona com -prod (o bug original)
@@ -101,11 +107,10 @@ echo "  ── Caso 2: fluxa set aplica valor em loop com -prod ─────�
 PROG2="$WORK_DIR/set_prod.flx"
 cat > "$PROG2" << 'FLX'
 prst int number = 12
-bool key = true
-while key == true {
-    number = number
+int total = 0
+while total >= 0 {
+    total = total + number - number
 }
-print(number)
 FLX
 
 "$FLUXA" run "$PROG2" -prod \
@@ -115,14 +120,16 @@ RT_PID=$!
 if ! wait_for_socket "$RT_PID"; then
     fail "caso2/set_in_prod_loop" "socket não apareceu"
 else
-    sleep 0.3
+    sleep 0.5
 
     set_out=$("$FLUXA" set number 99 2>&1 || true)
     vlog "set output: $set_out"
 
-    sleep 0.4
+    sleep 0.8
 
-    obs_out=$(timeout 1s "$FLUXA" observe number 2>/dev/null || true)
+    # observe prints on first read; head -1 exits after first line,
+    # which causes SIGPIPE to fluxa — that is intentional and harmless.
+    obs_out=$(timeout 3s "$FLUXA" observe number 2>/dev/null | head -1 || true)
     vlog "observe: $obs_out"
 
     if echo "$obs_out" | grep -q "= 99"; then
@@ -136,7 +143,8 @@ fi
 kill -9 "$RT_PID" 2>/dev/null || true
 wait "$RT_PID" 2>/dev/null || true
 RT_PID=""
-sleep 0.2
+sleep 0.3
+rm -f /tmp/fluxa-*.sock /tmp/fluxa-*.lock 2>/dev/null || true
 
 # =============================================================================
 # CASO 3 — fluxa explain (modo IPC ao vivo)

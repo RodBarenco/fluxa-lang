@@ -290,9 +290,10 @@ test-sprint9: build
 	@echo "── sprint 9 tests OK ──────────────────────────────────────────────────────"
 
 test-sprint9b: build
-	@echo "── Sprint 9.b: Safe point no back-edge do while ───────────────────────────"
-	@chmod +x tests/sprint9b_set_in_loop.sh
+	@echo "── Sprint 9.b: Issue #95 + #96 ────────────────────────────────────────────"
+	@chmod +x tests/sprint9b_set_in_loop.sh tests/sprint9b_explain_live.sh
 	@bash tests/sprint9b_set_in_loop.sh --fluxa ./$(TARGET)
+	@bash tests/sprint9b_explain_live.sh --fluxa ./$(TARGET)
 	@echo "── sprint 9.b tests OK ────────────────────────────────────────────────────"
 
 bench: build
