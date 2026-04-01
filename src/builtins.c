@@ -36,6 +36,21 @@ static void print_value(Value v) {
         case VAL_ERR_STACK:
             errstack_print((const ErrStack *)v.as.err_stack);
             return;   /* errstack_print adds its own newline per entry */
+        case VAL_DYN: {
+            FluxaDyn *d = v.as.dyn;
+            printf("[");
+            if (d) {
+                for (int i = 0; i < d->count; i++) {
+                    if (i > 0) printf(", ");
+                    print_value(d->items[i]);
+                }
+            }
+            printf("]");
+            break;
+        }
+        case VAL_PTR:
+            printf("<ptr %p>", v.as.ptr);
+            break;
     }
 }
 
@@ -57,12 +72,26 @@ static Value builtin_print(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
 
 static Value builtin_len(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
     if (call->as.list.count != 1) {
+        rt->had_error = 1;
         fprintf(stderr, "[fluxa] Runtime error: len() expects exactly 1 argument\n");
         return val_nil();
     }
     Value v = eval_fn(rt, call->as.list.children[0]);
-    if (v.type == VAL_STRING) return val_int((long)strlen(v.as.string));
-    fprintf(stderr, "[fluxa] Runtime error: len() called on non-string value\n");
+    if (rt->had_error) return val_nil();
+    if (v.type == VAL_STRING) {
+        return val_int((long)strlen(v.as.string ? v.as.string : ""));
+    }
+    if (v.type == VAL_ARR) {
+        return val_int((long)v.as.arr.size);
+    }
+    if (v.type == VAL_DYN) {
+        return val_int((long)(v.as.dyn ? v.as.dyn->count : 0));
+    }
+    rt->had_error = 1;
+    fprintf(stderr, "[fluxa] Runtime error: len() called on non-iterable value (got %s)\n",
+            v.type == VAL_INT   ? "int"   :
+            v.type == VAL_FLOAT ? "float" :
+            v.type == VAL_BOOL  ? "bool"  : "unknown");
     return val_nil();
 }
 
