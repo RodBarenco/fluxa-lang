@@ -389,6 +389,48 @@ else
 $(echo "$dyn_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── sprint9c/dyn_block_prst ─────────────────────────────────────────────────
+printf "  %-56s" "sprint9c/dyn_block_prst (Block em dyn + prst dyn)"
+dyn_bp_out=$(bash "$SCRIPT_DIR/sprint9c_dyn_block_prst.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$dyn_bp_out" | grep -q "dyn_block_prst: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint9c/dyn_block_prst:
+$(echo "$dyn_bp_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
+# ── sprint9c/ffi_toml (issue #103) ──────────────────────────────────────────
+printf "  %-56s" "sprint9c/ffi_toml ([ffi] toml auto-resolve)"
+ffi_toml_out=$(bash "$SCRIPT_DIR/sprint9c_ffi_toml.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$ffi_toml_out" | grep -q "ffi_toml: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint9c/ffi_toml:
+$(echo "$ffi_toml_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
+# ── sprint9c/dyn_indexed_member (bugfix: dyn[i].campo / dyn[i].metodo()) ────
+printf "  %-56s" "sprint9c/dyn_indexed_member (dyn[i].campo / dyn[i].metodo)"
+dyn_idx_out=$(bash "$SCRIPT_DIR/sprint9c_dyn_indexed_member.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$dyn_idx_out" | grep -q "dyn_indexed: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint9c/dyn_indexed_member:
+$(echo "$dyn_idx_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then

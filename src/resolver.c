@@ -112,6 +112,24 @@ static void resolve_expr(Resolver *r, ASTNode *node) {
             }
             break;
 
+        case NODE_INDEXED_MEMBER_ACCESS:
+            resolve_expr(r, node->as.indexed_member_access.index);
+            {
+                int off = symtable_find(r->current, node->as.indexed_member_access.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
+            break;
+
+        case NODE_INDEXED_MEMBER_CALL:
+            resolve_expr(r, node->as.indexed_member_call.index);
+            for (int i = 0; i < node->as.indexed_member_call.arg_count; i++)
+                resolve_expr(r, node->as.indexed_member_call.args[i]);
+            {
+                int off = symtable_find(r->current, node->as.indexed_member_call.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
+            break;
+
         default:
             resolve_node(r, node);
             break;
@@ -292,6 +310,25 @@ static void resolve_node(Resolver *r, ASTNode *node) {
 
         case NODE_MEMBER_ACCESS:
             node->resolved_offset = -1;
+            break;
+
+        /* Sprint 9.c bugfix — indexed member access/call as statements */
+        case NODE_INDEXED_MEMBER_CALL:
+            resolve_expr(r, node->as.indexed_member_call.index);
+            for (int i = 0; i < node->as.indexed_member_call.arg_count; i++)
+                resolve_expr(r, node->as.indexed_member_call.args[i]);
+            {
+                int off = symtable_find(r->current, node->as.indexed_member_call.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
+            break;
+
+        case NODE_INDEXED_MEMBER_ACCESS:
+            resolve_expr(r, node->as.indexed_member_access.index);
+            {
+                int off = symtable_find(r->current, node->as.indexed_member_access.dyn_name);
+                node->resolved_offset = (off >= 0) ? off : -1;
+            }
             break;
 
         /* Sprint 6 */

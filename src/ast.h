@@ -48,6 +48,9 @@ typedef enum {
     NODE_DYN_LIT,       /* [1, "x", true]  — heterogeneous literal  */
     NODE_DYN_ACCESS,    /* lista[i]        — dyn read               */
     NODE_DYN_ASSIGN,    /* lista[i] = v    — dyn write (auto-grow)  */
+    /* Sprint 9.c bugfix: dyn[i].campo / dyn[i].metodo(args) */
+    NODE_INDEXED_MEMBER_ACCESS, /* petshop[1].olhos                 */
+    NODE_INDEXED_MEMBER_CALL,   /* petshop[1].latir()               */
 } NodeType;
 
 #ifndef FLUXA_AST_NODE_DECLARED
@@ -232,6 +235,22 @@ struct ASTNode {
             ASTNode *index;
             ASTNode *value;
         } dyn_assign;
+
+        /* NODE_INDEXED_MEMBER_ACCESS: dyn[i].campo */
+        struct {
+            char    *dyn_name;
+            ASTNode *index;
+            char    *field;
+        } indexed_member_access;
+
+        /* NODE_INDEXED_MEMBER_CALL: dyn[i].metodo(args) */
+        struct {
+            char     *dyn_name;
+            ASTNode  *index;
+            char     *method;
+            ASTNode **args;
+            int       arg_count;
+        } indexed_member_call;
 
     } as;
 };

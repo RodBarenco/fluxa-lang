@@ -143,11 +143,51 @@ static ASTNode *parse_primary(Parser *p) {
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
-        /* arr[i] in expression */
+        /* arr[i] or dyn[i] in expression — may be followed by .field/.method() */
         if (check(p, TOK_LBRACKET)) {
             parser_advance(p);
             ASTNode *idx = parse_expr(p);
             if (!expect(p, TOK_RBRACKET, "after array index")) return NULL;
+
+            /* dyn[i].campo or dyn[i].metodo(args) */
+            if (check(p, TOK_DOT)) {
+                parser_advance(p);
+                if (!check(p, TOK_IDENT)) {
+                    parse_error(p, "expected member name after '.'");
+                    return NULL;
+                }
+                char member[256];
+                strncpy(member, p->current.value, sizeof(member)-1);
+                member[sizeof(member)-1] = '\0';
+                parser_advance(p);
+
+                if (check(p, TOK_LPAREN)) {
+                    /* dyn[i].metodo(args) */
+                    parser_advance(p);
+                    ASTNode **args = NULL; int argc = 0;
+                    parse_args_into(p, &args, &argc);
+                    if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                        free(args); return NULL;
+                    }
+                    ASTNode *n = P_NODE();
+                    n->type                              = NODE_INDEXED_MEMBER_CALL;
+                    n->as.indexed_member_call.dyn_name   = P_STR(name);
+                    n->as.indexed_member_call.index      = idx;
+                    n->as.indexed_member_call.method     = P_STR(member);
+                    n->as.indexed_member_call.args       = args;
+                    n->as.indexed_member_call.arg_count  = argc;
+                    return n;
+                } else {
+                    /* dyn[i].campo */
+                    ASTNode *n = P_NODE();
+                    n->type                                    = NODE_INDEXED_MEMBER_ACCESS;
+                    n->as.indexed_member_access.dyn_name       = P_STR(name);
+                    n->as.indexed_member_access.index          = idx;
+                    n->as.indexed_member_access.field          = P_STR(member);
+                    return n;
+                }
+            }
+
             ASTNode *n = P_NODE();
             n->type                   = NODE_ARR_ACCESS;
             n->as.arr_access.arr_name = P_STR(name);
@@ -921,11 +961,43 @@ static ASTNode *parse_statement(Parser *p) {
         name[sizeof(name)-1] = '\0';
         parser_advance(p);
 
-        /* arr[i] = val */
+        /* arr[i] = val  or  dyn[i].metodo() as statement */
         if (check(p, TOK_LBRACKET)) {
             parser_advance(p);
             ASTNode *idx = parse_expr(p);
             if (!expect(p, TOK_RBRACKET, "after array index")) return NULL;
+
+            /* dyn[i].metodo(args) as statement */
+            if (check(p, TOK_DOT)) {
+                parser_advance(p);
+                if (!check(p, TOK_IDENT)) {
+                    parse_error(p, "expected member name after '.'");
+                    return NULL;
+                }
+                char member[256];
+                strncpy(member, p->current.value, sizeof(member)-1);
+                member[sizeof(member)-1] = '\0';
+                parser_advance(p);
+                if (!check(p, TOK_LPAREN)) {
+                    parse_error(p, "expected '(' after method name");
+                    return NULL;
+                }
+                parser_advance(p);
+                ASTNode **args = NULL; int argc = 0;
+                parse_args_into(p, &args, &argc);
+                if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                    free(args); return NULL;
+                }
+                ASTNode *n = P_NODE();
+                n->type                              = NODE_INDEXED_MEMBER_CALL;
+                n->as.indexed_member_call.dyn_name   = P_STR(name);
+                n->as.indexed_member_call.index      = idx;
+                n->as.indexed_member_call.method     = P_STR(member);
+                n->as.indexed_member_call.args       = args;
+                n->as.indexed_member_call.arg_count  = argc;
+                return n;
+            }
+
             if (!expect(p, TOK_EQ, "after array access")) return NULL;
             ASTNode *val = parse_expr(p);
             if (!val) return NULL;
