@@ -1,5 +1,6 @@
 /* scope.c — Fluxa Variable Scope implementation
- * Sprint 6: VAL_ARR frees the contiguous data array on scope_free
+ * Sprint 6:   VAL_ARR frees the contiguous data array on scope_free
+ * Sprint 9.c: VAL_DYN frees FluxaDyn + all items recursively
  */
 #define _POSIX_C_SOURCE 200809L
 #include "scope.h"
@@ -7,23 +8,50 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void value_free_data(Value *v) {
-    if (!v) return;
-    if (v->type == VAL_STRING && v->as.string) {
-        free(v->as.string);
-        v->as.string = NULL;
+/* ── Forward declaration ─────────────────────────────────────────────────── */
+void value_free_data(Value *v);
+
+/* Free all heap resources owned by a FluxaDyn. */
+void fluxa_dyn_free(FluxaDyn *d) {
+    if (!d) return;
+    if (d->items) {
+        for (int i = 0; i < d->count; i++)
+            value_free_data(&d->items[i]);
+        free(d->items);
     }
-    if (v->type == VAL_ARR && v->as.arr.data && v->as.arr.owned) {
-        /* only free when this scope owns the data (owned=1) */
-        /* owned=0 means it is a reference — caller retains ownership */
-        for (int i = 0; i < v->as.arr.size; i++) {
-            if (v->as.arr.data[i].type == VAL_STRING && v->as.arr.data[i].as.string)
-                free(v->as.arr.data[i].as.string);
-        }
-        free(v->as.arr.data);
-        v->as.arr.data  = NULL;
-        v->as.arr.size  = 0;
-        v->as.arr.owned = 0;
+    free(d);
+}
+
+void value_free_data(Value *v) {
+    /* Ownership rules:
+     *   VAL_STRING   — free the strdup'd char*
+     *   VAL_ARR      — free items + data when owned=1 (reference: owned=0, skip)
+     *   VAL_DYN      — free FluxaDyn + all items recursively
+     *   VAL_PTR      — opaque C pointer, NOT freed (FFI lib owns it)
+     *   VAL_BLOCK_INST — NOT freed here (block_registry owns all instances)
+     *   primitives   — no heap allocation, nothing to do
+     */
+    if (!v) return;
+    switch (v->type) {
+        case VAL_STRING:
+            if (v->as.string) { free(v->as.string); v->as.string = NULL; }
+            break;
+        case VAL_ARR:
+            if (v->as.arr.data && v->as.arr.owned) {
+                for (int i = 0; i < v->as.arr.size; i++)
+                    value_free_data(&v->as.arr.data[i]);
+                free(v->as.arr.data);
+                v->as.arr.data  = NULL;
+                v->as.arr.size  = 0;
+                v->as.arr.owned = 0;
+            }
+            break;
+        case VAL_DYN:
+            if (v->as.dyn) { fluxa_dyn_free(v->as.dyn); v->as.dyn = NULL; }
+            break;
+        /* VAL_PTR, VAL_BLOCK_INST and primitives: not owned by this scope */
+        default:
+            break;
     }
 }
 

@@ -130,6 +130,14 @@ int    scope_get(Scope *s, const char *name, Value *out);
 int    scope_has(Scope *s, const char *name);
 void   scope_free(Scope *s);
 
+/* ── Heap resource helpers ───────────────────────────────────────────────── */
+/* Free all heap resources owned by a Value (not the struct itself).
+ * No-op for primitives, VAL_PTR, VAL_BLOCK_INST. Recursive for VAL_DYN. */
+void   value_free_data(Value *v);
+
+/* Free a FluxaDyn struct and all its items recursively. */
+void   fluxa_dyn_free(FluxaDyn *d);
+
 /* ── Global table helpers ────────────────────────────────────────────────── */
 /* Direct uthash table operations — used by runtime's global_table field.
  * These bypass the Scope struct and operate on the raw ScopeEntry* table. */
