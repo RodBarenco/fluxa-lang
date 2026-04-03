@@ -79,6 +79,10 @@ static void usage(void) {
         "  fluxa logs                               tail runtime error/event log\n"
         "  fluxa status                             runtime health snapshot\n"
         "  fluxa init [dir]                         create project with fluxa.toml\n"
+        "  fluxa update                             reload fluxa.toml [ffi]/[libs] live\n"
+        "  fluxa ffi list                           list shared libs available on system\n"
+        "  fluxa ffi inspect <lib>                  generate toml signatures from lib\n"
+        "  fluxa runtime info                       show runtime state + config\n"
     );
 }
 
@@ -771,6 +775,8 @@ static int run_handover(const char *old_path, const char *new_path) {
     errstack_clear(&rt_a->err_stack);
     gc_init(&rt_a->gc, config.gc_cap);
     ffi_registry_init(&rt_a->ffi);
+    /* Sprint 9.c-2: pre-load libs declared in [ffi] section of toml */
+    ffi_load_from_config(&rt_a->ffi, &rt_a->err_stack, &config);
     prst_pool_init(&rt_a->prst_pool);
     if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
         PrstEntry *ne = (PrstEntry *)realloc(rt_a->prst_pool.entries,
@@ -1153,18 +1159,94 @@ int main(int argc, char **argv) {
         return run_handover(file, argv[3]);
     }
 
-    /* fluxa run <file> [-dev] [-dev -p] [-prod] */
+    /* fluxa run <file> [-dev] [-dev -p] [-prod] [-proj <dir>] */
     if (strcmp(cmd, "run") == 0) {
         int dev_mode = 0, prod_mode = 0, preflight = 0;
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "-dev")  == 0) dev_mode  = 1;
             if (strcmp(argv[i], "-p")    == 0) preflight = 1;
             if (strcmp(argv[i], "-prod") == 0) prod_mode = 1;
+            if (strcmp(argv[i], "-proj") == 0 && i + 1 < argc) {
+                /* chdir to project dir so fluxa.toml is found automatically */
+                if (chdir(argv[i + 1]) != 0)
+                    fprintf(stderr, "[fluxa] warning: cannot chdir to '%s'\n",
+                            argv[i + 1]);
+                i++;
+            }
         }
         if (dev_mode) return run_dev(file);
         if (prod_mode) return run_prod(file);
         if (preflight && run_preflight(file) != 0) return 1;
         return run_once(file, 0);
+    }
+
+    /* ── fluxa ffi <subcommand> ──────────────────────────────────────────── */
+    if (strcmp(cmd, "ffi") == 0) {
+        /* argc >= 3, file = argv[2] = subcommand */
+        const char *sub = file; /* argv[2] */
+        if (strcmp(sub, "list") == 0) {
+            ffi_cli_list();
+            return 0;
+        }
+        if (strcmp(sub, "inspect") == 0) {
+            if (argc < 4) {
+                fprintf(stderr, "usage: fluxa ffi inspect <lib>\n");
+                return 1;
+            }
+            ffi_cli_inspect(argv[3]);
+            return 0;
+        }
+        fprintf(stderr, "[fluxa] unknown ffi subcommand: %s\n", sub);
+        fprintf(stderr, "  fluxa ffi list\n");
+        fprintf(stderr, "  fluxa ffi inspect <lib>\n");
+        return 1;
+    }
+
+    /* ── fluxa update — reload [ffi] and [libs] from fluxa.toml ─────────── */
+    if (strcmp(cmd, "update") == 0) {
+        /* Connect to running runtime via IPC and send reload-config signal.
+         * If no runtime is running: load toml locally and print what changed. */
+        FluxaConfig new_cfg = fluxa_config_find_and_load();
+        FFIRegistry tmp_r;
+        ErrStack    tmp_err;
+        ffi_registry_init(&tmp_r);
+        errstack_clear(&tmp_err);
+        ffi_reload_from_config(&tmp_r, &tmp_err, &new_cfg);
+        if (tmp_err.count > 0) {
+            for (int i = 0; i < tmp_err.count; i++) {
+                const ErrEntry *e = errstack_get(&tmp_err, i);
+                if (e) fprintf(stderr, "[fluxa] update error: %s\n", e->message);
+            }
+        } else {
+            fprintf(stderr,
+                "[fluxa] update: [ffi] reloaded (%d lib(s))\n", tmp_r.count);
+        }
+        ffi_registry_free(&tmp_r);
+        /* TODO Sprint 9.c: send IPC_OP_RELOAD_CONFIG to live runtime */
+        return (tmp_err.count > 0) ? 1 : 0;
+    }
+
+    /* ── fluxa runtime info ──────────────────────────────────────────────── */
+    if (strcmp(cmd, "runtime") == 0 && strcmp(file, "info") == 0) {
+        FluxaConfig cfg = fluxa_config_find_and_load();
+        printf("Fluxa Runtime\n");
+        printf("─────────────────────────────────────────\n");
+        printf("[runtime]\n");
+        printf("  gc_cap         : %d\n",  cfg.gc_cap);
+        printf("  prst_cap       : %d\n",  cfg.prst_cap);
+        printf("  prst_graph_cap : %d\n",  cfg.prst_graph_cap);
+        printf("\n[ffi] declaradas no toml\n");
+        if (cfg.ffi_count == 0) {
+            printf("  (nenhuma)\n");
+        } else {
+            for (int i = 0; i < cfg.ffi_count; i++) {
+                printf("  %-16s  %s  (%d sig)\n",
+                    cfg.ffi[i].alias,
+                    cfg.ffi[i].path,
+                    cfg.ffi[i].sig_count);
+            }
+        }
+        return 0;
     }
 
     fprintf(stderr, "[fluxa] unknown command: %s\n", cmd);

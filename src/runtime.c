@@ -117,7 +117,11 @@ static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
     if (node && node->resolved_offset >= 0 &&
         node->resolved_offset < rt->stack_size) {
         Value v = rt->stack[node->resolved_offset];
-        return v;
+        /* Only trust the stack slot if it contains a real value.
+         * Block instances and other scope-stored vars have a resolved_offset
+         * assigned by the resolver but are never written to the stack —
+         * their slot stays VAL_NIL. Fall through to scope lookup in that case. */
+        if (v.type != VAL_NIL) return v;
     }
     if (rt->current_instance) {
         Value v;
@@ -917,18 +921,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_ARR_ASSIGN: {
             const char *arr_name = node->as.arr_assign.arr_name;
 
-            /* Sprint 9.c: dispatch to dyn if variable is VAL_DYN */
+            /* Sprint 9.c: dispatch to dyn if variable is VAL_DYN.
+             * Use rt_get so stack-resident vars (resolved_offset path) are found. */
             {
-                Value maybe_dyn; maybe_dyn.type = VAL_NIL;
-                if (node->resolved_offset >= 0 && node->resolved_offset < rt->stack_size)
-                    maybe_dyn = rt->stack[node->resolved_offset];
-                if (maybe_dyn.type != VAL_DYN) {
-                    ScopeEntry *de = NULL;
-                    if (rt->current_instance)
-                        HASH_FIND_STR(rt->current_instance->scope.table, arr_name, de);
-                    if (!de) HASH_FIND_STR(rt->scope.table, arr_name, de);
-                    if (de) maybe_dyn = de->value;
-                }
+                Value maybe_dyn = rt_get(rt, node, arr_name);
+                /* rt_get sets had_error if var not found — save/restore cleanly */
+                if (rt->had_error) { rt->had_error = 0; maybe_dyn.type = VAL_NIL; }
                 if (maybe_dyn.type == VAL_DYN) {
                     FluxaDyn *d = maybe_dyn.as.dyn;
                     Value idx_v = eval(rt, node->as.arr_assign.index);
@@ -936,8 +934,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (idx_v.type != VAL_INT) { rt_error(rt, "dyn index must be int"); return val_nil(); }
                     long idx = idx_v.as.integer;
                     if (idx < 0) { rt_error(rt, "dyn index cannot be negative"); return val_nil(); }
+                    /* Reset had_error before evaluating value so eval doesn't short-circuit */
                     Value v = eval(rt, node->as.arr_assign.value);
-                    if (rt->had_error) return val_nil();
                     /* Auto-grow */
                     if (idx >= d->count) {
                         while (idx >= d->cap) {
@@ -949,8 +947,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         for (long fi = d->count; fi < idx; fi++) d->items[fi] = val_nil();
                         d->count = (int)idx + 1;
                     }
-                    if (d->items[idx].type == VAL_STRING && d->items[idx].as.string)
-                        free(d->items[idx].as.string);
+                    /* Free old value's heap resources before overwriting */
+                    value_free_data(&d->items[idx]);
                     if (v.type == VAL_STRING && v.as.string) v.as.string = strdup(v.as.string);
                     d->items[idx] = v;
                     return val_nil();
@@ -1108,13 +1106,123 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 d->count = (int)idx + 1;
             }
 
-            /* Free old string if needed */
-            if (d->items[idx].type == VAL_STRING && d->items[idx].as.string)
-                free(d->items[idx].as.string);
+            /* Free old value's heap resources before overwriting */
+            value_free_data(&d->items[idx]);
             if (v.type == VAL_STRING && v.as.string)
                 v.as.string = strdup(v.as.string);
             d->items[idx] = v;
             return val_nil();
+        }
+
+        /* ── Sprint 9.c bugfix: dyn[i].campo / dyn[i].metodo() ─────────── */
+        case NODE_INDEXED_MEMBER_ACCESS: {
+            const char *dyn_name = node->as.indexed_member_access.dyn_name;
+            const char *field    = node->as.indexed_member_access.field;
+
+            /* Resolve the dyn value — use rt_get so stack-stored vars work */
+            Value dv = rt_get(rt, node, dyn_name);
+            if (rt->had_error) return val_nil();
+            if (dv.type != VAL_DYN) {
+                char buf[280];
+                snprintf(buf, sizeof(buf), "'%s' is not a dyn", dyn_name);
+                rt_error(rt, buf); return val_nil();
+            }
+
+            /* Evaluate index */
+            Value idx_v = eval(rt, node->as.indexed_member_access.index);
+            if (rt->had_error) return val_nil();
+            if (idx_v.type != VAL_INT) {
+                rt_error(rt, "dyn index must be int"); return val_nil();
+            }
+            long idx = idx_v.as.integer;
+            FluxaDyn *d = dv.as.dyn;
+            if (idx < 0 || idx >= d->count) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "dyn index out of bounds: %s[%ld] (count %d)",
+                    dyn_name, idx, d->count);
+                rt_error(rt, buf); return val_nil();
+            }
+
+            /* Element must be a Block instance */
+            Value elem = d->items[idx];
+            if (elem.type != VAL_BLOCK_INST || !elem.as.block_inst) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "%s[%ld] is not a Block instance", dyn_name, idx);
+                rt_error(rt, buf); return val_nil();
+            }
+            BlockInstance *inst = elem.as.block_inst;
+
+            /* Read the field */
+            Value field_val;
+            if (!scope_get(&inst->scope, field, &field_val)) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "%s[%ld] has no member '%s'", dyn_name, idx, field);
+                rt_error(rt, buf); return val_nil();
+            }
+            return field_val;
+        }
+
+        case NODE_INDEXED_MEMBER_CALL: {
+            const char *dyn_name = node->as.indexed_member_call.dyn_name;
+            const char *method   = node->as.indexed_member_call.method;
+
+            /* Resolve the dyn value — use rt_get so stack-stored vars work */
+            Value dv = rt_get(rt, node, dyn_name);
+            if (rt->had_error) return val_nil();
+            if (dv.type != VAL_DYN) {
+                char buf[280];
+                snprintf(buf, sizeof(buf), "'%s' is not a dyn", dyn_name);
+                rt_error(rt, buf); return val_nil();
+            }
+
+            /* Evaluate index */
+            Value idx_v = eval(rt, node->as.indexed_member_call.index);
+            if (rt->had_error) return val_nil();
+            if (idx_v.type != VAL_INT) {
+                rt_error(rt, "dyn index must be int"); return val_nil();
+            }
+            long idx = idx_v.as.integer;
+            FluxaDyn *d = dv.as.dyn;
+            if (idx < 0 || idx >= d->count) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "dyn index out of bounds: %s[%ld] (count %d)",
+                    dyn_name, idx, d->count);
+                rt_error(rt, buf); return val_nil();
+            }
+
+            /* Element must be a Block instance */
+            Value elem = d->items[idx];
+            if (elem.type != VAL_BLOCK_INST || !elem.as.block_inst) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "%s[%ld] is not a Block instance", dyn_name, idx);
+                rt_error(rt, buf); return val_nil();
+            }
+            BlockInstance *inst = elem.as.block_inst;
+
+            /* Look up the method in the instance scope */
+            Value fn_val;
+            if (!scope_get(&inst->scope, method, &fn_val) ||
+                fn_val.type != VAL_FUNC) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "%s[%ld] has no method '%s'", dyn_name, idx, method);
+                rt_error(rt, buf); return val_nil();
+            }
+
+            /* Call the method — call_function evaluates args internally */
+            int argc = node->as.indexed_member_call.arg_count;
+            BlockInstance *prev = rt->current_instance;
+            rt->current_instance = inst;
+            Value result = call_function(rt, fn_val.as.func,
+                                         node->as.indexed_member_call.args,
+                                         argc, inst);
+            rt->current_instance = prev;
+            return result;
         }
 
         case NODE_FOR: {
@@ -1188,8 +1296,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_IMPORT_C: {
             const char *lib_name = node->as.import_c.lib_name;
             const char *alias    = node->as.import_c.alias;
+            /* Skip if already loaded via [ffi] toml section */
+            if (ffi_find_lib(&rt->ffi, alias)) return val_nil();
             char path[256];
-            ffi_resolve_path(lib_name, path, sizeof(path));
+            ffi_resolve_path("auto", lib_name, path, sizeof(path));
             /* load inside danger context if available, else load directly */
             ffi_load_lib(&rt->ffi, &rt->err_stack, alias, path);
             /* if load failed outside danger, it's a hard error */
@@ -1241,7 +1351,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
             const char *ctx = rt->current_instance
                            ? rt->current_instance->name : "<global>";
+            /* Sprint 9.c-3: look up signature for pointer marshalling */
+            const FfiSig *sig = ffi_find_sig(lib, sym_name);
             Value result = fluxa_ffi_call(lib, sym_name, ret_vt,
+                                          sig,
                                           args, arg_count,
                                           &rt->err_stack, ctx);
             free(args);
@@ -1350,7 +1463,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     /* default return type: float (covers libm math fns) */
                     ValType ret_vt = VAL_FLOAT;
                     const char *ctx = owner;
+                    /* Sprint 9.c-3: look up signature for pointer marshalling */
+                    const FfiSig *msig = ffi_find_sig(lib, method);
                     Value result = fluxa_ffi_call(lib, method, ret_vt,
+                                                  msig,
                                                   args, argc,
                                                   &rt->err_stack, ctx);
                     free(args);
@@ -1430,6 +1546,8 @@ int runtime_exec(ASTNode *program) {
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
+    /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
+    ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
 
     if (mode == FLUXA_MODE_PROJECT) {
         prst_pool_init(&rt.prst_pool);   /* pool is dynamic; prst_cap used below */
@@ -1519,6 +1637,8 @@ int runtime_exec_explain(ASTNode *program) {
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
+    /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
+    ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
     prst_pool_init(&rt.prst_pool);
     if (config.prst_cap != PRST_POOL_INIT_CAP && config.prst_cap > 0) {
         PrstEntry *ne = (PrstEntry *)realloc(rt.prst_pool.entries,
@@ -1666,6 +1786,8 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
+    /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
+    ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
     prst_graph_init_cap(&rt.prst_graph, config.prst_graph_cap);
 
     /* Transfer pool from previous run — prst values survive the reload */

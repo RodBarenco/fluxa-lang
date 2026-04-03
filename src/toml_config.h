@@ -1,15 +1,13 @@
-/* toml_config.h — Minimal fluxa.toml configuration loader (Sprint 7 / Sprint 8)
+/* toml_config.h — Minimal fluxa.toml configuration loader
  *
- * Supported keys (fluxa.toml):
- *   [runtime]
- *   gc_cap        = 1024   # max objetos rastreados pelo GC (default GC_TABLE_CAP)
- *   prst_cap      = 64     # cap inicial do PrstPool (default PRST_POOL_INIT_CAP)
- *   prst_graph_cap= 256    # cap inicial do PrstGraph (default PRST_GRAPH_CAP_DEFAULT)
+ * Supported sections:
+ *   [runtime]        gc_cap, prst_cap, prst_graph_cap
+ *   [ffi]            libname = "auto" | "/path/to/lib.so"
+ *   [ffi.<lib>.signatures]
+ *                    fnname = "(type, type*, ...) -> type"
  *
- * All caps are dynamic — grow via realloc up to the compiled maximum.
- * The toml value is the initial allocation size, not an absolute ceiling.
- *
- * Exception: gc_cap IS an absolute ceiling (GCTable uses a static array).
+ * Sprint 9.c-2: added [ffi] section parsing.
+ * Sprint 9.c-3: added [ffi.<lib>.signatures] parsing.
  */
 #ifndef FLUXA_TOML_CONFIG_H
 #define FLUXA_TOML_CONFIG_H
@@ -20,9 +18,6 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-/* Defaults mirrored here to avoid double-inclusion of headers
- * com static inline (prst_pool.h / prst_graph.h).
- * The real values are defined in those headers and must stay in sync. */
 #ifndef PRST_POOL_INIT_CAP
 #  define PRST_POOL_INIT_CAP     64
 #endif
@@ -33,14 +28,45 @@
 #  define PRST_GRAPH_CAP_MAX     65536
 #endif
 
+/* ── FFI entry from toml ──────────────────────────────────────────────────── */
+#define TOML_FFI_MAX       32   /* max libs in [ffi]                         */
+#define TOML_SIG_MAX       64   /* max signatures per lib                    */
+#define TOML_SIG_PARAM_MAX 16   /* max params per signature                  */
+
+/* Single param descriptor — carries C type string, e.g. "int*", "char*" */
 typedef struct {
-    int gc_cap;          /* absolute ceiling for GC (static array)       */
-    int prst_cap;        /* initial cap for PrstPool (dynamic)         */
-    int prst_graph_cap;  /* initial cap for PrstGraph (dynamic)        */
+    char c_type[32];   /* "int", "int*", "double*", "char*", "void*", etc. */
+} FfiParamDesc;
+
+/* One function signature from [ffi.<lib>.signatures] */
+typedef struct {
+    char         fn_name[128];
+    char         ret_type[32];
+    FfiParamDesc params[TOML_SIG_PARAM_MAX];
+    int          param_count;
+} FfiSigEntry;
+
+/* One lib declared in [ffi] */
+typedef struct {
+    char        alias[128];          /* key in toml, e.g. "libm"          */
+    char        path[256];           /* "auto" or explicit path            */
+    FfiSigEntry sigs[TOML_SIG_MAX];
+    int         sig_count;
+} TomlFfiEntry;
+
+/* ── Main config ──────────────────────────────────────────────────────────── */
+typedef struct {
+    int          gc_cap;
+    int          prst_cap;
+    int          prst_graph_cap;
+    TomlFfiEntry ffi[TOML_FFI_MAX];
+    int          ffi_count;
 } FluxaConfig;
 
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
 static inline FluxaConfig fluxa_config_defaults(void) {
     FluxaConfig c;
+    memset(&c, 0, sizeof(c));
     c.gc_cap         = GC_TABLE_CAP;
     c.prst_cap       = PRST_POOL_INIT_CAP;
     c.prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
@@ -55,6 +81,70 @@ static inline char *cfg_trim(char *s) {
     return s;
 }
 
+/* Strip surrounding quotes from a toml string value: "auto" → auto */
+static inline void cfg_unquote(const char *src, char *dst, int dst_sz) {
+    int len = (int)strlen(src);
+    if (len >= 2 && src[0] == '"' && src[len-1] == '"') {
+        int n = len - 2;
+        if (n >= dst_sz) n = dst_sz - 1;
+        memcpy(dst, src + 1, (size_t)n);
+        dst[n] = '\0';
+    } else {
+        snprintf(dst, (size_t)dst_sz, "%s", src);
+    }
+}
+
+/* Parse signature string "(int, int*, char*) -> float"
+ * into FfiSigEntry params + ret_type.                                       */
+static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
+    /* ret type: everything after " -> " */
+    const char *arrow = strstr(sig_str, "->");
+    if (arrow) {
+        char ret[32];
+        snprintf(ret, sizeof(ret), "%s", cfg_trim((char*)(arrow + 2)));
+        snprintf(out->ret_type, sizeof(out->ret_type), "%s", ret);
+    } else {
+        snprintf(out->ret_type, sizeof(out->ret_type), "nil");
+    }
+
+    /* params: between ( and ) */
+    const char *open  = strchr(sig_str, '(');
+    const char *close = arrow ? arrow : strchr(sig_str, ')');
+    if (!open || !close || close <= open) return;
+
+    char inner[512];
+    int inner_len = (int)(close - open - 1);
+    if (inner_len <= 0 || inner_len >= (int)sizeof(inner)) return;
+    memcpy(inner, open + 1, (size_t)inner_len);
+    inner[inner_len] = '\0';
+
+    /* tokenize by comma */
+    char *saveptr = NULL;
+    char *tok = strtok_r(inner, ",", &saveptr);
+    while (tok && out->param_count < TOML_SIG_PARAM_MAX) {
+        char *t = cfg_trim(tok);
+        snprintf(out->params[out->param_count].c_type,
+                 sizeof(out->params[out->param_count].c_type), "%s", t);
+        out->param_count++;
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+}
+
+/* Find or create a TomlFfiEntry by alias */
+static inline TomlFfiEntry *cfg_ffi_find_or_create(
+        FluxaConfig *cfg, const char *alias) {
+    for (int i = 0; i < cfg->ffi_count; i++)
+        if (strcmp(cfg->ffi[i].alias, alias) == 0)
+            return &cfg->ffi[i];
+    if (cfg->ffi_count >= TOML_FFI_MAX) return NULL;
+    TomlFfiEntry *e = &cfg->ffi[cfg->ffi_count++];
+    memset(e, 0, sizeof(*e));
+    snprintf(e->alias, sizeof(e->alias), "%s", alias);
+    snprintf(e->path,  sizeof(e->path),  "auto");
+    return e;
+}
+
+/* ── Main parser ──────────────────────────────────────────────────────────── */
 static inline FluxaConfig fluxa_config_load(const char *path) {
     FluxaConfig cfg = fluxa_config_defaults();
     if (!path) return cfg;
@@ -63,60 +153,96 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
     if (!f) return cfg;
 
     char line[512];
-    int  in_runtime = 0;
+    /* section state */
+    int  in_runtime  = 0;
+    int  in_ffi_root = 0;   /* [ffi] */
+    char sig_lib[128] = ""; /* "libm" when in [ffi.libm.signatures] */
 
     while (fgets(line, sizeof(line), f)) {
         char *l = cfg_trim(line);
         if (!*l || *l == '#') continue;
 
+        /* ── Section header ── */
         if (*l == '[') {
-            in_runtime = (strncmp(l, "[runtime]", 9) == 0);
+            in_runtime  = 0;
+            in_ffi_root = 0;
+            sig_lib[0]  = '\0';
+
+            if (strcmp(l, "[runtime]") == 0) {
+                in_runtime = 1;
+            } else if (strcmp(l, "[ffi]") == 0) {
+                in_ffi_root = 1;
+            } else if (strncmp(l, "[ffi.", 5) == 0) {
+                /* [ffi.<lib>.signatures] */
+                char inner[256];
+                int inner_len = (int)strlen(l) - 2; /* strip [ ] */
+                if (inner_len > 0 && inner_len < (int)sizeof(inner)) {
+                    memcpy(inner, l + 1, (size_t)inner_len);
+                    inner[inner_len] = '\0';
+                    /* inner = "ffi.libm.signatures" */
+                    char *first_dot = strchr(inner, '.');
+                    if (first_dot) {
+                        char *lib_part  = first_dot + 1; /* "libm.signatures" */
+                        char *second_dot = strchr(lib_part, '.');
+                        if (second_dot && strcmp(second_dot, ".signatures") == 0) {
+                            *second_dot = '\0';
+                            snprintf(sig_lib, sizeof(sig_lib), "%s", lib_part);
+                            /* ensure entry exists */
+                            cfg_ffi_find_or_create(&cfg, sig_lib);
+                        }
+                    }
+                }
+            }
             continue;
         }
-        if (!in_runtime) continue;
 
         char *eq = strchr(l, '=');
         if (!eq) continue;
         *eq = '\0';
         char *key = cfg_trim(l);
         char *val = cfg_trim(eq + 1);
+        /* strip inline comment */
         char *hash = strchr(val, '#');
         if (hash) { *hash = '\0'; cfg_trim(val); }
 
-        int v = atoi(val);
+        /* ── [runtime] keys ── */
+        if (in_runtime) {
+            int v = atoi(val);
+            if (strcmp(key, "gc_cap") == 0) {
+                if (v > 0 && v <= GC_TABLE_CAP) cfg.gc_cap = v;
+                else if (v > GC_TABLE_CAP)
+                    fprintf(stderr, "[fluxa] toml: gc_cap %d > max %d\n",
+                            v, GC_TABLE_CAP);
+            } else if (strcmp(key, "prst_cap") == 0) {
+                if (v > 0) cfg.prst_cap = v;
+            } else if (strcmp(key, "prst_graph_cap") == 0) {
+                if (v > 0 && v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
+            }
+            continue;
+        }
 
-        if (strcmp(key, "gc_cap") == 0) {
-            /* gc_cap: absolute ceiling — cannot exceed compiled maximum */
-            if (v > 0 && v <= GC_TABLE_CAP)
-                cfg.gc_cap = v;
-            else if (v > GC_TABLE_CAP)
-                fprintf(stderr,
-                    "[fluxa] fluxa.toml: gc_cap %d exceeds compiled maximum %d"
-                    " — usando %d\n", v, GC_TABLE_CAP, GC_TABLE_CAP);
+        /* ── [ffi] root: alias = "auto" | "path" ── */
+        if (in_ffi_root) {
+            char resolved[256];
+            cfg_unquote(val, resolved, sizeof(resolved));
+            TomlFfiEntry *e = cfg_ffi_find_or_create(&cfg, key);
+            if (e) snprintf(e->path, sizeof(e->path), "%s", resolved);
+            continue;
         }
-        else if (strcmp(key, "prst_cap") == 0) {
-            /* prst_cap: initial cap for PrstPool; dynamic, no hard ceiling */
-            if (v > 0)
-                cfg.prst_cap = v;
-            else
-                fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_cap invalid (%d) — using %d\n",
-                    v, PRST_POOL_INIT_CAP);
+
+        /* ── [ffi.<lib>.signatures]: fnname = "(types) -> type" ── */
+        if (sig_lib[0]) {
+            TomlFfiEntry *e = cfg_ffi_find_or_create(&cfg, sig_lib);
+            if (e && e->sig_count < TOML_SIG_MAX) {
+                FfiSigEntry *sig = &e->sigs[e->sig_count++];
+                memset(sig, 0, sizeof(*sig));
+                snprintf(sig->fn_name, sizeof(sig->fn_name), "%s", key);
+                char sig_str[256];
+                cfg_unquote(val, sig_str, sizeof(sig_str));
+                cfg_parse_sig(sig_str, sig);
+            }
+            continue;
         }
-        else if (strcmp(key, "prst_graph_cap") == 0) {
-            /* prst_graph_cap: initial cap for PrstGraph; dynamic */
-            if (v > 0 && v <= PRST_GRAPH_CAP_MAX)
-                cfg.prst_graph_cap = v;
-            else if (v > PRST_GRAPH_CAP_MAX)
-                fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_graph_cap %d exceeds maximum %d"
-                    " — usando %d\n", v, PRST_GRAPH_CAP_MAX, PRST_GRAPH_CAP_MAX);
-            else
-                fprintf(stderr,
-                    "[fluxa] fluxa.toml: prst_graph_cap invalid (%d)"
-                    " — usando %d\n", v, PRST_GRAPH_CAP_DEFAULT);
-        }
-        /* Future keys: thread_cap, etc. */
     }
 
     fclose(f);
