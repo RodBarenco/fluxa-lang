@@ -883,8 +883,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (!truthy) break;
                     eval(rt, node->as.while_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
-                    /* GC safe point at while back-edge */
-                    gc_sweep(&rt->gc, gc_dyn_free_fn);
+                    /* GC safe point at while back-edge — only sweep when dyn objects exist */
+                    if (rt->gc.count > 0) gc_sweep(&rt->gc, gc_dyn_free_fn);
                     /* IPC safe point (Sprint 9.b) */
                     if (g_ipc_view) ipc_rtview_update(g_ipc_view, rt);
                     ipc_apply_pending_set(rt);

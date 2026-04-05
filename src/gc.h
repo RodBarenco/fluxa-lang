@@ -157,8 +157,9 @@ static inline void gc_unregister(GCTable *g, void *ptr) {
 typedef void (*GCFreeFn)(void *ptr);
 
 static inline int gc_sweep(GCTable *g, GCFreeFn free_fn) {
+    /* Fast path: nothing tracked — zero overhead */
+    if (!g->slots || g->count == 0) return 0;
     int freed = 0;
-    if (!g->slots) return 0;
     for (int i = 0; i < g->cap; i++) {
         GCEntry *e = &g->slots[i];
         if (e->state == GC_SLOT_USED && e->pin_count == 0 && e->ptr) {
@@ -167,6 +168,7 @@ static inline int gc_sweep(GCTable *g, GCFreeFn free_fn) {
             g->count--;
             e->state = GC_SLOT_DEAD;
             freed++;
+            if (g->count == 0) break; /* no more tracked objects */
         }
     }
     return freed;
