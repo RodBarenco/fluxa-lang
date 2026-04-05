@@ -130,6 +130,11 @@ int    scope_get(Scope *s, const char *name, Value *out);
 int    scope_has(Scope *s, const char *name);
 void   scope_free(Scope *s);
 
+/* ── Block clone free callback ──────────────────────────────────────────── */
+/* Set by the runtime at init to allow value_free_data to free dyn-owned
+ * Block clones without creating a circular dependency (scope.h ← block.h). */
+void scope_set_block_free_cb(void (*cb)(void *inst));
+
 /* ── Heap resource helpers ───────────────────────────────────────────────── */
 /* Free all heap resources owned by a Value (not the struct itself).
  * No-op for primitives, VAL_PTR, VAL_BLOCK_INST. Recursive for VAL_DYN. */

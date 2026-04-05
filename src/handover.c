@@ -72,7 +72,7 @@ void handover_ctx_abort(HandoverCtx *ctx) {
         scope_free(&ctx->rt_b->scope);
         scope_table_free(&ctx->rt_b->global_table);
         /* block_registry_free() is global — only call if B was executed */
-        gc_collect_all(&ctx->rt_b->gc);
+        gc_collect_all(&ctx->rt_b->gc, gc_dyn_free_fn);
         if (ctx->rt_b->prst_pool.entries) prst_pool_free(&ctx->rt_b->prst_pool);
         prst_graph_free(&ctx->rt_b->prst_graph);
         ffi_registry_free(&ctx->rt_b->ffi);
@@ -268,7 +268,7 @@ HandoverResult handover_step3_dry_run(HandoverCtx *ctx) {
     scope_free(&rt_b->scope);
     scope_table_free(&rt_b->global_table);
     block_registry_free();
-    gc_collect_all(&rt_b->gc);
+    gc_collect_all(&rt_b->gc, gc_dyn_free_fn);
     ffi_registry_free(&rt_b->ffi);
     /* prst_pool and prst_graph SURVIVE — used by step 4 */
 

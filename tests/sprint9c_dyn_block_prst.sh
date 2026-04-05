@@ -64,9 +64,9 @@ Block Tag {
 
 Block t typeof Tag
 
-dyn bolsa = [42, "texto", true, t]
-
 t.set_label("ativo")
+
+dyn bolsa = [42, "texto", true, t]
 
 print(bolsa[0])
 print(bolsa[1])

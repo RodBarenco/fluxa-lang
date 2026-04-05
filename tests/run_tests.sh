@@ -431,6 +431,34 @@ else
 $(echo "$dyn_idx_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── sprint10/gc (GC: pin/unpin/sweep, dyn rules, free) ──────────────────────
+printf "  %-56s" "sprint10/gc (GC rules, free, sweep, dyn types)"
+gc_out=$(bash "$SCRIPT_DIR/sprint10_gc.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$gc_out" | grep -q "gc: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint10/gc:
+$(echo "$gc_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
+# ── sprint10/semantics ──────────────────────────────────────────────────────
+printf "  %-56s" "sprint10/semantics (dyn rules, arr type, Block isolation)"
+sem_out=$(bash "$SCRIPT_DIR/sprint10_semantics.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$sem_out" | grep -q "semantics: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint10/semantics:
+$(echo "$sem_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then
