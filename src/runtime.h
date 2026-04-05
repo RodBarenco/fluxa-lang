@@ -105,8 +105,8 @@ void runtime_set_ipc_view(void *view);
 
 /* Sprint 8: Atomic Handover
  * Execute a program in a Runtime already initialized by the caller.
- * Usado pelo Dry Run (dry_run=1) e pelo runtime_apply de B.
- * O Runtime deve ter sido zero-init pelo caller; esta fn preenche
+ * Used by the Dry Run (dry_run=1) and by runtime_apply of B.
+ * The Runtime must have been zero-initialized by the caller; this fn fills
  * scope, stack and executes program_node. Does not allocate or free rt. */
 int runtime_exec_with_rt(Runtime *rt, ASTNode *program);
 

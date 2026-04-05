@@ -3,7 +3,7 @@
 # tests/integration/scenario2/run.sh — Cenário 2: Drone / Edge Crítico
 # =============================================================================
 #
-# Valida resiliência a falhas durante o Handover Atômico:
+# Validates resilience to failures during Atomic Handover:
 #   Caso 1 — Interrupção no meio do handover (kill durante processo)
 #   Caso 2 — Corrupção de memória (alteração manual no snapshot)
 #   Caso 3 — Reset tipo watchdog (interrupção durante execução crítica)
@@ -94,7 +94,7 @@ fi
 wait $HO_PID 2>/dev/null || true
 
 # Após o kill, runtime A deve ainda estar operacional
-# Valida executando v1 novamente — deve funcionar sem crash
+# Validate by running v1 again — must work without crash
 post_kill_out=$("$FLUXA" run "$FIXTURES/v1/main.flx" 2>/dev/null || true)
 vlog "output pós-kill: $post_kill_out"
 
@@ -109,7 +109,7 @@ else
     # O critério é: não crashou e não misturou estado
 fi
 
-# Valida que o test-handover interno também passa após o kill (protocolo íntegro)
+# Validate that the internal test-handover also passes after kill (protocol intact)
 internal_after_kill=$("$FLUXA" test-handover 2>&1 || true)
 if echo "$internal_after_kill" | grep -q "ALL PASS"; then
     vlog "protocolo interno íntegro após kill"
@@ -136,7 +136,7 @@ echo "  ── Caso 2: Corrupção de memória (checksum poisoning) ────
 c2_ok=1
 
 # Cria um snapshot binário corrompido que imita a estrutura do HandoverSnapshotHeader
-# mas com magic/checksum inválidos — deve ser rejeitado pelo deserializer.
+# but with invalid magic/checksum — must be rejected by the deserializer.
 #
 # Layout real: [uint32 magic][uint32 version][uint32 pool_checksum][uint32 graph_checksum]
 #              [uint32 pool_size][uint32 graph_size][int32 pool_count][int32 graph_count]
@@ -148,7 +148,7 @@ CORRUPT_SNAPSHOT="$WORK_DIR/corrupt_snapshot.bin"
 python3 -c "
 import struct, sys
 # Header com magic errado
-magic         = 0xDEADBEEF   # deve ser 0xF10A8888
+magic         = 0xDEADBEEF   # must be 0xF10A8888
 version       = 1000
 pool_checksum = 0xCAFEBABE   # checksum inválido
 graph_checksum= 0xBADC0DE0

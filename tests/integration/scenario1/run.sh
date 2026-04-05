@@ -3,8 +3,8 @@
 # tests/integration/scenario1/run.sh — Cenário 1: IoT Simples
 # =============================================================================
 #
-# Valida o Atomic Handover em ambiente controlado (container/local):
-#   Caso 1 — Handover normal (prst preservados + transformação aplicada)
+# Validates Atomic Handover in a controlled environment (container/local):
+#   Case 1 — Normal handover (prst values preserved + transform applied)
 #   Caso 2 — Remoção de variável (GC correto, sem ponteiros inválidos)
 #   Caso 3 — Restart após handover (persistência no volume NVS)
 #
@@ -118,7 +118,7 @@ echo "  ── Caso 1: Handover normal ─────────────�
 v1_out=$("$FLUXA" run "$FIXTURES/v1/main.flx" 2>/dev/null || true)
 vlog "v1 output: $v1_out"
 
-# Valida que v1 produziu os valores iniciais corretos
+# Validate that v1 produced the correct initial values
 c1_ok=1
 
 x_val=$(extract_val "$v1_out" "v1:x")
@@ -134,7 +134,7 @@ if ! assert_eq "ciclo incrementado" "1" "$ciclo_val"; then c1_ok=0; fi
 ho_out=$("$FLUXA" handover "$FIXTURES/v1/main.flx" "$FIXTURES/v2/main.flx" 2>&1 || true)
 vlog "handover output: $ho_out"
 
-# Valida que o handover foi commitado
+# Validate that the handover was committed
 if echo "$ho_out" | grep -q "COMMITTED\|handover COMMITTED\|step 5: cleanup OK"; then
     vlog "handover concluído com sucesso"
 else
@@ -142,7 +142,7 @@ else
     vlog "handover não chegou a COMMITTED"
 fi
 
-# Valida que nenhum passo reportou FAILED
+# Validate that no step reported FAILED
 if echo "$ho_out" | grep -qi "FAILED\|ERR_\|failed"; then
     # Filtra linhas de log normais que podem conter "err" em nomes de variáveis
     err_lines=$(echo "$ho_out" | grep -i "ERR_\|FAILED" | grep -v "err_stack\|errstack\|err\.h" || true)
@@ -256,7 +256,7 @@ NVS_SNAPSHOT="$NVS_DIR/prst_snapshot.bin"
 explain_out=$("$FLUXA" explain "$FIXTURES/v2/main.flx" 2>/dev/null || true)
 vlog "explain output: $explain_out"
 
-# Valida que explain lista as variáveis prst de v2
+# Validate that explain lists the prst variables of v2
 if echo "$explain_out" | grep -q "x\|speed\|ciclo"; then
     vlog "explain: variáveis prst identificadas"
     # Simula "arquivo de checkpoint" no volume NVS
@@ -267,7 +267,7 @@ else
     # Não é falha — explain requer modo project
 fi
 
-# Valida que o arquivo de snapshot foi criado (simula persistência)
+# Validate that the snapshot file was created (simulates persistence)
 if [[ -f "$NVS_SNAPSHOT" ]] || [[ $c3_ok -eq 1 ]]; then
     vlog "checkpoint de estado criado com sucesso"
 else
@@ -275,7 +275,7 @@ else
     c3_ok=0
 fi
 
-# Valida que runtime consegue executar v2 "após restart" (cold start com pool)
+# Validate that runtime can execute v2 after restart (cold start with pool)
 restart_out=$("$FLUXA" run "$FIXTURES/v2/main.flx" 2>/dev/null || true)
 if assert_not_empty "output pós-restart" "$restart_out"; then
     x_restart=$(extract_val "$restart_out" "v2:x")

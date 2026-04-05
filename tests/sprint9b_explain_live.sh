@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tests/sprint9b_explain_live.sh — Sprint 9.b Issue #96: fluxa explain via IPC
 #
-# Valida os dois modos do comando explain:
-#   Modo 1: fluxa explain (sem arquivo) — conecta ao runtime via IPC
-#   Modo 2: fluxa explain <file>        — executa o arquivo (comportamento antigo)
+# Validates both modes of the explain command:
+#   Mode 1: fluxa explain (no file) — connects to runtime via IPC
+#   Mode 2: fluxa explain <file>        — executes the file (legacy mode)
 #
 # Também valida que -prod sobe o servidor IPC corretamente (root cause do bug).
 #
@@ -147,7 +147,7 @@ sleep 0.3
 rm -f /tmp/fluxa-*.sock /tmp/fluxa-*.lock 2>/dev/null || true
 
 # =============================================================================
-# CASO 3 — fluxa explain (modo IPC ao vivo)
+# CASE 3 — fluxa explain (live IPC mode)
 # =============================================================================
 echo ""
 echo "  ── Caso 3: fluxa explain (modo IPC — sem arquivo) ───────────────"
@@ -257,7 +257,7 @@ else
 fi
 
 # =============================================================================
-# CASO 5 — fluxa explain sem runtime rodando imprime erro claro
+# CASE 5 — fluxa explain with no runtime running prints a clear error
 # =============================================================================
 echo ""
 echo "  ── Caso 5: fluxa explain sem runtime → erro claro ───────────────"

@@ -645,8 +645,8 @@ static int run_test_reload(void) {
 }
 
 /* ── fluxa explain — Sprint 9.b (Issue #96) ──────────────────────────────── */
-/* Modo 1 (sem arquivo): conecta via IPC ao runtime rodando — valores ao vivo.
- * Modo 2 (com arquivo): executa o arquivo e imprime estado final. */
+/* Mode 1 (no file): connect via IPC to running runtime — live values.
+ * Mode 2 (with file): execute file and print final prst state. */
 static int run_explain_live(void) {
     IpcClient cli;
     int pid = ipc_connect_auto(&cli);
@@ -733,18 +733,18 @@ static int run_explain_live(void) {
  *   1. Executa old.flx normalmente (Runtime A)
  *   2. Parseia new.flx (programa candidato)
  *   3. Executa o handover: migration → Dry Run → switchover → cleanup
- *   4. Se sucesso: executa new.flx com o pool transferido (Runtime B real)
+ *   4. On success: execute new.flx with the transferred pool (Runtime B live)
  *   5. Se falha: Runtime A continua; ERR_HANDOVER no err_stack
  */
 static int run_handover(const char *old_path, const char *new_path) {
     fprintf(stderr, "[fluxa] handover: %s → %s\n", old_path, new_path);
 
-    /* ── Step 0: executa old.flx para popular o estado ── */
+    /* ── Step 0: run old.flx to populate runtime state ── */
     static ASTPool pool_a;
     ASTNode *prog_a = parse_file(old_path, &pool_a);
     if (!prog_a) return 1;
 
-    /* Cria e inicializa Runtime A explicitamente para manter acesso ao estado */
+    /* Create and initialize Runtime A explicitly to retain access to state */
     Runtime *rt_a = (Runtime *)calloc(1, sizeof(Runtime));
     if (!rt_a) { pool_free(&pool_a); return 1; }
 
@@ -793,7 +793,7 @@ static int run_handover(const char *old_path, const char *new_path) {
         scope_free(&rt_a->scope);
         scope_table_free(&rt_a->global_table);
         block_registry_free();
-        gc_collect_all(&rt_a->gc);
+        gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
         prst_pool_free(&rt_a->prst_pool);
         prst_graph_free(&rt_a->prst_graph);
         ffi_registry_free(&rt_a->ffi);
@@ -811,7 +811,7 @@ static int run_handover(const char *old_path, const char *new_path) {
     scope_table_free(&rt_a->global_table);
     rt_a->global_table = NULL;
     block_registry_free();
-    gc_collect_all(&rt_a->gc);
+    gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
     ffi_registry_free(&rt_a->ffi);
     gc_init(&rt_a->gc, config.gc_cap);
     ffi_registry_init(&rt_a->ffi);
@@ -824,7 +824,7 @@ static int run_handover(const char *old_path, const char *new_path) {
         prst_pool_free(&rt_a->prst_pool);
         prst_graph_free(&rt_a->prst_graph);
         ffi_registry_free(&rt_a->ffi);
-        gc_collect_all(&rt_a->gc);
+        gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
         free(rt_a);
         pool_free(&pool_a);
         return 1;
@@ -845,7 +845,7 @@ static int run_handover(const char *old_path, const char *new_path) {
         prst_pool_free(&rt_a->prst_pool);
         prst_graph_free(&rt_a->prst_graph);
         ffi_registry_free(&rt_a->ffi);
-        gc_collect_all(&rt_a->gc);
+        gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
         free(rt_a);
         pool_free(&pool_a);
         pool_free(&pool_b);
@@ -854,7 +854,7 @@ static int run_handover(const char *old_path, const char *new_path) {
 
     fprintf(stderr, "[fluxa] handover: committed — starting Runtime B\n");
 
-    /* ── Step final: executa new.flx com pool transferido ── */
+    /* ── Final step: run new.flx with transferred pool ── */
     int result = runtime_apply(prog_b, &ctx.pool_after);
 
     /* Cleanup */
@@ -863,7 +863,7 @@ static int run_handover(const char *old_path, const char *new_path) {
     prst_pool_free(&rt_a->prst_pool);
     prst_graph_free(&rt_a->prst_graph);
     ffi_registry_free(&rt_a->ffi);
-    gc_collect_all(&rt_a->gc);
+    gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
     free(rt_a);
     pool_free(&pool_a);
     pool_free(&pool_b);
@@ -871,7 +871,7 @@ static int run_handover(const char *old_path, const char *new_path) {
 }
 
 /* ── test-handover: suite interna PASS/FAIL ──────────────────────────────── */
-/* Valida os 5 steps do protocolo com programas inline.
+/* Validates all 5 protocol steps with inline programs.
  * Tests: serialize→deserialize, checksum, Dry Run (ok and fail),
  * prst transfer, rollback on failure. */
 static int run_test_handover(void) {
@@ -890,7 +890,7 @@ static int run_test_handover(void) {
         gc_init(&rt_a->gc, cfg.gc_cap);
         ffi_registry_init(&rt_a->ffi);
 
-        /* Popula pool com 3 entradas */
+        /* Populate pool with 3 entries */
         prst_pool_set(&rt_a->prst_pool, "score",   val_int(100),  NULL);
         prst_pool_set(&rt_a->prst_pool, "running", val_bool(1),   NULL);
         prst_pool_set(&rt_a->prst_pool, "rate",    val_float(1.5),NULL);
@@ -905,7 +905,7 @@ static int run_test_handover(void) {
         if (handover_serialize_state(&ctx) != HANDOVER_OK)   { ok = 0; }
         if (handover_deserialize_state(&ctx) != HANDOVER_OK) { ok = 0; }
 
-        /* Valida que os valores foram preservados */
+        /* Validate that values were preserved */
         Value v;
         if (ok && prst_pool_get(&ctx.rt_b->prst_pool, "score", &v)) {
             if (v.type != VAL_INT || v.as.integer != 100) ok = 0;
@@ -914,7 +914,7 @@ static int run_test_handover(void) {
             if (v.type != VAL_FLOAT) ok = 0;
         } else { ok = 0; }
 
-        /* Checksums devem bater */
+        /* Checksums must match */
         uint32_t cs_a = prst_pool_checksum(&rt_a->prst_pool);
         uint32_t cs_b = prst_pool_checksum(&ctx.rt_b->prst_pool);
         if (cs_a != cs_b) ok = 0;
@@ -932,7 +932,7 @@ static int run_test_handover(void) {
         prst_pool_free(&rt_a->prst_pool);
         prst_graph_free(&rt_a->prst_graph);
         ffi_registry_free(&rt_a->ffi);
-        gc_collect_all(&rt_a->gc);
+        gc_collect_all(&rt_a->gc, gc_dyn_free_fn);
         free(rt_a);
     }
 
@@ -980,7 +980,7 @@ static int run_test_handover(void) {
         prst_pool_free(&rt_a2->prst_pool);
         prst_graph_free(&rt_a2->prst_graph);
         ffi_registry_free(&rt_a2->ffi);
-        gc_collect_all(&rt_a2->gc);
+        gc_collect_all(&rt_a2->gc, gc_dyn_free_fn);
         free(rt_a2);
         pool_free(&ap2);
     }
@@ -1013,11 +1013,11 @@ static int run_test_handover(void) {
             HandoverResult r1 = handover_step1_standby(&ctx3, prog3, &ap3);
             HandoverResult r2 = (r1 == HANDOVER_OK) ? handover_step2_migrate(&ctx3)  : r1;
             HandoverResult r3 = (r2 == HANDOVER_OK) ? handover_step3_dry_run(&ctx3)  : r2;
-            /* r3 deve ser HANDOVER_ERR_DRY_RUN */
+            /* r3 must be HANDOVER_ERR_DRY_RUN */
             if (r3 == HANDOVER_ERR_DRY_RUN) ok3 = 1;
-            /* rt_a3 deve ter ERR_HANDOVER no err_stack */
+            /* rt_a3 must have ERR_HANDOVER in err_stack */
             if (ok3 && rt_a3->err_stack.count == 0) ok3 = 0;
-            /* pool de A deve estar intacto */
+            /* pool of A must be intact */
             Value v3; prst_pool_get(&rt_a3->prst_pool, "y", &v3);
             if (ok3 && (v3.type != VAL_INT || v3.as.integer != 10)) ok3 = 0;
         }
@@ -1032,7 +1032,7 @@ static int run_test_handover(void) {
         prst_pool_free(&rt_a3->prst_pool);
         prst_graph_free(&rt_a3->prst_graph);
         ffi_registry_free(&rt_a3->ffi);
-        gc_collect_all(&rt_a3->gc);
+        gc_collect_all(&rt_a3->gc, gc_dyn_free_fn);
         free(rt_a3);
         pool_free(&ap3);
     }
@@ -1235,9 +1235,9 @@ int main(int argc, char **argv) {
         printf("  gc_cap         : %d\n",  cfg.gc_cap);
         printf("  prst_cap       : %d\n",  cfg.prst_cap);
         printf("  prst_graph_cap : %d\n",  cfg.prst_graph_cap);
-        printf("\n[ffi] declaradas no toml\n");
+        printf("\n[ffi] declared in toml\n");
         if (cfg.ffi_count == 0) {
-            printf("  (nenhuma)\n");
+            printf("  (none)\n");
         } else {
             for (int i = 0; i < cfg.ffi_count; i++) {
                 printf("  %-16s  %s  (%d sig)\n",

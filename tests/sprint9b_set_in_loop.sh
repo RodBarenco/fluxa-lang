@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/sprint9b_set_in_loop.sh — Sprint 9.b Issue #95
 #
-# Valida que fluxa set funciona dentro de loops while infinitos.
+# Validates that fluxa set works inside infinite while loops.
 # Valor aplicado via live_rt->stack[offset] — sem restart, sem perda de
 # variáveis não-persistentes.
 #
