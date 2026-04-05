@@ -1,6 +1,6 @@
 /* runtime.c — Fluxa Runtime
  * Sprint 6:   danger/err, contiguous arr, free(), PrstGraph stub, GCTable stub
- * Sprint 8:   rt_error_line (linha nos erros), runtime_exec_with_rt (Handover)
+ * Sprint 8:   rt_error_line (line numbers in errors), runtime_exec_with_rt (Handover)
  * Sprint 9:   IPC safe-point hook (ipc_apply_pending_set)
  * Sprint 9.b: fluxa set writes to rt->stack[offset] so bytecode VM sees it immediately
  */
@@ -113,6 +113,36 @@ static int rt_type_check(Runtime *rt, ASTNode *node,
 }
 
 /* ── Variable access ─────────────────────────────────────────────────────── */
+/* ── Block clone free callback ───────────────────────────────────────────── */
+/* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
+ * Only frees instances that are dyn-owned clones (not in block_registry). */
+static void rt_block_clone_free_cb(void *ptr) __attribute__((unused));
+static void rt_block_clone_free_cb(void *ptr) {
+    BlockInstance *bi = (BlockInstance*)ptr;
+    if (!bi) return;
+    /* Check if registered in global registry */
+    BlockInstance *found = block_inst_find(bi->name);
+    /* If not found, or found but different pointer => it is an unregistered clone */
+    if (!found || found != bi)
+        block_inst_free_unregistered(bi);
+    /* If found == bi it belongs to the registry — do NOT free */
+}
+
+/* ── GC helpers — bridge between GCTable and value_free_data ─────────────── */
+
+/* Pin a dyn value in the GC when a scope takes ownership */
+static inline void rt_gc_pin(Runtime *rt, Value *v) {
+    if (v && v->type == VAL_DYN && v->as.dyn)
+        gc_pin(&rt->gc, v->as.dyn);
+}
+
+/* Unpin a dyn value in the GC when a scope releases it */
+static inline void rt_gc_unpin(Runtime *rt, Value *v) {
+    if (v && v->type == VAL_DYN && v->as.dyn)
+        gc_unpin(&rt->gc, v->as.dyn);
+}
+
+
 static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
     if (node && node->resolved_offset >= 0 &&
         node->resolved_offset < rt->stack_size) {
@@ -436,24 +466,42 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
         Value v; v.type = VAL_FUNC; v.as.func = member;
         scope_set(scope, member->as.func_decl.name, v);
     } else if (member->type == NODE_ARR_DECL) {
-        /* Sprint 6.b: arr field in Block — allocate and init directly */
+        /* arr field in Block — deep copy if default is another arr */
         int size = member->as.arr_decl.size;
-        Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
-        if (!data) return;
         if (member->as.arr_decl.default_init) {
             Value def = eval(rt, member->as.arr_decl.default_value);
+            if (def.type == VAL_ARR) {
+                /* Deep copy — never share the data pointer */
+                int src_size = def.as.arr.size;
+                Value *data = (Value*)calloc((size_t)size, sizeof(Value));
+                if (!data) return;
+                for (int i = 0; i < src_size && i < size; i++) {
+                    data[i] = def.as.arr.data[i];
+                    if (data[i].type == VAL_STRING && data[i].as.string)
+                        data[i].as.string = strdup(data[i].as.string);
+                }
+                Value arr = val_arr(data, size);
+                scope_set(scope, member->as.arr_decl.arr_name, arr);
+                return;
+            }
+            Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
+            if (!data) return;
             for (int i = 0; i < size; i++) {
                 if (def.type == VAL_STRING && def.as.string)
                     data[i] = val_string(def.as.string);
                 else
                     data[i] = def;
             }
+            Value arr = val_arr(data, size);
+            scope_set(scope, member->as.arr_decl.arr_name, arr);
         } else {
+            Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
+            if (!data) return;
             for (int i = 0; i < size; i++)
                 data[i] = eval(rt, member->as.arr_decl.elements[i]);
+            Value arr = val_arr(data, size);
+            scope_set(scope, member->as.arr_decl.arr_name, arr);
         }
-        Value arr = val_arr(data, size);
-        scope_set(scope, member->as.arr_decl.arr_name, arr);
     }
 }
 
@@ -467,10 +515,29 @@ static BlockInstance *resolve_instance(Runtime *rt, const char *owner_name) {
     return NULL;
 }
 
+/* ── Runtime-aware scope cleanup ─────────────────────────────────────────── */
+/* Unpins all VAL_DYN entries before releasing the scope.
+ * Must be used instead of bare scope_free() wherever a Runtime is available. */
+static inline void rt_scope_free(Runtime *rt, Scope *s) {
+    if (!s || !s->table) { scope_free(s); return; }
+    ScopeEntry *entry, *tmp;
+    HASH_ITER(hh, s->table, entry, tmp) {
+        rt_gc_unpin(rt, &entry->value);
+        /* VAL_BLOCK_INST: only free dyn-owned clones (not in global registry) */
+        if (entry->value.type == VAL_BLOCK_INST && entry->value.as.block_inst) {
+            BlockInstance *bi = entry->value.as.block_inst;
+            BlockInstance *found = block_inst_find(bi->name);
+            if (!found || found != bi)
+                block_inst_free_unregistered(bi);
+        }
+    }
+    scope_free(s);
+}
+
 /* ── Eval ────────────────────────────────────────────────────────────────── */
 static Value eval(Runtime *rt, ASTNode *node) {
     if (!node || rt->had_error) return val_nil();
-    /* Sprint 8: atualiza linha atual para mensagens de erro precisas */
+    /* Sprint 8: update current line for precise error messages */
     if (node->line > 0) rt->current_line = node->line;
 
     switch (node->type) {
@@ -586,6 +653,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     int ok = prst_pool_set(&rt->prst_pool, vname, v, &rt->err_stack);
                     if (ok >= 0) {
                         rt_set(rt, node, vname, v);
+                        rt_gc_pin(rt, &v);
                         /* Record stack offset so post-VM sync can read rt->stack */
                         prst_pool_set_offset(&rt->prst_pool, vname,
                                               node->resolved_offset);
@@ -608,8 +676,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (!rt_type_check(rt, node, node->as.var_decl.type_name, v, vname))
                 return val_nil();
             rt_set(rt, node, vname, v);
+            /* GC: pin dyn when scope takes ownership */
+            rt_gc_pin(rt, &v);
             return val_nil();
         }
+
 
         case NODE_ASSIGN: {
             int err_before = rt->err_stack.count;
@@ -812,6 +883,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (!truthy) break;
                     eval(rt, node->as.while_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
+                    /* GC safe point at while back-edge */
+                    gc_sweep(&rt->gc, gc_dyn_free_fn);
+                    /* IPC safe point (Sprint 9.b) */
+                    if (g_ipc_view) ipc_rtview_update(g_ipc_view, rt);
+                    ipc_apply_pending_set(rt);
                 }
             }
             return val_nil();
@@ -820,37 +896,116 @@ static Value eval(Runtime *rt, ASTNode *node) {
         /* ── Sprint 6/6.b: contiguous arr on heap ──────────────────────────── */
         case NODE_ARR_DECL: {
             int size = node->as.arr_decl.size;
-            Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
-            if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
+            const char *arr_type = node->as.arr_decl.type_name; /* "int","float","str","bool" */
 
             if (node->as.arr_decl.default_init) {
-                /* Sprint 6.b: fill all slots with single default value */
+                /* Default initializer: may be a primitive (fill all slots)
+                 * OR another arr (deep copy into this arr).                 */
                 Value def = eval(rt, node->as.arr_decl.default_value);
-                if (rt->had_error) { free(data); return val_nil(); }
-                /* fast path for numeric types via memset-like loop */
-                for (int i = 0; i < size; i++) {
-                    if (def.type == VAL_STRING && def.as.string)
-                        data[i] = val_string(def.as.string); /* strdup each */
+                if (rt->had_error) return val_nil();
+
+                if (def.type == VAL_ARR) {
+                    /* Deep copy — source arr must have compatible element type.
+                     * Destination size must be >= source size (extra slots zeroed). */
+                    if (def.as.arr.size > size) {
+                        char buf[320];
+                        snprintf(buf, sizeof(buf),
+                            "arr copy: source size %d is larger than destination size %d"
+                            " — destination must be >= source size",
+                            def.as.arr.size, size);
+                        rt_error(rt, buf); return val_nil();
+                    }
+                    Value *data = (Value*)calloc((size_t)size, sizeof(Value));
+                    if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
+                    for (int i = 0; i < def.as.arr.size; i++) {
+                        data[i] = def.as.arr.data[i];
+                        if (data[i].type == VAL_STRING && data[i].as.string)
+                            data[i].as.string = strdup(data[i].as.string);
+                    }
+                    /* Zero-fill remaining slots with type-appropriate zero */
+                    for (int i = def.as.arr.size; i < size; i++) {
+                        if (arr_type && strcmp(arr_type, "float") == 0)
+                            data[i] = val_float(0.0);
+                        else if (arr_type && strcmp(arr_type, "str") == 0)
+                            data[i] = val_string("");
+                        else if (arr_type && strcmp(arr_type, "bool") == 0)
+                            data[i] = val_bool(0);
+                        else
+                            data[i] = val_int(0);
+                    }
+                    Value arr = val_arr(data, size);
+                    if (rt->current_instance)
+                        scope_set(&rt->current_instance->scope,
+                                  node->as.arr_decl.arr_name, arr);
                     else
-                        data[i] = def; /* int/float/bool: direct copy */
+                        scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+                    return val_nil();
                 }
+
+                /* Primitive default: fill all slots (type-checked) */
+                Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
+                if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
+                for (int i = 0; i < size; i++) {
+                    if (arr_type && def.type != VAL_NIL) {
+                        /* type check each element */
+                        int ok = 1;
+                        if (strcmp(arr_type,"int")==0   && def.type!=VAL_INT)   ok=0;
+                        if (strcmp(arr_type,"float")==0 && def.type!=VAL_FLOAT) ok=0;
+                        if (strcmp(arr_type,"str")==0   && def.type!=VAL_STRING)ok=0;
+                        if (strcmp(arr_type,"bool")==0  && def.type!=VAL_BOOL)  ok=0;
+                        if (!ok) {
+                            char buf[280];
+                            snprintf(buf, sizeof(buf),
+                                "arr type error: declared as %s arr but element is %s",
+                                arr_type, val_type_name(def.type));
+                            free(data); rt_error(rt, buf); return val_nil();
+                        }
+                    }
+                    if (def.type == VAL_STRING && def.as.string)
+                        data[i] = val_string(def.as.string);
+                    else
+                        data[i] = def;
+                }
+                Value arr = val_arr(data, size);
+                if (rt->current_instance)
+                    scope_set(&rt->current_instance->scope,
+                              node->as.arr_decl.arr_name, arr);
+                else
+                    scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+                return val_nil();
             } else {
-                /* explicit list initializer */
+                /* explicit list initializer — type-check each element */
+                Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
+                if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
                 for (int i = 0; i < size; i++) {
                     data[i] = eval(rt, node->as.arr_decl.elements[i]);
                     if (rt->had_error) { free(data); return val_nil(); }
+                    /* type enforcement on each element */
+                    if (arr_type && data[i].type != VAL_NIL) {
+                        int ok = 1;
+                        if (strcmp(arr_type,"int")==0   && data[i].type!=VAL_INT)   ok=0;
+                        if (strcmp(arr_type,"float")==0 && data[i].type!=VAL_FLOAT) ok=0;
+                        if (strcmp(arr_type,"str")==0   && data[i].type!=VAL_STRING)ok=0;
+                        if (strcmp(arr_type,"bool")==0  && data[i].type!=VAL_BOOL)  ok=0;
+                        if (!ok) {
+                            char buf[280];
+                            snprintf(buf, sizeof(buf),
+                                "arr type error: declared as %s arr"
+                                " but element[%d] is %s",
+                                arr_type, i, val_type_name(data[i].type));
+                            free(data); rt_error(rt, buf); return val_nil();
+                        }
+                    }
                 }
+                Value arr = val_arr(data, size);
+                if (rt->current_instance)
+                    scope_set(&rt->current_instance->scope,
+                              node->as.arr_decl.arr_name, arr);
+                else
+                    scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+                return val_nil();
             }
 
-            Value arr = val_arr(data, size);
-            /* Store in instance scope if inside a Block method */
-            if (rt->current_instance) {
-                scope_set(&rt->current_instance->scope,
-                          node->as.arr_decl.arr_name, arr);
-            } else {
-                scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
-            }
-            return val_nil();
         }
 
         case NODE_ARR_ACCESS: {
@@ -947,9 +1102,32 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         for (long fi = d->count; fi < idx; fi++) d->items[fi] = val_nil();
                         d->count = (int)idx + 1;
                     }
+                    /* Type validation */
+                    if (v.type == VAL_DYN) {
+                        rt_error(rt, "dyn cannot contain dyn"
+                                 " — use Block to compose dynamic structures");
+                        return val_nil();
+                    }
+                    if (v.type == VAL_ARR) {
+                        if (v.as.arr.data && v.as.arr.size > 0) {
+                            Value *nd = (Value*)malloc(sizeof(Value)*(size_t)v.as.arr.size);
+                            if (!nd) { rt_error(rt, "out of memory copying arr into dyn"); return val_nil(); }
+                            for (int j = 0; j < v.as.arr.size; j++) {
+                                nd[j] = v.as.arr.data[j];
+                                if (nd[j].type == VAL_STRING && nd[j].as.string)
+                                    nd[j].as.string = strdup(nd[j].as.string);
+                            }
+                            v = val_arr(nd, v.as.arr.size);
+                        }
+                    } else if (v.type == VAL_BLOCK_INST && v.as.block_inst) {
+                        BlockInstance *clone = block_inst_clone(v.as.block_inst);
+                        if (!clone) { rt_error(rt, "out of memory cloning Block into dyn"); return val_nil(); }
+                        v.as.block_inst = clone;
+                    } else if (v.type == VAL_STRING && v.as.string) {
+                        v.as.string = strdup(v.as.string);
+                    }
                     /* Free old value's heap resources before overwriting */
                     value_free_data(&d->items[idx]);
-                    if (v.type == VAL_STRING && v.as.string) v.as.string = strdup(v.as.string);
                     d->items[idx] = v;
                     return val_nil();
                 }
@@ -1030,13 +1208,57 @@ static Value eval(Runtime *rt, ASTNode *node) {
             d->count = 0;
             d->items = (Value*)malloc(sizeof(Value) * (size_t)d->cap);
             if (!d->items) { free(d); rt_error(rt, "out of memory"); return val_nil(); }
+
             for (int i = 0; i < count; i++) {
                 Value elem = eval(rt, node->as.dyn_lit.elements[i]);
-                if (rt->had_error) { free(d->items); free(d); return val_nil(); }
-                if (elem.type == VAL_STRING && elem.as.string)
+                if (rt->had_error) { fluxa_dyn_free(d); return val_nil(); }
+
+                /* ── Type validation and ownership rules ── */
+                if (elem.type == VAL_DYN) {
+                    fluxa_dyn_free(d);
+                    rt_error(rt, "dyn cannot contain dyn"
+                             " — use Block to compose dynamic structures");
+                    return val_nil();
+                }
+                if (elem.type == VAL_ARR) {
+                    /* Deep copy arr — dyn owns the new copy */
+                    if (elem.as.arr.data && elem.as.arr.size > 0) {
+                        Value *new_data = (Value*)malloc(
+                            sizeof(Value) * (size_t)elem.as.arr.size);
+                        if (!new_data) {
+                            fluxa_dyn_free(d);
+                            rt_error(rt, "out of memory copying arr into dyn");
+                            return val_nil();
+                        }
+                        for (int j = 0; j < elem.as.arr.size; j++) {
+                            new_data[j] = elem.as.arr.data[j];
+                            if (new_data[j].type == VAL_STRING &&
+                                new_data[j].as.string)
+                                new_data[j].as.string =
+                                    strdup(new_data[j].as.string);
+                        }
+                        elem = val_arr(new_data, elem.as.arr.size); /* owned=1 */
+                    }
+                } else if (elem.type == VAL_BLOCK_INST && elem.as.block_inst) {
+                    /* typeof-implicit: clone current state, dyn owns the clone */
+                    BlockInstance *clone = block_inst_clone(elem.as.block_inst);
+                    if (!clone) {
+                        fluxa_dyn_free(d);
+                        rt_error(rt, "out of memory cloning Block into dyn");
+                        return val_nil();
+                    }
+                    elem.as.block_inst = clone;
+                } else if (elem.type == VAL_STRING && elem.as.string) {
                     elem.as.string = strdup(elem.as.string);
+                }
+
                 d->items[d->count++] = elem;
             }
+
+            /* Register with GC — pin_count starts at 0, caller pins via VAR_DECL */
+            gc_register(&rt->gc, d,
+                sizeof(FluxaDyn) + sizeof(Value) * (size_t)d->cap,
+                &rt->err_stack);
             return val_dyn(d);
         }
 
@@ -1106,10 +1328,35 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 d->count = (int)idx + 1;
             }
 
+            /* Type validation */
+            if (v.type == VAL_DYN) {
+                rt_error(rt, "dyn cannot contain dyn"
+                         " — use Block to compose dynamic structures");
+                return val_nil();
+            }
+            if (v.type == VAL_ARR) {
+                /* Deep copy arr — dyn owns the new copy */
+                if (v.as.arr.data && v.as.arr.size > 0) {
+                    Value *nd = (Value*)malloc(sizeof(Value) * (size_t)v.as.arr.size);
+                    if (!nd) { rt_error(rt, "out of memory copying arr into dyn"); return val_nil(); }
+                    for (int j = 0; j < v.as.arr.size; j++) {
+                        nd[j] = v.as.arr.data[j];
+                        if (nd[j].type == VAL_STRING && nd[j].as.string)
+                            nd[j].as.string = strdup(nd[j].as.string);
+                    }
+                    v = val_arr(nd, v.as.arr.size);
+                }
+            } else if (v.type == VAL_BLOCK_INST && v.as.block_inst) {
+                /* typeof-implicit clone */
+                BlockInstance *clone = block_inst_clone(v.as.block_inst);
+                if (!clone) { rt_error(rt, "out of memory cloning Block into dyn"); return val_nil(); }
+                v.as.block_inst = clone;
+            } else if (v.type == VAL_STRING && v.as.string) {
+                v.as.string = strdup(v.as.string);
+            }
+
             /* Free old value's heap resources before overwriting */
             value_free_data(&d->items[idx]);
-            if (v.type == VAL_STRING && v.as.string)
-                v.as.string = strdup(v.as.string);
             d->items[idx] = v;
             return val_nil();
         }
@@ -1258,36 +1505,48 @@ static Value eval(Runtime *rt, ASTNode *node) {
             /* errors stay in err_stack but do NOT propagate as had_error */
             rt->had_error = 0;
 
-            /* safe point for GC stub */
-            gc_mark_safe_point(&rt->gc);
+            /* GC safe point — sweep dyn objects with pin_count == 0 */
+            gc_sweep(&rt->gc, gc_dyn_free_fn);
             return val_nil();
         }
 
         /* ── Sprint 6: free() ────────────────────────────────────────────── */
         case NODE_FREE: {
             const char *var_name = node->as.free_stmt.var_name;
-            /* find and free the value — VAL_ARR frees its data via gc_free */
+
+            /* prst check — cannot free prst vars in any mode */
+            if (rt->mode == FLUXA_MODE_PROJECT) {
+                if (prst_pool_find(&rt->prst_pool, var_name) >= 0) {
+                    char buf[320];
+                    snprintf(buf, sizeof(buf),
+                        "cannot free prst variable '%s'"
+                        " — prst vars are managed by the runtime."
+                        " Remove the prst declaration to allow manual free.",
+                        var_name);
+                    /* Always an error — even inside danger */
+                    rt_error(rt, buf);
+                    return val_nil();
+            }
+            }
+
+            /* Find in scope */
             ScopeEntry *entry = NULL;
             HASH_FIND_STR(rt->scope.table, var_name, entry);
+            if (!entry && rt->current_instance)
+                HASH_FIND_STR(rt->current_instance->scope.table, var_name, entry);
             if (!entry) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "free(): undefined variable '%s'", var_name);
                 rt_error(rt, buf); return val_nil();
             }
-            if (entry->value.type == VAL_ARR && entry->value.as.arr.data) {
-                /* free string elements, then the data array */
-                for (int i = 0; i < entry->value.as.arr.size; i++) {
-                    if (entry->value.as.arr.data[i].type == VAL_STRING &&
-                        entry->value.as.arr.data[i].as.string)
-                        free(entry->value.as.arr.data[i].as.string);
-                }
-                free(entry->value.as.arr.data);
-                entry->value.as.arr.data = NULL;
-                entry->value.as.arr.size = 0;
-            } else if (entry->value.type == VAL_STRING && entry->value.as.string) {
-                free(entry->value.as.string);
-                entry->value.as.string = NULL;
+
+            /* For dyn: unregister from GC before freeing */
+            if (entry->value.type == VAL_DYN && entry->value.as.dyn) {
+                gc_unregister(&rt->gc, entry->value.as.dyn);
             }
+
+            /* Free all heap resources */
+            value_free_data(&entry->value);
             entry->value = val_nil();
             return val_nil();
         }
@@ -1589,7 +1848,7 @@ int runtime_exec(ASTNode *program) {
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);
     block_registry_free();
-    gc_collect_all(&rt.gc);
+    gc_collect_all(&rt.gc, gc_dyn_free_fn);
     if (mode == FLUXA_MODE_PROJECT) {
         prst_pool_free(&rt.prst_pool);
         prst_graph_free(&rt.prst_graph);
@@ -1663,7 +1922,7 @@ int runtime_exec_explain(ASTNode *program) {
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);
     block_registry_free();
-    gc_collect_all(&rt.gc);
+    gc_collect_all(&rt.gc, gc_dyn_free_fn);
     prst_pool_free(&rt.prst_pool);
     prst_graph_free(&rt.prst_graph);
     ffi_registry_free(&rt.ffi);
@@ -1829,7 +2088,7 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);
     block_registry_free();
-    gc_collect_all(&rt.gc);
+    gc_collect_all(&rt.gc, gc_dyn_free_fn);
     prst_graph_free(&rt.prst_graph);
     ffi_registry_free(&rt.ffi);
     return result;
@@ -1837,17 +2096,17 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
 
 /* ── runtime_exec_with_rt — Sprint 8 ────────────────────────────────────── */
 /* Execute a program in an already-allocated and partially-initialized Runtime
- * pelo caller (handover_step3_dry_run ou runtime_apply estendido).
+ * by the caller (handover_step3_dry_run or extended runtime_apply).
  *
- * Contrato de entrada:
- *   - rt->scope, rt->stack, rt->prst_pool, rt->prst_graph foram inicializados
+ * Entry contract:
+ *   - rt->scope, rt->stack, rt->prst_pool, rt->prst_graph were initialized
  *   - rt->dry_run = 1 for Dry Run, 0 for real execution
- *   - rt->mode = FLUXA_MODE_PROJECT ou FLUXA_MODE_SCRIPT
+ *   - rt->mode = FLUXA_MODE_PROJECT or FLUXA_MODE_SCRIPT
  *
  * Exit contract:
- *   - rt->prst_pool atualizado com valores finais
- *   - rt->err_stack populado com qualquer erro encontrado
- *   - Retorna 0 (sucesso) ou 1 (had_error)
+ *   - rt->prst_pool updated with final values
+ *   - rt->err_stack populated with any errors encountered
+ *   - Returns 0 (success) or 1 (had_error)
  *
  * Does NOT cleanup — caller is responsible for scope_free, gc_collect_all etc.
  */
@@ -1867,7 +2126,7 @@ int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
         if (rt->had_error) break;
         /* Sprint 8: in Dry Run, any entry in err_stack
          * counts as failure even if had_error is not set —
-         * pois danger bloqueia had_error mas o handover precisa saber. */
+         * because danger blocks had_error but handover needs to know. */
         if (rt->dry_run && rt->err_stack.count > 0) {
             rt->had_error = 1;
             break;

@@ -86,3 +86,57 @@ void block_registry_free(void) {
     }
     g_block_defs = NULL;
 }
+
+/* ── block_inst_clone — typeof-implicit for dyn insertion ─────────────────── */
+/* Creates a new BlockInstance that is NOT in g_block_instances.
+ * Copies current runtime state of src by copying each ScopeEntry value.
+ * The clone is owned by the dyn — free with block_inst_free_unregistered(). */
+
+static int g_clone_counter = 0;
+
+BlockInstance *block_inst_clone(const BlockInstance *src) {
+    if (!src) return NULL;
+
+    BlockInstance *clone = (BlockInstance*)calloc(1, sizeof(BlockInstance));
+    if (!clone) return NULL;
+
+    /* Auto-generate a unique name — not added to registry */
+    /* Truncate src name to ensure "_dynNNNN" suffix fits in 64-char field */
+    snprintf(clone->name, sizeof(clone->name),
+             "%.50s_dyn%d", src->name, g_clone_counter++);
+    clone->def     = src->def;
+    clone->scope   = scope_new();
+    clone->is_root = 0;
+
+    /* Copy each ScopeEntry value from src to clone.
+     * scope_set handles strdup for strings — full deep copy of primitives.
+     * VAL_ARR: create a fresh copy of the data array (owned=1).
+     * VAL_FUNC: shared pointer to ASTNode — safe, AST is immutable. */
+    ScopeEntry *entry, *tmp;
+    HASH_ITER(hh, src->scope.table, entry, tmp) {
+        Value v = entry->value;
+        if (v.type == VAL_ARR && v.as.arr.data && v.as.arr.size > 0) {
+            /* Deep copy array */
+            Value *new_data = (Value*)malloc(
+                sizeof(Value) * (size_t)v.as.arr.size);
+            if (new_data) {
+                for (int i = 0; i < v.as.arr.size; i++) {
+                    new_data[i] = v.as.arr.data[i];
+                    if (new_data[i].type == VAL_STRING && new_data[i].as.string)
+                        new_data[i].as.string = strdup(new_data[i].as.string);
+                }
+                v = val_arr(new_data, v.as.arr.size); /* owned=1 */
+            }
+        }
+        /* scope_set handles VAL_STRING strdup internally */
+        scope_set(&clone->scope, entry->name, v);
+    }
+
+    return clone;
+}
+
+void block_inst_free_unregistered(BlockInstance *inst) {
+    if (!inst) return;
+    scope_free(&inst->scope);
+    free(inst);
+}

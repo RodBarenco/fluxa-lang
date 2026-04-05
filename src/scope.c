@@ -11,6 +11,13 @@
 /* ── Forward declaration ─────────────────────────────────────────────────── */
 void value_free_data(Value *v);
 
+/* Callback for freeing dyn-owned Block clones (set by runtime, avoids circular deps) */
+static void (*g_block_inst_free_cb)(void *inst) = NULL;
+
+void scope_set_block_free_cb(void (*cb)(void *inst)) {
+    g_block_inst_free_cb = cb;
+}
+
 /* Free all heap resources owned by a FluxaDyn. */
 void fluxa_dyn_free(FluxaDyn *d) {
     if (!d) return;
@@ -49,7 +56,14 @@ void value_free_data(Value *v) {
         case VAL_DYN:
             if (v->as.dyn) { fluxa_dyn_free(v->as.dyn); v->as.dyn = NULL; }
             break;
-        /* VAL_PTR, VAL_BLOCK_INST and primitives: not owned by this scope */
+        case VAL_BLOCK_INST:
+            /* Only free if it is a dyn-owned clone (not in global registry).
+             * The callback is set by the runtime to avoid circular includes. */
+            if (v->as.block_inst && g_block_inst_free_cb)
+                g_block_inst_free_cb(v->as.block_inst);
+            v->as.block_inst = NULL;
+            break;
+        /* VAL_PTR and primitives: not owned by this scope */
         default:
             break;
     }

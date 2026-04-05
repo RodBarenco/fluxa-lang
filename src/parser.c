@@ -925,8 +925,15 @@ static ASTNode *parse_statement(Parser *p) {
 
         if (!expect(p, TOK_EQ, "after variable name")) return NULL;
 
-        /* dyn literal initializer: dyn lista = [expr, expr, ...] */
+        /* dyn literal initializer: dyn lista = [expr, expr, ...]
+         * dyn ONLY accepts a literal [...] or a function call returning dyn.
+         * Bare primitives (dyn a = 8) are a type error caught at parse time. */
         ASTNode *init = NULL;
+        if (strcmp(type_name, "dyn") == 0 && !check(p, TOK_LBRACKET)) {
+            parse_error(p, "dyn variable must be initialized with a literal"
+                           " '[...]' — bare values are not allowed (dyn a = 8 is invalid)");
+            return NULL;
+        }
         if (strcmp(type_name, "dyn") == 0 && check(p, TOK_LBRACKET)) {
             parser_advance(p); /* consume [ */
             ASTNode *lit = P_NODE();
