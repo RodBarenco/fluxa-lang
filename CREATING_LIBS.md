@@ -503,6 +503,120 @@ Each check is `O(1)` — a `strcmp` and a struct field read. The chain is neglig
 
 ---
 
+---
+
+## Creating Libs That Use Threads
+
+Some libs (like `std.serial`, `std.mqtt`) run background threads internally using `std.flxthread`. This section covers the additional patterns required.
+
+### Key differences from pure computation libs
+
+1. **The dispatch function receives `rt_ptr`** — thread-aware libs need the `Runtime*` to spawn threads via `fluxa_std_flxthread_call`. Add it as an extra parameter and cast it inside.
+
+2. **Declare dependency on flxthread** — your lib's `#ifdef` guard must nest inside `FLUXA_STD_FLXTHREAD`:
+
+```c
+#ifndef FLUXA_STD_MYLIB_H
+#define FLUXA_STD_MYLIB_H
+
+#ifdef FLUXA_STD_FLXTHREAD
+#include "../flxthread/fluxa_std_flxthread.h"
+
+/* your lib implementation */
+
+#endif /* FLUXA_STD_FLXTHREAD */
+#endif /* FLUXA_STD_MYLIB_H */
+```
+
+3. **Dispatch signature changes** — add `void *rt_ptr` as the last parameter:
+
+```c
+/* In runtime.c dispatch block: */
+return fluxa_std_mylib_call(method, args, argc,
+                             &rt->err_stack, &rt->had_error,
+                             rt->current_line, rt);  /* ← pass rt */
+```
+
+```c
+/* In your header: */
+static inline Value fluxa_std_mylib_call(const char *fn_name,
+                                          const Value *args, int argc,
+                                          ErrStack *err, int *had_error,
+                                          int line, void *rt_ptr) {
+    Runtime *rt = (Runtime *)rt_ptr;
+    /* ... */
+}
+```
+
+### Spawning a background thread from your lib
+
+```c
+/* mylib.start(str name, instance, str method) → spawns a thread */
+if (strcmp(fn_name, "start") == 0) {
+    NEED(3); GET_STR(0, tname);
+    /* Build args for ft.new and delegate to flxthread */
+    Value ft_args[3] = { args[0], args[1], args[2] };
+    return fluxa_std_flxthread_call("new", ft_args, 3,
+                                     err, had_error, line, rt_ptr);
+}
+```
+
+### Thread isolation rules for lib-internal threads
+
+Every thread spawned by a lib gets its own `Runtime` clone via `runtime_clone_for_thread()`. The clone has:
+
+- **Own:** stack, scope, error state, GC table
+- **Shared (read-only):** global function table, config, lib flags  
+- **Shared (read-write via pool):** `prst_pool` — synchronized by `NODE_ASSIGN`'s built-in `prst_pool_set` call
+
+For Block method threads invoked via the mailbox, `flx_invoke_method` saves and zeroes the clone's stack before each call so Block member writes go to `inst->scope` (not to aliased stack slots). This is handled automatically — your lib doesn't need to worry about it.
+
+### Checklist additions for thread-using libs
+
+In addition to the standard checklist:
+
+- [ ] `#ifdef FLUXA_STD_FLXTHREAD` wraps the entire header
+- [ ] `-DFLUXA_STD_FLXTHREAD=1` already in `CFLAGS` (inherited)
+- [ ] `has_flxthread` declared as dependency in `FluxaStdLibs` docs
+- [ ] `fluxa.toml` example shows both `std.flxthread` and your lib in `[libs]`
+- [ ] Tests use `timeout` generously (thread tests are timing-sensitive)
+- [ ] Tests cover both "thread active" and "thread finished" paths for `ft.await`
+- [ ] Documentation notes the three loop patterns (sleep, hot, polling)
+
+### The three loop patterns — always document them
+
+Every lib that spawns threads must document which loop pattern the spawned thread uses, because it determines mailbox drain frequency:
+
+```fluxa
+// Pattern 1 — with sleep (most IoT use cases)
+// Mailbox drains at sleep frequency. Predictable latency.
+fn sensor_loop() nil {
+    while true {
+        readings = adc.read()
+        time.sleep(10)   // ← drain happens here
+    }
+}
+
+// Pattern 2 — hot loop, no sleep (DSP, control)
+// Mailbox drain is O(1) fast path every iteration.
+// Use when maximum throughput matters more than responsiveness to messages.
+fn dsp_loop() nil {
+    while true {
+        output = process(input)
+        // ← drain every iteration, negligible overhead
+    }
+}
+
+// Pattern 3 — polling loop (maximum message responsiveness)
+// Thread stops as soon as a stop signal arrives.
+fn poll_until_stop() nil {
+    while !stop_flag {
+        process_next()
+        // ← drain every iteration, stop_flag checked immediately
+    }
+}
+```
+
 ## Checklist
 
 When you think you're done, verify:
