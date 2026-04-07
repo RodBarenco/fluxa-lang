@@ -28,7 +28,7 @@ typedef enum {
 /* ── Single error entry ──────────────────────────────────────────────────── */
 /* ERR_MSG_MAX must be >= the largest buf[] used in runtime.c (currently 280).
  * 512 gives headroom for Sprint 7 messages (prst collision includes type names). */
-#define ERR_MSG_MAX 512
+#define ERR_MSG_MAX 1024
 
 typedef struct {
     ErrKind kind;
