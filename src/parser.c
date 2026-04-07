@@ -137,7 +137,11 @@ static ASTNode *parse_primary(Parser *p) {
         ASTNode *n = p_ident(p, "nil");
         n->line = cur_line; parser_advance(p); return n;
     }
-    if (check(p, TOK_IDENT) || check(p, TOK_ERR)) {
+    /* Allow type keywords (str, int, float, bool) as namespace prefixes
+     * for std lib calls: str.split(), math.sqrt() etc. */
+    if (check(p, TOK_IDENT) || check(p, TOK_ERR) ||
+        check(p, TOK_TYPE_STR) || check(p, TOK_TYPE_INT) ||
+        check(p, TOK_TYPE_FLOAT) || check(p, TOK_TYPE_BOOL)) {
         char name[256];
         strncpy(name, p->current.value, sizeof(name)-1);
         name[sizeof(name)-1] = '\0';
@@ -605,7 +609,9 @@ static ASTNode *parse_statement(Parser *p) {
     /* Sprint 6.b: import c libname [as alias] */
     if (check(p, TOK_IMPORT)) {
         parser_advance(p);
-        if (!check(p, TOK_IDENT)) {
+            if (!check(p, TOK_IDENT) &&
+                !check(p, TOK_TYPE_STR) && !check(p, TOK_TYPE_INT) &&
+                !check(p, TOK_TYPE_FLOAT) && !check(p, TOK_TYPE_BOOL)) {
             parse_error(p, "expected 'c' or 'std' after 'import'");
             return NULL;
         }
@@ -613,7 +619,7 @@ static ASTNode *parse_statement(Parser *p) {
         /* import std <lib> — standard library opt-in */
         if (strcmp(p->current.value, "std") == 0) {
             parser_advance(p);
-            if (!check(p, TOK_IDENT)) {
+            if (!check(p, TOK_IDENT) && !check(p, TOK_TYPE_STR)) {
                 parse_error(p, "expected library name after 'import std'"
                                " (e.g. 'import std math')");
                 return NULL;
@@ -626,10 +632,11 @@ static ASTNode *parse_statement(Parser *p) {
             if (strcmp(lib_name, "math") != 0 &&
                 strcmp(lib_name, "csv")  != 0 &&
                 strcmp(lib_name, "json") != 0 &&
-                strcmp(lib_name, "vec")  != 0) {
+                strcmp(lib_name, "vec")  != 0 &&
+                strcmp(lib_name, "strings") != 0) {
                 char errbuf[200];
                 snprintf(errbuf, sizeof(errbuf),
-                    "unknown std library '%s' — available: math, csv, json, vec",
+                    "unknown std library '%s' — available: math, csv, json, str, vec",
                     lib_name);
                 parse_error(p, errbuf);
                 return NULL;
