@@ -125,6 +125,9 @@ static int rt_type_check(Runtime *rt, ASTNode *node,
 #ifdef FLUXA_STD_STRINGS
 #include "std/str/fluxa_std_strings.h"
 #endif
+#ifdef FLUXA_STD_TIME
+#include "std/time/fluxa_std_time.h"
+#endif
 
 /* ── Block clone free callback ───────────────────────────────────────────── */
 /* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
@@ -1722,6 +1725,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (strcmp(lib, "csv")  == 0 && rt->config.std_libs.has_csv)  declared = 1;
             if (strcmp(lib, "json") == 0 && rt->config.std_libs.has_json) declared = 1;
             if (strcmp(lib, "strings") == 0 && rt->config.std_libs.has_strings) declared = 1;
+            if (strcmp(lib, "time")    == 0 && rt->config.std_libs.has_time)    declared = 1;
             if (!declared) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
@@ -1942,6 +1946,21 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                           rt->current_line);
             }
 #endif /* FLUXA_STD_STRINGS */
+
+#ifdef FLUXA_STD_TIME
+            if (rt->config.std_libs.has_time && strcmp(owner, "time") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_time_call(method, args, argc,
+                                           &rt->err_stack, &rt->had_error,
+                                           rt->current_line);
+            }
+#endif /* FLUXA_STD_TIME */
 
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {

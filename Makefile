@@ -45,7 +45,8 @@ CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
            -DFLUXA_STD_MATH=1 \
            -DFLUXA_STD_CSV=1 \
            -DFLUXA_STD_JSON=1 \
-           -DFLUXA_STD_STRINGS=1
+           -DFLUXA_STD_STRINGS=1 \
+           -DFLUXA_STD_TIME=1
 LDFLAGS = $(FFI_LDFLAGS) -ldl -lm -lpthread
 
 # All source files for the native build (includes IPC server and FFI)
@@ -452,6 +453,9 @@ test-libs-json: build
 
 test-libs-strings: build
 	@bash tests/libs/strings.sh --fluxa ./$(TARGET)
+
+test-libs-time: build
+	@bash tests/libs/time.sh --fluxa ./$(TARGET)
 
 # ── Integration tests ─────────────────────────────────────────────────────────
 #

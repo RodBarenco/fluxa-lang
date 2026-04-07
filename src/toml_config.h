@@ -64,6 +64,7 @@ typedef struct {
     int has_csv;    /* std.csv  — CSV parser, returns dyn               */
     int has_json;   /* std.json — JSON stringify/extract, uses str      */
     int has_strings; /* std.strings — split, join, trim, replace, ...     */
+    int has_time;    /* std.time    — sleep, now_ms, elapsed, timeout, ...  */
 } FluxaStdLibs;
 
 /* ── Main config ──────────────────────────────────────────────────────────── */
@@ -291,6 +292,7 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
         if (strncmp(p, "std.csv",  7) == 0) cfg->std_libs.has_csv  = 1;
         if (strncmp(p, "std.json", 8) == 0) cfg->std_libs.has_json = 1;
         if (strncmp(p, "std.strings", 11) == 0) cfg->std_libs.has_strings = 1;
+        if (strncmp(p, "std.time",    8)  == 0) cfg->std_libs.has_time    = 1;
     }
     fclose(f);
 }
