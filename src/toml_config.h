@@ -54,6 +54,17 @@ typedef struct {
     int         sig_count;
 } TomlFfiEntry;
 
+/* ── Stdlib lib flags — one per opt-in lib ───────────────────────────────── */
+/* Set to 1 when the lib is declared in [libs] of fluxa.toml.
+ * The runtime uses these flags to register lib functions as builtins.
+ * Each lib is only compiled into the binary when its FLUXA_STD_* macro
+ * is defined at build time (set by the Makefile reading fluxa.toml). */
+typedef struct {
+    int has_math;   /* std.math — math functions (sqrt, pow, sin, ...) */
+    int has_csv;    /* std.csv  — CSV parser, returns dyn               */
+    int has_json;   /* std.json — JSON stringify/extract, uses str      */
+} FluxaStdLibs;
+
 /* ── Main config ──────────────────────────────────────────────────────────── */
 typedef struct {
     int          gc_cap;
@@ -61,12 +72,14 @@ typedef struct {
     int          prst_graph_cap;
     TomlFfiEntry ffi[TOML_FFI_MAX];
     int          ffi_count;
+    FluxaStdLibs std_libs;  /* opt-in stdlib — declared in [libs] toml */
 } FluxaConfig;
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 static inline FluxaConfig fluxa_config_defaults(void) {
     FluxaConfig c;
     memset(&c, 0, sizeof(c));
+    /* std_libs: all disabled by default — must be declared in [libs] */
     c.gc_cap         = GC_TABLE_CAP;
     c.prst_cap       = PRST_POOL_INIT_CAP;
     c.prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
@@ -249,8 +262,41 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
     return cfg;
 }
 
+/* ── [libs] section parser ────────────────────────────────────────────────── */
+/* Call after fluxa_config_load to parse [libs] section.
+ * Sets FluxaStdLibs flags based on which libs are declared.
+ * Example toml:
+ *   [libs]
+ *   std.math = "1.0"
+ *   std.csv  = "1.0"
+ */
+static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_path) {
+    FILE *f = fopen(toml_path, "r");
+    if (!f) return;
+    char line[512];
+    int in_libs = 0;
+    while (fgets(line, sizeof(line), f)) {
+        /* Strip leading whitespace */
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        /* Section header */
+        if (*p == '[') {
+            in_libs = (strncmp(p, "[libs]", 6) == 0);
+            continue;
+        }
+        if (!in_libs) continue;
+        /* Parse key = value */
+        if (strncmp(p, "std.math", 8) == 0) cfg->std_libs.has_math = 1;
+        if (strncmp(p, "std.csv",  7) == 0) cfg->std_libs.has_csv  = 1;
+        if (strncmp(p, "std.json", 8) == 0) cfg->std_libs.has_json = 1;
+    }
+    fclose(f);
+}
+
 static inline FluxaConfig fluxa_config_find_and_load(void) {
-    return fluxa_config_load("fluxa.toml");
+    FluxaConfig cfg = fluxa_config_load("fluxa.toml");
+    fluxa_config_load_libs(&cfg, "fluxa.toml");
+    return cfg;
 }
 
 #endif /* FLUXA_TOML_CONFIG_H */

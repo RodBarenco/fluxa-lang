@@ -343,6 +343,12 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             break;
         }
 
+        case NODE_IMPORT_STD:
+            /* Standard library — no name resolution needed at parse time.
+             * Runtime checks FluxaConfig.std_libs to confirm the lib was
+             * declared in [libs] of fluxa.toml before registering it. */
+            break;
+
         /* Sprint 6.b */
         case NODE_IMPORT_C:
             /* library loaded at runtime — nothing to resolve */

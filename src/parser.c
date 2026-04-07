@@ -605,9 +605,44 @@ static ASTNode *parse_statement(Parser *p) {
     /* Sprint 6.b: import c libname [as alias] */
     if (check(p, TOK_IMPORT)) {
         parser_advance(p);
-        /* only "import c" supported here — std/live/static are future */
-        if (!check(p, TOK_IDENT) || strcmp(p->current.value, "c") != 0) {
-            parse_error(p, "only 'import c' is supported in Sprint 6.b");
+        if (!check(p, TOK_IDENT)) {
+            parse_error(p, "expected 'c' or 'std' after 'import'");
+            return NULL;
+        }
+
+        /* import std <lib> — standard library opt-in */
+        if (strcmp(p->current.value, "std") == 0) {
+            parser_advance(p);
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected library name after 'import std'"
+                               " (e.g. 'import std math')");
+                return NULL;
+            }
+            char lib_name[64];
+            strncpy(lib_name, p->current.value, sizeof(lib_name)-1);
+            lib_name[sizeof(lib_name)-1] = '\0';
+            parser_advance(p);
+            /* Validate known libs at parse time */
+            if (strcmp(lib_name, "math") != 0 &&
+                strcmp(lib_name, "csv")  != 0 &&
+                strcmp(lib_name, "json") != 0 &&
+                strcmp(lib_name, "vec")  != 0) {
+                char errbuf[200];
+                snprintf(errbuf, sizeof(errbuf),
+                    "unknown std library '%s' — available: math, csv, json, vec",
+                    lib_name);
+                parse_error(p, errbuf);
+                return NULL;
+            }
+            ASTNode *n = P_NODE();
+            n->type                  = NODE_IMPORT_STD;
+            n->as.import_std.lib_name = P_STR(lib_name);
+            return n;
+        }
+
+        /* import c <lib> [as <alias>] — C FFI */
+        if (strcmp(p->current.value, "c") != 0) {
+            parse_error(p, "expected 'c' or 'std' after 'import'");
             return NULL;
         }
         parser_advance(p);
@@ -631,7 +666,7 @@ static ASTNode *parse_statement(Parser *p) {
             parser_advance(p);
         }
         ASTNode *n = P_NODE();
-        n->type              = NODE_IMPORT_C;
+        n->type                 = NODE_IMPORT_C;
         n->as.import_c.lib_name = P_STR(lib_name);
         n->as.import_c.alias    = P_STR(alias);
         return n;
@@ -925,14 +960,28 @@ static ASTNode *parse_statement(Parser *p) {
 
         if (!expect(p, TOK_EQ, "after variable name")) return NULL;
 
-        /* dyn literal initializer: dyn lista = [expr, expr, ...]
-         * dyn ONLY accepts a literal [...] or a function call returning dyn.
-         * Bare primitives (dyn a = 8) are a type error caught at parse time. */
+        /* dyn initializer rules:
+         *   dyn d = [1, 2, 3]         — literal: always ok
+         *   dyn d = csv.load("f.csv") — function call returning dyn: ok
+         *   dyn d = 8                 — bare primitive: rejected
+         *   dyn d = "hello"           — bare primitive: rejected
+         * We reject only bare literals (int, float, str, bool, nil). */
         ASTNode *init = NULL;
         if (strcmp(type_name, "dyn") == 0 && !check(p, TOK_LBRACKET)) {
-            parse_error(p, "dyn variable must be initialized with a literal"
-                           " '[...]' — bare values are not allowed (dyn a = 8 is invalid)");
-            return NULL;
+            /* Allow identifier (function call like csv.load) — reject bare literals */
+            int is_bare_literal =
+                check(p, TOK_INT)    ||
+                check(p, TOK_FLOAT)  ||
+                check(p, TOK_STRING) ||
+                check(p, TOK_BOOL)   ||
+                check(p, TOK_NIL);
+            if (is_bare_literal) {
+                parse_error(p, "dyn variable must be initialized with a literal"
+                               " '[...]' or a function call — bare values are"
+                               " not allowed (e.g. dyn a = 8 is invalid)");
+                return NULL;
+            }
+            /* Not a bare literal — fall through to parse_expr (handles fn calls) */
         }
         if (strcmp(type_name, "dyn") == 0 && check(p, TOK_LBRACKET)) {
             parser_advance(p); /* consume [ */

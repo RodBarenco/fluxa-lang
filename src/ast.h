@@ -43,6 +43,7 @@ typedef enum {
     NODE_FREE,          /* free(var)       */
     /* Sprint 6.b */
     NODE_IMPORT_C,      /* import c libm   */
+    NODE_IMPORT_STD,    /* import std math */
     NODE_FFI_CALL,      /* libm.sqrt(x)    */
     /* Sprint 9.c */
     NODE_DYN_LIT,       /* [1, "x", true]  — heterogeneous literal  */
@@ -207,6 +208,11 @@ struct ASTNode {
             char *lib_name;   /* "libm", "libc", etc. */
             char *alias;      /* "as fm" — same as lib_name if no alias */
         } import_c;
+
+        /* NODE_IMPORT_STD — import std math/csv/json/vec */
+        struct {
+            char *lib_name;   /* "math", "csv", "json", "vec" */
+        } import_std;
 
         /* NODE_FFI_CALL (Sprint 6.b): alias.symbol(args) inside danger */
         struct {

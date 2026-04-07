@@ -113,6 +113,16 @@ static int rt_type_check(Runtime *rt, ASTNode *node,
 }
 
 /* ── Variable access ─────────────────────────────────────────────────────── */
+#ifdef FLUXA_STD_MATH
+#include "std/math/fluxa_std_math.h"
+#endif
+#ifdef FLUXA_STD_CSV
+#include "std/csv/fluxa_std_csv.h"
+#endif
+#ifdef FLUXA_STD_JSON
+#include "std/json/fluxa_std_json.h"
+#endif
+
 /* ── Block clone free callback ───────────────────────────────────────────── */
 /* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
  * Only frees instances that are dyn-owned clones (not in block_registry). */
@@ -1601,6 +1611,27 @@ static Value eval(Runtime *rt, ASTNode *node) {
         }
 
         /* ── Sprint 6.b: import c and FFI calls ────────────────────────── */
+        /* ── import std <lib> ────────────────────────────────────────────── */
+        case NODE_IMPORT_STD: {
+            const char *lib = node->as.import_std.lib_name;
+            /* Check that the lib was declared in [libs] of fluxa.toml.
+             * If not declared, reject with a clear error — do not silently
+             * allow access to libs that add binary weight without consent. */
+            int declared = 0;
+            if (strcmp(lib, "math") == 0 && rt->config.std_libs.has_math) declared = 1;
+            if (strcmp(lib, "csv")  == 0 && rt->config.std_libs.has_csv)  declared = 1;
+            if (strcmp(lib, "json") == 0 && rt->config.std_libs.has_json) declared = 1;
+            if (!declared) {
+                char buf[280];
+                snprintf(buf, sizeof(buf),
+                    "import std %s: library not declared in [libs] of fluxa.toml."
+                    " Add std.%s = 1.0 to [libs] in fluxa.toml to enable it.",
+                    lib, lib);
+                rt_error(rt, buf);
+            }
+            return val_nil();  /* registration is implicit via config flags */
+        }
+
         case NODE_IMPORT_C: {
             const char *lib_name = node->as.import_c.lib_name;
             const char *alias    = node->as.import_c.alias;
@@ -1748,6 +1779,54 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_MEMBER_CALL: {
             const char *owner  = node->as.member_call.owner;
             const char *method = node->as.member_call.method;
+
+            /* ── std library dispatch — math.fn(), csv.fn(), etc. ─────────── */
+            /* std libs are usable outside danger (unlike import c).           */
+#ifdef FLUXA_STD_MATH
+            if (rt->config.std_libs.has_math && strcmp(owner, "math") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16]; /* max 16 args — more than enough for math */
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_math_call(method, args, argc,
+                                           &rt->err_stack, &rt->had_error,
+                                           rt->current_line);
+            }
+#endif /* FLUXA_STD_MATH */
+
+#ifdef FLUXA_STD_CSV
+            if (rt->config.std_libs.has_csv && strcmp(owner, "csv") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_csv_call(method, args, argc,
+                                          &rt->err_stack, &rt->had_error,
+                                          rt->current_line);
+            }
+#endif /* FLUXA_STD_CSV */
+
+#ifdef FLUXA_STD_JSON
+            if (rt->config.std_libs.has_json && strcmp(owner, "json") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_json_call(method, args, argc,
+                                           &rt->err_stack, &rt->had_error,
+                                           rt->current_line);
+            }
+#endif /* FLUXA_STD_JSON */
+
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {
                 /* Sprint 6.b: try as FFI call — lib.symbol(args) */
@@ -1856,6 +1935,8 @@ int runtime_exec(ASTNode *program) {
     ffi_registry_init(&rt.ffi);
     /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
     ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
+    /* std libs: propagate config flags to runtime (has_math, has_csv, etc.) */
+    rt.config = config;
 
     if (mode == FLUXA_MODE_PROJECT) {
         prst_pool_init(&rt.prst_pool);   /* pool is dynamic; prst_cap used below */
