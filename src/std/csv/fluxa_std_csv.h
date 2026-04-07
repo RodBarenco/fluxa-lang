@@ -68,6 +68,7 @@ typedef struct {
     char  path[512];
     long  byte_offset;   /* position after last csv.next() call */
     int   eof;
+    char  delim;         /* field delimiter (default ',') */
 } CsvCursor;
 
 /* ── Internal helpers ────────────────────────────────────────────────────── */
@@ -204,6 +205,11 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         cur->fp          = fp;
         cur->byte_offset = 0;
         cur->eof         = 0;
+        cur->delim       = FLUXA_CSV_DELIM;
+        /* Optional 2nd arg: delimiter string (e.g. "\t" for TSV, ";" for European CSV) */
+        if (argc >= 2 && args[1].type == VAL_STRING &&
+            args[1].as.string && args[1].as.string[0])
+            cur->delim = args[1].as.string[0];
         strncpy(cur->path, path, sizeof(cur->path)-1);
         cur->path[sizeof(cur->path)-1] = '\0';
 
@@ -337,42 +343,61 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         return csv_nil();
     }
 
-    /* ── csv.field(str row, int idx) → str ──────────────────────────────── */
-    /* Extract the idx-th field (0-based) from a comma-separated row string. */
+    /* ── FSM-based field parser ──────────────────────────────────────────── */
+    /* States: FIELD (normal), QUOTED (inside double-quotes), POST_QUOTE      */
+    /* Handles: embedded delimiters in quotes, escaped quotes (""), newlines  */
+
+    /* ── csv.field(str row, int idx [, str delim]) → str ────────────────── */
     if (strcmp(fn_name, "field") == 0) {
         REQUIRE_ARGC_MIN(2);
         GET_STR(0, row);
         GET_INT(1, idx);
         if (idx < 0) CSV_ERR("field index must be >= 0");
 
-        /* Parse fields inline — no heap allocation */
-        char buf[FLUXA_CSV_MAX_LINE];
-        strncpy(buf, row, sizeof(buf)-1);
-        buf[sizeof(buf)-1] = '\0';
-
         char delim = FLUXA_CSV_DELIM;
-        /* Override delimiter from 3rd arg if provided */
         if (argc >= 3 && args[2].type == VAL_STRING &&
             args[2].as.string && args[2].as.string[0])
             delim = args[2].as.string[0];
 
-        int   field_idx = 0;
-        char *p         = buf;
-        char *start     = buf;
-        while (1) {
-            if (*p == delim || *p == '\0') {
-                if (field_idx == idx) {
-                    char saved = *p;
-                    *p = '\0';
-                    Value ret = csv_str_val(start);
-                    *p = saved;
-                    return ret;
+        char field_buf[FLUXA_CSV_MAX_LINE];
+        int  field_pos   = 0;
+        int  field_idx   = 0;
+        int  in_quotes   = 0;
+        const char *p    = row;
+
+        for (; ; p++) {
+            char c = *p;
+            if (in_quotes) {
+                if (c == '"') {
+                    if (*(p+1) == '"') { /* escaped quote "" */
+                        if (field_idx == idx && field_pos < FLUXA_CSV_MAX_LINE-1)
+                            field_buf[field_pos++] = '"';
+                        p++;
+                    } else {
+                        in_quotes = 0;
+                    }
+                } else if (c == '\0') {
+                    break; /* unterminated quote — treat as end */
+                } else {
+                    if (field_idx == idx && field_pos < FLUXA_CSV_MAX_LINE-1)
+                        field_buf[field_pos++] = c;
                 }
-                if (*p == '\0') break;
-                field_idx++;
-                start = p + 1;
+            } else {
+                if (c == '"' && field_pos == 0) {
+                    in_quotes = 1; /* opening quote at field start */
+                } else if (c == delim || c == '\0') {
+                    if (field_idx == idx) {
+                        field_buf[field_pos] = '\0';
+                        return csv_str_val(field_buf);
+                    }
+                    field_idx++;
+                    field_pos = 0;
+                    if (c == '\0') break;
+                } else {
+                    if (field_idx == idx && field_pos < FLUXA_CSV_MAX_LINE-1)
+                        field_buf[field_pos++] = c;
+                }
             }
-            p++;
         }
 
         snprintf(errbuf, sizeof(errbuf),
@@ -381,7 +406,7 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         CSV_ERR(errbuf);
     }
 
-    /* ── csv.field_count(str row) → int ─────────────────────────────────── */
+    /* ── csv.field_count(str row [, str delim]) → int ───────────────────── */
     if (strcmp(fn_name, "field_count") == 0) {
         REQUIRE_ARGC_MIN(1);
         GET_STR(0, row);
@@ -390,9 +415,12 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
             args[1].as.string && args[1].as.string[0])
             delim = args[1].as.string[0];
 
-        int count = 1;
-        for (const char *p = row; *p; p++)
-            if (*p == delim) count++;
+        int count    = 1;
+        int in_quote = 0;
+        for (const char *p = row; *p; p++) {
+            if (*p == '"') { in_quote = !in_quote; continue; }
+            if (!in_quote && *p == delim) count++;
+        }
         return csv_int((long)count);
     }
 

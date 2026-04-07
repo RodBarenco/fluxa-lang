@@ -259,6 +259,25 @@ static inline Value fluxa_std_math_call(const char *fn_name,
         Value r; r.type = VAL_BOOL; r.as.boolean = isinf(a) ? 1 : 0; return r;
     }
 
+    /* ── Approximate equality ─────────────────────────────────────────────── */
+    /* math.approx(a, b)          — |a - b| < 1e-9 (default epsilon)
+     * math.approx(a, b, epsilon) — |a - b| < epsilon */
+    if (strcmp(fn_name, "approx") == 0) {
+        if (argc < 2) MATH_ERR("approx expects 2 or 3 arguments: approx(a, b [, epsilon])");
+        double va = 0.0, vb = 0.0, eps = 1e-9;
+        char _eb[200];
+        if (!std_math_to_double(&args[0], &va, _eb, sizeof(_eb))) MATH_ERR(_eb);
+        if (!std_math_to_double(&args[1], &vb, _eb, sizeof(_eb))) MATH_ERR(_eb);
+        if (argc >= 3) {
+            if (!std_math_to_double(&args[2], &eps, _eb, sizeof(_eb))) MATH_ERR(_eb);
+            if (eps < 0.0) MATH_ERR("approx: epsilon must be >= 0");
+        }
+        double diff = va - vb;
+        if (diff < 0.0) diff = -diff;
+        Value r; r.type = VAL_BOOL; r.as.boolean = (diff < eps) ? 1 : 0;
+        return r;
+    }
+
 #undef MATH_ERR
 #undef REQUIRE_ARGC
 #undef GET_A
