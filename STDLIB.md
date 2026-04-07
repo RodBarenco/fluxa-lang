@@ -597,6 +597,259 @@ danger {
 }
 ```
 
+
+---
+
+## std.time
+
+Time functions. No `danger` required. Platform-aware: uses `clock_gettime`/`nanosleep` on Linux/macOS, native hardware timers on RP2040 and ESP32.
+
+**Enable:**
+```toml
+[libs]
+std.time = "1.0"
+```
+
+### Function reference
+
+| Function | Returns | Description |
+|---|---|---|
+| `time.sleep(int ms)` | nil | Block current thread for N milliseconds |
+| `time.sleep_us(int us)` | nil | Block current thread for N microseconds |
+| `time.now_ms()` | int | Monotonic timestamp in milliseconds |
+| `time.now_us()` | int | Monotonic timestamp in microseconds |
+| `time.ticks()` | int | Raw hardware tick counter (platform-native resolution) |
+| `time.elapsed_ms(int since)` | int | Milliseconds since a prior `now_ms()` call. Safe against wraparound. |
+| `time.timeout(int start, int max_ms)` | bool | True if at least `max_ms` have passed since `start` |
+| `time.format(int ms)` | str | Human-readable UTC datetime: `"2025-01-15 14:32:01.123"`. On embedded targets without RTC: elapsed time `"00:01:23.456"` |
+
+### The three loop patterns
+
+`std.time` is designed around three documented loop patterns that also determine how `std.flxthread` mailbox drain interacts with the thread:
+
+```fluxa
+import std time
+
+// Pattern 1 — with sleep (IoT, game loops)
+// Mailbox drains at sleep frequency. Predictable latency.
+while active {
+    readings = sensor.read()
+    time.sleep(16)   // ← drain + GC safe point here
+}
+
+// Pattern 2 — hot loop (DSP, control, computation)
+// No sleep. Back-edge drain is O(1) — just one load + branch.
+while i < 10000 {
+    sum = sum + data[i]
+    i = i + 1
+    // ← drain check every iteration, negligible overhead
+}
+
+// Pattern 3 — polling loop (maximum responsiveness)
+// timeout drives exit. Responds to stop signal immediately.
+int t0 = time.now_ms()
+while !time.timeout(t0, 5000) {
+    process_next()
+    // ← exits within one iteration of stop signal
+}
+```
+
+### Example
+
+```fluxa
+import std time
+
+int t0     = time.now_ms()
+time.sleep(100)
+int dt     = time.elapsed_ms(t0)   // ~100
+bool late  = time.timeout(t0, 50)  // true
+str  ts    = time.format(t0)       // "2025-01-15 14:32:01.100"
+print(dt)
+```
+
+---
+
+## std.flxthread
+
+Concurrency for Fluxa. Threads are isolated by default — Block instances have no shared state, no locks required. The only shared resource is `prst` global vars, protected explicitly via `ft.lock()`.
+
+No `danger` required for any `ft.*` call. Not available on embedded targets (`FLUXA_EMBEDDED`).
+
+**Enable:**
+```toml
+[libs]
+std.flxthread = "1.0"
+std.time      = "1.0"   # required for time.sleep in thread loops
+```
+
+**Import with alias:**
+```fluxa
+import std flxthread as ft
+```
+
+### Model
+
+```
+Thread A (main)          Thread B (t1 — e1.update)
+─────────────────        ─────────────────────────
+ft.new("t1", e1, "update")
+                         while health > 0 {
+                             health = health - 1
+ft.message("t1","hit",10)── → mailbox enqueued
+                             time.sleep(16)
+                         }  ← back-edge: drain mailbox
+                             ↳ hit(10) called on e1
+int hp = ft.await("t1","get_health")
+                         ← get_health() called, reply sent
+         ← hp received
+ft.resolve_all()         thread finishes
+                         ← joined
+```
+
+### Function reference
+
+**Thread lifecycle:**
+
+| Function | Blocking? | Description |
+|---|---|---|
+| `ft.new("name", fn_str)` | No | Spawn global function as thread |
+| `ft.new("name", instance, "method")` | No | Spawn Block method as thread |
+| `ft.resolve_all()` | Yes | Wait for all threads to finish. Syncs prst pool to main runtime. |
+| `ft.active("name")` | No | True if thread is still running |
+| `ft.thread_count()` | No | Number of active threads |
+
+**Communication:**
+
+| Function | Blocking? | Description |
+|---|---|---|
+| `ft.message("name", "method")` | No | Enqueue method call. Thread drains at back-edge. |
+| `ft.message("name", "method", arg)` | No | Same, with one argument |
+| `ft.await("name", "method")` | Yes | Enqueue + wait for return value |
+| `ft.await("name", "method", arg)` | Yes | Same, with one argument |
+
+**Stop control:**
+
+| Function | Description |
+|---|---|
+| `ft.stop("name")` | Request cooperative stop. Thread exits at next back-edge. |
+| `ft.kill("name")` | Force stop. Marks thread dead immediately. Pending `ft.await` calls return nil. **WARNING:** `ft.lock()` mutexes held by the killed thread are NOT released. |
+| `ft.should_stop()` | Called inside a thread. Returns true if stop was requested. Use in `while !ft.should_stop()` loops. |
+
+**Shared state:**
+
+| Function | Description |
+|---|---|
+| `ft.lock("var_name")` | Register a prst global var with a mutex. All accesses from any thread are automatically serialized. Only meaningful for prst global scope — Block prst is isolated by design. |
+
+### Stop patterns
+
+```fluxa
+// ft.stop — cooperative. Thread exits at next while back-edge.
+ft.stop("t1")
+ft.resolve_all()
+
+// ft.should_stop — idiomatic for clean shutdown with resource cleanup.
+Block Worker {
+    fn run() nil {
+        while !ft.should_stop() {
+            process()
+            time.sleep(10)
+        }
+        cleanup()   // always runs before thread dies
+        print("shutdown complete")
+    }
+}
+
+// ft.kill — forced. Use when ft.stop would never be observed.
+ft.kill("t1")       // marks dead immediately
+// do NOT call ft.resolve_all() after ft.kill on that thread
+
+// ft.stop + timeout → ft.kill pattern (graceful first, force fallback)
+ft.stop("t1")
+time.sleep(500)
+if ft.active("t1") {
+    ft.kill("t1")
+}
+```
+
+### When to use global fn threads vs Block method threads
+
+| Use case | Recommended | Reason |
+|---|---|---|
+| Simple work, no loops | Global fn thread | Less boilerplate |
+| Loops that mutate prst | **Block method thread** | Block scope isolates vars correctly |
+| Mailbox / `ft.await` | Block method thread | Methods needed for dispatch |
+| `ft.stop` / `ft.should_stop` | Either | Both patterns supported |
+
+> **Implementation note:** `while` loops compile to the bytecode VM, which
+> accesses prst variables by name via scope — independent of stack slot
+> assignments. Local fn variables (`int i`) use stack slots that overlap with
+> global prst slots in the resolver numbering, but this does not cause
+> aliasing because the VM separates the two lookups. For prst + loop patterns,
+> Block method threads are the idiomatic choice in Fluxa.
+
+### Decision table
+
+| Scenario | Use | Why |
+|---|---|---|
+| Loop with `time.sleep` | `ft.stop()` | Thread observes stop at next back-edge |
+| Hot loop, no sleep | `ft.stop()` | Back-edge runs every iteration, stops fast |
+| Thread stuck in long operation | `ft.kill()` | `ft.stop()` won't be observed |
+| Holding `ft.lock()` | `ft.stop()` + timeout → `ft.kill()` | Avoid leaving mutex inconsistent |
+| Application shutdown | `ft.stop()` all → `ft.kill()` remaining | Graceful first |
+
+### Full example (from the design spec)
+
+```fluxa
+import std flxthread as ft
+import std time
+
+prst int contador = 0
+ft.lock("contador")
+
+fn incrementar() nil {
+    contador = contador + 1
+}
+
+Block Enemy {
+    prst int health = 100
+
+    fn update() nil {
+        while !ft.should_stop() {
+            health = health - 1
+            time.sleep(16)
+        }
+    }
+
+    fn hit(int damage) nil { health = health - damage }
+    fn get_health() int { return health }
+}
+
+Block e1 typeof Enemy
+Block e2 typeof Enemy
+
+ft.new("t1", e1, "update")
+ft.new("t2", e2, "update")
+ft.new("t3", "incrementar")
+
+time.sleep(40)
+ft.message("t1", "hit", 10)
+int hp = ft.await("t1", "get_health")
+print(hp)
+
+ft.stop("t1")
+ft.stop("t2")
+ft.resolve_all()
+print(contador)
+```
+
+### Notes
+
+- `ft.message` and `ft.await` map to **real declared methods** on the Block. If the method doesn't exist, it's a runtime error.
+- Each thread gets its own `Runtime` clone — stack and scope are fully isolated. `prst` global vars are shared via the prst pool and synced on every `NODE_ASSIGN`.
+- Mailbox drain happens at the **while back-edge** — the same safe point used by the GC. Fast path: O(1) when no messages.
+- `ft.resolve_all()` syncs the prst pool back to the main runtime's stack after all threads finish.
+
 ---
 
 ## Buffer Configuration Reference
