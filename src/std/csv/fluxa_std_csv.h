@@ -160,11 +160,14 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
                                         const Value *args, int argc,
                                         ErrStack *err, int *had_error,
                                         int line) {
-    char errbuf[320];
+    char errbuf[1024];
 
 #define CSV_ERR(msg) do { \
-    snprintf(errbuf, sizeof(errbuf), "csv.%s (line %d): %s", \
-             fn_name, line, (msg)); \
+    /* Two-step: build prefix separately to avoid restrict/truncation warnings */ \
+    char _m[1024]; \
+    strncpy(_m, msg, sizeof(_m)-1); _m[sizeof(_m)-1] = '\0'; \
+    snprintf(errbuf, sizeof(errbuf), "csv.%s (line %d): %.900s", \
+             fn_name, line, _m); \
     errstack_push(err, ERR_FLUXA, errbuf, "csv", line); \
     *had_error = 1; return csv_nil(); \
 } while(0)
@@ -284,11 +287,7 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
             offset = (long)args[2].as.integer;
 
         FILE *fp = fopen(path, "r");
-        if (!fp) {
-            snprintf(errbuf, sizeof(errbuf),
-                "csv.chunk: cannot open '%s'", path);
-            CSV_ERR(errbuf);
-        }
+        if (!fp) { CSV_ERR("cannot open file for chunk (check path)"); }
         if (offset > 0) fseek(fp, offset, SEEK_SET);
 
         FluxaDyn *chunk = csv_read_chunk(fp, chunk_size, err, had_error, line);
@@ -305,11 +304,7 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         GET_STR(0, path);
 
         FILE *fp = fopen(path, "r");
-        if (!fp) {
-            snprintf(errbuf, sizeof(errbuf),
-                "csv.load: cannot open '%s'", path);
-            CSV_ERR(errbuf);
-        }
+        if (!fp) { CSV_ERR("cannot open file for load (check path)"); }
 
         /* Read entire file — use a large chunk_size */
         FluxaDyn *all = csv_read_chunk(fp, 1<<30, err, had_error, line);
@@ -328,11 +323,7 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         GET_STR(1, path);
 
         FILE *fp = fopen(path, "w");
-        if (!fp) {
-            snprintf(errbuf, sizeof(errbuf),
-                "csv.save: cannot write '%s'", path);
-            CSV_ERR(errbuf);
-        }
+        if (!fp) { CSV_ERR("cannot open file for writing (check path and permissions)"); }
 
         FluxaDyn *d = args[0].as.dyn;
         for (int i = 0; i < d->count; i++) {
@@ -400,10 +391,7 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
             }
         }
 
-        snprintf(errbuf, sizeof(errbuf),
-            "csv.field: index %d out of range (row has %d fields)",
-            idx, field_idx + 1);
-        CSV_ERR(errbuf);
+        CSV_ERR("field index out of range");
     }
 
     /* ── csv.field_count(str row [, str delim]) → int ───────────────────── */

@@ -212,11 +212,14 @@ static inline Value fluxa_std_json_call(const char *fn_name,
                                          const Value *args, int argc,
                                          ErrStack *err, int *had_error,
                                          int line) {
-    char errbuf[400];
+    char errbuf[1024];
 
 #define JSON_ERR(msg) do { \
-    snprintf(errbuf, sizeof(errbuf), "json.%s (line %d): %s", \
-             fn_name, line, (msg)); \
+    /* Two-step: build prefix separately to avoid restrict/truncation warnings */ \
+    char _m[1024]; \
+    strncpy(_m, msg, sizeof(_m)-1); _m[sizeof(_m)-1] = '\0'; \
+    snprintf(errbuf, sizeof(errbuf), "json.%s (line %d): %.900s", \
+             fn_name, line, _m); \
     errstack_push(err, ERR_FLUXA, errbuf, "json", line); \
     *had_error = 1; return json_nil(); \
 } while(0)
@@ -354,7 +357,7 @@ static inline Value fluxa_std_json_call(const char *fn_name,
                 p = json_read_string(p, vbuf, sizeof(vbuf));
                 if (!p) break;
                 /* vbuf has the unquoted string — re-quote for consistency */
-                char quoted[FLUXA_JSON_MAX_STR];
+                char quoted[FLUXA_JSON_MAX_STR + 4];
                 snprintf(quoted, sizeof(quoted), "\"%s\"", vbuf);
                 if (d->count >= d->cap) {
                     int nc = d->cap * 2;
@@ -484,7 +487,7 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         GET_STR(0, obj); GET_STR(1, key); GET_STR(2, val);
 
         /* Build new JSON object — simple append or replace */
-        char out[FLUXA_JSON_MAX_STR * 2];
+        char out[FLUXA_JSON_MAX_STR * 4];
         const char *p = json_skip_ws(obj);
         if (*p != '{') JSON_ERR("json.set: first argument must be a JSON object");
 
