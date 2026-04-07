@@ -628,13 +628,21 @@ static ASTNode *parse_statement(Parser *p) {
             strncpy(lib_name, p->current.value, sizeof(lib_name)-1);
             lib_name[sizeof(lib_name)-1] = '\0';
             parser_advance(p);
+            /* Optional: import std flxthread as ft — alias ignored at parse time,
+             * the lib namespace is fixed by the lib name in dispatch.
+             * We consume "as alias" to avoid parse errors. */
+            if (check(p, TOK_IDENT) && strcmp(p->current.value, "as") == 0) {
+                parser_advance(p); /* skip "as" */
+                if (check(p, TOK_IDENT)) parser_advance(p); /* skip alias */
+            }
             /* Validate known libs at parse time */
             if (strcmp(lib_name, "math") != 0 &&
                 strcmp(lib_name, "csv")  != 0 &&
                 strcmp(lib_name, "json") != 0 &&
                 strcmp(lib_name, "vec")  != 0 &&
                 strcmp(lib_name, "strings") != 0 &&
-                strcmp(lib_name, "time")    != 0) {
+                strcmp(lib_name, "time")      != 0 &&
+                strcmp(lib_name, "flxthread") != 0) {
                 char errbuf[200];
                 snprintf(errbuf, sizeof(errbuf),
                     "unknown std library '%s' — available: math, csv, json, str, vec",

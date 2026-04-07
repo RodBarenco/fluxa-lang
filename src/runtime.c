@@ -128,6 +128,13 @@ static int rt_type_check(Runtime *rt, ASTNode *node,
 #ifdef FLUXA_STD_TIME
 #include "std/time/fluxa_std_time.h"
 #endif
+#ifdef FLUXA_STD_FLXTHREAD
+#include "std/flxthread/fluxa_std_flxthread.h"
+extern Value fluxa_std_flxthread_call(const char *fn_name,
+                                       const Value *args, int argc,
+                                       ErrStack *err, int *had_error,
+                                       int line, void *rt_ptr);
+#endif
 
 /* ── Block clone free callback ───────────────────────────────────────────── */
 /* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
@@ -923,6 +930,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (rt->had_error || rt->ret.active) break;
                     /* GC safe point at while back-edge — only sweep when dyn objects exist */
                     if (rt->gc.count > 0) gc_sweep(&rt->gc, gc_dyn_free_fn);
+#ifdef FLUXA_STD_FLXTHREAD
+                    /* flxthread mailbox drain — O(1) fast path when no messages */
+                    if (rt->current_thread)
+                        flx_mailbox_drain((FlxThread *)rt->current_thread,
+                                          rt, rt->current_instance);
+#endif
                     /* IPC safe point (Sprint 9.b) */
                     if (g_ipc_view) ipc_rtview_update(g_ipc_view, rt);
                     ipc_apply_pending_set(rt);
@@ -1725,7 +1738,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (strcmp(lib, "csv")  == 0 && rt->config.std_libs.has_csv)  declared = 1;
             if (strcmp(lib, "json") == 0 && rt->config.std_libs.has_json) declared = 1;
             if (strcmp(lib, "strings") == 0 && rt->config.std_libs.has_strings) declared = 1;
-            if (strcmp(lib, "time")    == 0 && rt->config.std_libs.has_time)    declared = 1;
+            if (strcmp(lib, "time")      == 0 && rt->config.std_libs.has_time)      declared = 1;
+            if (strcmp(lib, "flxthread") == 0 && rt->config.std_libs.has_flxthread) declared = 1;
+            if (strcmp(lib, "ft")         == 0 && rt->config.std_libs.has_flxthread) declared = 1;
             if (!declared) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
@@ -1962,6 +1977,21 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
 #endif /* FLUXA_STD_TIME */
 
+#ifdef FLUXA_STD_FLXTHREAD
+            if (rt->config.std_libs.has_flxthread && strcmp(owner, "ft") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_flxthread_call(method, args, argc,
+                                                &rt->err_stack, &rt->had_error,
+                                                rt->current_line, rt);
+            }
+#endif /* FLUXA_STD_FLXTHREAD */
+
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {
                 /* Sprint 6.b: try as FFI call — lib.symbol(args) */
@@ -2022,6 +2052,50 @@ static Value eval(Runtime *rt, ASTNode *node) {
     }
 }
 
+/* ── Per-thread Runtime clone ────────────────────────────────────────────── */
+Runtime *runtime_clone_for_thread(Runtime *parent) {
+    Runtime *rt = (Runtime *)calloc(1, sizeof(Runtime));
+    if (!rt) return NULL;
+    /* Own fields — each thread gets a fresh copy */
+    for (int i = 0; i < FLUXA_STACK_SIZE; i++) rt->stack[i].type = VAL_NIL;
+    rt->stack_size       = 0;
+    rt->had_error        = 0;
+    rt->danger_depth     = 0;
+    rt->call_depth       = 0;
+    rt->current_instance = NULL;
+    rt->current_thread   = NULL;
+    rt->dry_run          = 0;
+    rt->current_line     = 0;
+    rt->ret.active       = 0;
+    rt->ret.tco_active   = 0;
+    errstack_clear(&rt->err_stack);
+    /* Shared fields — read from parent */
+    rt->global_table = parent->global_table;  /* fn lookup — read-only */
+    rt->config       = parent->config;         /* lib flags — read-only */
+    rt->mode         = parent->mode;
+    rt->cancel_flag  = parent->cancel_flag;
+    /* Shared mutable — prst pool needs external mutex for thread safety */
+    rt->prst_pool    = parent->prst_pool;
+    rt->prst_graph   = parent->prst_graph;
+    /* GC: each thread has its own GC table to avoid races on dyn alloc */
+    gc_init(&rt->gc, parent->config.gc_cap > 0 ? parent->config.gc_cap : 256);
+    /* FFI: shared (read-only after init) */
+    rt->ffi          = parent->ffi;
+    /* IPC: not used in threads */
+    return rt;
+}
+
+void runtime_free_thread_clone(Runtime *clone) {
+    if (!clone) return;
+    gc_sweep(&clone->gc, gc_dyn_free_fn);
+    free(clone);
+}
+
+/* ── Public eval wrapper for std libs ────────────────────────────────────── */
+Value runtime_eval(Runtime *rt, ASTNode *node) {
+    return eval(rt, node);
+}
+
 /* ── Public API ──────────────────────────────────────────────────────────── */
 int runtime_exec(ASTNode *program) {
     if (!program || program->type != NODE_PROGRAM) {
@@ -2058,6 +2132,7 @@ int runtime_exec(ASTNode *program) {
     rt.ret.tco_args     = NULL;
     rt.ret.value        = val_nil();
     rt.current_instance = NULL;
+    rt.current_thread    = NULL;
     rt.danger_depth     = 0;
     rt.cycle_count      = 0;
     rt.dry_run          = 0;
