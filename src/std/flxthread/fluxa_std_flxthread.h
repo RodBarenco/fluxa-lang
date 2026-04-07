@@ -85,6 +85,9 @@ typedef struct FlxThread {
     /* Global function path */
     void       *fn_node;       /* ASTNode* of the function              */
 
+    /* Lifecycle state */
+    volatile int stop_requested;  /* set by ft.stop/kill, read at back-edge */
+
     /* Mailbox */
     pthread_mutex_t  mb_mu;
     FlxMessage       mb_queue[FLUXA_MAILBOX_MAX];
@@ -113,6 +116,11 @@ typedef struct {
     FlxNamedLock locks[FLUXA_LOCK_MAX];
     int          lock_count;
 } FlxRegistry;
+
+/* Thread-local pointer to the current FlxThread (set by each runner).
+ * Allows ft.should_stop() to work without name lookup. */
+/* defined in fluxa_std_flxthread.c — extern avoids unused-variable warning */
+extern __thread FlxThread *g_current_flx_thread;
 
 /* One global registry per process */
 static FlxRegistry g_flx_registry = {

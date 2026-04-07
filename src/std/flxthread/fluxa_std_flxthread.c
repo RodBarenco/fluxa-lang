@@ -10,6 +10,9 @@
 
 #include <time.h>
 #include "fluxa_std_flxthread.h"
+
+/* Thread-local pointer to the current FlxThread */
+__thread FlxThread *g_current_flx_thread = NULL;
 #include "../../runtime.h"
 #include "../../block.h"
 #include "../../scope.h"
@@ -86,6 +89,7 @@ static Value flx_invoke_method(Runtime *rt, BlockInstance *inst,
  *   2. Hot loop no sleep — drain runs every iteration, O(1) fast path
  *   3. Polling loop      — drain runs every iteration for max responsiveness */
 int flx_mailbox_drain(FlxThread *t, void *rt_ptr, void *instance_ptr) {
+    if (t->stop_requested) return -1; /* stop requested — O(1) check */
     if (t->mb_count == 0) return 0;   /* fast path — no lock needed */
 
     Runtime  *rt   = (Runtime *)rt_ptr;
@@ -139,6 +143,7 @@ static void *flx_block_runner(void *arg) {
 
     rt->current_thread   = t;
     rt->current_instance = inst;
+    g_current_flx_thread = t;
 
     flx_invoke_method(rt, inst, t->method, flxt_nil(), 0);
     runtime_free_thread_clone(rt);
@@ -161,11 +166,12 @@ static void *flx_fn_runner(void *arg) {
     Runtime *rt = runtime_clone_for_thread(parent);
     if (!rt) { t->active = 0; return NULL; }
     rt->current_thread = t;
+    g_current_flx_thread = t;
 
-    /* Restore prst vars into clone scope so NODE_ASSIGN can find them
-     * by name (rt_get falls back to scope when stack slot is NIL).
-     * NODE_ASSIGN already calls prst_pool_set on every write, so the
-     * shared pool is updated automatically during fn execution. */
+    /* Restore prst vars into clone scope so NODE_ASSIGN and rt_get
+     * can find them by name (scope fallback when stack slot is NIL).
+     * Note: while-loops compile to the bytecode VM which reads prst
+     * via scope_get directly; tree-walk paths use rt_get fallback. */
     if (rt->mode == FLUXA_MODE_PROJECT) {
         for (int _pi = 0; _pi < rt->prst_pool.count; _pi++) {
             PrstEntry *_pe = &rt->prst_pool.entries[_pi];
@@ -174,7 +180,7 @@ static void *flx_fn_runner(void *arg) {
     }
 
     runtime_eval(rt, fn->as.func_decl.body);
-    /* No explicit writeback needed: NODE_ASSIGN syncs pool automatically. */
+    /* No explicit writeback needed: NODE_ASSIGN syncs pool on every write. */
 
     runtime_free_thread_clone(rt);
 
@@ -191,11 +197,13 @@ Value fluxa_std_flxthread_call(const char *fn_name,
                                 ErrStack *err, int *had_error,
                                 int line, void *rt_ptr) {
     Runtime *rt = (Runtime *)rt_ptr;
-    char errbuf[320];
+    char errbuf[1024];
 
 #define FT_ERR(msg) do { \
-    snprintf(errbuf, sizeof(errbuf), "ft.%s (line %d): %s", \
-             fn_name, line, (msg)); \
+    char _fm[1024]; \
+    strncpy(_fm, msg, sizeof(_fm)-1); _fm[sizeof(_fm)-1] = '\0'; \
+    snprintf(errbuf, sizeof(errbuf), "ft.%s (line %d): %.900s", \
+             fn_name, line, _fm); \
     errstack_push(err, ERR_FLUXA, errbuf, "flxthread", line); \
     *had_error = 1; return flxt_nil(); \
 } while(0)
@@ -377,6 +385,11 @@ Value fluxa_std_flxthread_call(const char *fn_name,
                 }
             pthread_mutex_unlock(&t->drain_mu);
         }
+        /* Memory barrier: ensure all child thread writes to prst_pool
+         * are visible to the main thread before we read the pool. */
+        pthread_mutex_lock(&g_flx_registry.registry_mu);
+        pthread_mutex_unlock(&g_flx_registry.registry_mu);
+
         /* Sync main runtime stack from prst_pool so main thread sees
          * any prst writes made by child threads (global fn threads). */
         if (rt->mode == FLUXA_MODE_PROJECT) {
@@ -392,6 +405,56 @@ Value fluxa_std_flxthread_call(const char *fn_name,
             }
         }
         return flxt_nil();
+    }
+
+    /* ── ft.stop("name") — cooperative stop ────────────────────────────── */
+    if (strcmp(fn_name, "stop") == 0) {
+        NEED(1); GET_STR(0, tname);
+        FlxThread *t = flx_find_thread(tname);
+        if (!t) { snprintf(errbuf, sizeof(errbuf),
+            "ft.stop: thread '%s' not found", tname); FT_ERR(errbuf); }
+        t->stop_requested = 1;
+        return flxt_nil();
+    }
+
+    /* ── ft.kill("name") — forced stop ──────────────────────────────────── */
+    /* Sets stop_requested and marks thread dead. Does NOT call pthread_cancel.
+     * WARNING: ft.lock() mutexes held by this thread are NOT released.
+     * Pending ft.await() calls are unblocked with nil return value. */
+    if (strcmp(fn_name, "kill") == 0) {
+        NEED(1); GET_STR(0, tname);
+        FlxThread *t = flx_find_thread(tname);
+        if (!t) { snprintf(errbuf, sizeof(errbuf),
+            "ft.kill: thread '%s' not found", tname); FT_ERR(errbuf); }
+        t->stop_requested = 1;
+        /* Unblock any ft.await waiting on this thread */
+        pthread_mutex_lock(&t->mb_mu);
+        while (t->mb_count > 0) {
+            FlxMessage *msg = &t->mb_queue[t->mb_head];
+            if (msg->reply) {
+                pthread_mutex_lock(&msg->reply->mu);
+                msg->reply->value = flxt_nil();
+                msg->reply->ready = 1;
+                pthread_cond_signal(&msg->reply->cv);
+                pthread_mutex_unlock(&msg->reply->mu);
+            }
+            t->mb_head = (t->mb_head + 1) % FLUXA_MAILBOX_MAX;
+            t->mb_count--;
+        }
+        pthread_mutex_unlock(&t->mb_mu);
+        t->active = 0;
+        pthread_mutex_lock(&t->drain_mu);
+        pthread_cond_broadcast(&t->drain_cv);
+        pthread_mutex_unlock(&t->drain_mu);
+        return flxt_nil();
+    }
+
+    /* ── ft.should_stop() → bool ─────────────────────────────────────────── */
+    /* Called INSIDE a thread to check if stop was requested.
+     * O(1) via thread-local pointer. Usage: while !ft.should_stop() { ... } */
+    if (strcmp(fn_name, "should_stop") == 0) {
+        FlxThread *t = g_current_flx_thread;
+        return flxt_bool(t && t->stop_requested ? 1 : 0);
     }
 
     /* ── ft.active("name") → bool ───────────────────────────────────────── */

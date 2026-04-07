@@ -53,6 +53,7 @@ typedef struct Runtime {
 
     /* Sprint 5 */
     BlockInstance *current_instance;
+    void          *current_thread;    /* FlxThread* — set by flxthread runner */
 
     /* Sprint 6 */
     int            danger_depth;
@@ -109,4 +110,15 @@ void runtime_set_ipc_view(void *view);
  * The Runtime must have been zero-initialized by the caller; this fn fills
  * scope, stack and executes program_node. Does not allocate or free rt. */
 int runtime_exec_with_rt(Runtime *rt, ASTNode *program);
+
+/* Public eval wrapper — for use by std libs that need to call
+ * Fluxa code from C (e.g. std.flxthread method invocation). */
+Value runtime_eval(Runtime *rt, ASTNode *node);
+
+/* Create a lightweight per-thread Runtime clone.
+ * The clone has its own stack, scope, and error state.
+ * It shares global_table (read-only fn lookup) and config.
+ * The caller must free the clone with runtime_free_thread_clone(). */
+Runtime *runtime_clone_for_thread(Runtime *parent);
+void     runtime_free_thread_clone(Runtime *clone);
 
