@@ -39,7 +39,7 @@
 #include <unistd.h>
 
 /* ── Protocol version ─────────────────────────────────────────────────── */
-#define FLUXA_HANDOVER_VERSION  1000u   /* v1.000 */
+#define FLUXA_HANDOVER_VERSION  1001u   /* v1.001 — wire format adds init_value */
 #define FLUXA_HANDOVER_MAGIC    0xF10A8888u
 
 /* ── Handover mode ────────────────────────────────────────────────────── */

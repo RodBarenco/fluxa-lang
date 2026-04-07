@@ -21,7 +21,8 @@
 
 typedef struct {
     char    name[256];
-    Value   value;
+    Value   value;          /* current runtime value (mutated at runtime)       */
+    Value   init_value;     /* declared initializer — stored once, never mutated */
     ValType declared_type;
     int     stack_offset;   /* resolved_offset of the VAR_DECL node, -1 if unknown */
 } PrstEntry;
@@ -104,6 +105,13 @@ static inline int prst_pool_set(PrstPool *p, const char *name,
     if (value.type == VAL_STRING && value.as.string)
         value.as.string = strdup(value.as.string);
     p->entries[p->count].value        = value;
+    /* Store the declared initializer value — used to detect source edits on reload.
+     * A separate strdup because init_value and value can diverge at runtime. */
+    p->entries[p->count].init_value   = p->entries[p->count].value;
+    if (p->entries[p->count].init_value.type == VAL_STRING &&
+        p->entries[p->count].init_value.as.string)
+        p->entries[p->count].init_value.as.string =
+            strdup(p->entries[p->count].init_value.as.string);
     p->entries[p->count].stack_offset = -1;   /* set by caller after decl */
     return p->count++;
 }
@@ -176,26 +184,55 @@ static inline uint32_t prst_pool_checksum(const PrstPool *p) {
  *   char name[256]
  *   int32 declared_type
  *   int32 stack_offset
- *   int64 int_val        (valid when declared_type == VAL_INT)
- *   double float_val     (valid when declared_type == VAL_FLOAT)
- *   int32 bool_val       (valid when declared_type == VAL_BOOL)
- *   int32 str_len        (0 if not VAL_STRING)
- *   char str_data[str_len]   (inline, no nul-terminator in wire)
+ *   --- runtime value (current, possibly mutated) ---
+ *   int64 int_val
+ *   double float_val
+ *   int32 bool_val
+ *   int32 str_len
+ *   char str_data[str_len]
+ *   --- init_value (declared default at first run) ---
+ *   int64 init_int_val
+ *   double init_float_val
+ *   int32 init_bool_val
+ *   int32 init_str_len
+ *   char init_str_data[init_str_len]
  *
  * Strings are inlined to avoid pointer issues during transfer.
  * Caller must free(*out_buf). Returns 1 on success, 0 on failure.
  */
+/* Helper: serialize one Value block into wire buffer */
+static inline char *prst_ser_value(char *w, const Value *v) {
+    int64_t iv  = (v->type == VAL_INT)   ? (int64_t)v->as.integer : 0;
+    double  fv  = (v->type == VAL_FLOAT) ? v->as.real             : 0.0;
+    int32_t bv  = (v->type == VAL_BOOL)  ? v->as.boolean          : 0;
+    int32_t slen = 0;
+    if (v->type == VAL_STRING && v->as.string)
+        slen = (int32_t)strlen(v->as.string);
+    memcpy(w, &iv,   sizeof(int64_t)); w += sizeof(int64_t);
+    memcpy(w, &fv,   sizeof(double));  w += sizeof(double);
+    memcpy(w, &bv,   sizeof(int32_t)); w += sizeof(int32_t);
+    memcpy(w, &slen, sizeof(int32_t)); w += sizeof(int32_t);
+    if (slen > 0) { memcpy(w, v->as.string, (size_t)slen); w += slen; }
+    return w;
+}
+
+/* Helper: byte count of one serialized Value */
+static inline size_t prst_value_wire_size(const Value *v) {
+    size_t s = sizeof(int64_t) + sizeof(double) + sizeof(int32_t)*2;
+    if (v->type == VAL_STRING && v->as.string)
+        s += strlen(v->as.string);
+    return s;
+}
+
 static inline int prst_pool_serialize(const PrstPool *p,
                                        void **out_buf, size_t *out_size) {
-    /* Two-pass: first calculate size, then fill
-     * Per entry: name[256] + dt(int32) + so(int32) + iv(int64) + fv(double)
-     *            + bv(int32) + slen(int32) + str_data[slen]
-     * = 256 + 4 + 4 + 8 + 8 + 4 + 4 + slen = 288 + slen  */
-    size_t sz = sizeof(int32_t);
+    /* Per entry: name[256] + dt(i32) + so(i32) + value_block + init_value_block
+     * value_block = i64 + f64 + i32 + i32 + str_data */
+    size_t sz = sizeof(int32_t); /* count */
     for (int i = 0; i < p->count; i++) {
-        sz += 256 + sizeof(int32_t)*4 + sizeof(int64_t) + sizeof(double);
-        if (p->entries[i].value.type == VAL_STRING && p->entries[i].value.as.string)
-            sz += (size_t)strlen(p->entries[i].value.as.string);
+        sz += 256 + sizeof(int32_t)*2;   /* name + declared_type + stack_offset */
+        sz += prst_value_wire_size(&p->entries[i].value);
+        sz += prst_value_wire_size(&p->entries[i].init_value);
     }
     char *buf = (char*)malloc(sz);
     if (!buf) return 0;
@@ -206,34 +243,41 @@ static inline int prst_pool_serialize(const PrstPool *p,
 
     for (int i = 0; i < p->count; i++) {
         const PrstEntry *e = &p->entries[i];
-        /* name */
         memcpy(w, e->name, 256); w += 256;
-        /* declared_type */
         int32_t dt = (int32_t)e->declared_type;
         memcpy(w, &dt, sizeof(int32_t)); w += sizeof(int32_t);
-        /* stack_offset */
         int32_t so = (int32_t)e->stack_offset;
         memcpy(w, &so, sizeof(int32_t)); w += sizeof(int32_t);
-        /* int_val */
-        int64_t iv = (e->value.type == VAL_INT) ? (int64_t)e->value.as.integer : 0;
-        memcpy(w, &iv, sizeof(int64_t)); w += sizeof(int64_t);
-        /* float_val */
-        double fv = (e->value.type == VAL_FLOAT) ? e->value.as.real : 0.0;
-        memcpy(w, &fv, sizeof(double)); w += sizeof(double);
-        /* bool_val */
-        int32_t bv = (e->value.type == VAL_BOOL) ? e->value.as.boolean : 0;
-        memcpy(w, &bv, sizeof(int32_t)); w += sizeof(int32_t);
-        /* str_len + str_data */
-        int32_t slen = 0;
-        if (e->value.type == VAL_STRING && e->value.as.string)
-            slen = (int32_t)strlen(e->value.as.string);
-        memcpy(w, &slen, sizeof(int32_t)); w += sizeof(int32_t);
-        if (slen > 0) { memcpy(w, e->value.as.string, (size_t)slen); w += slen; }
+        w = prst_ser_value(w, &e->value);
+        w = prst_ser_value(w, &e->init_value);
     }
 
     *out_buf  = buf;
     *out_size = (size_t)(w - buf);
     return 1;
+}
+
+/* Helper: read one Value from wire buffer */
+static inline const char *prst_deser_value(const char *r, const char *end,
+                                            ValType dt, Value *out) {
+    if (r + sizeof(int64_t) + sizeof(double) + sizeof(int32_t)*2 > end) return NULL;
+    int64_t iv; memcpy(&iv, r, sizeof(int64_t)); r += sizeof(int64_t);
+    double  fv; memcpy(&fv, r, sizeof(double));  r += sizeof(double);
+    int32_t bv; memcpy(&bv, r, sizeof(int32_t)); r += sizeof(int32_t);
+    int32_t sl; memcpy(&sl, r, sizeof(int32_t)); r += sizeof(int32_t);
+    if (sl < 0 || r + sl > end) return NULL;
+    out->type = dt;
+    switch (dt) {
+        case VAL_INT:    out->as.integer = (long)iv; break;
+        case VAL_FLOAT:  out->as.real    = fv; break;
+        case VAL_BOOL:   out->as.boolean = (int)bv; break;
+        case VAL_STRING:
+            out->as.string = sl > 0 ? (char*)malloc((size_t)sl+1) : strdup("");
+            if (sl > 0) { memcpy(out->as.string, r, (size_t)sl); out->as.string[sl]='\0'; }
+            break;
+        default: out->type = VAL_NIL; break;
+    }
+    return r + sl;
 }
 
 /* Deserialize into an existing PrstPool (resets it first).
@@ -252,37 +296,37 @@ static inline int prst_pool_deserialize(PrstPool *p,
     prst_pool_init(p);
 
     for (int i = 0; i < cnt; i++) {
-        if (r + 256 + sizeof(int32_t)*4 + sizeof(int64_t) + sizeof(double) > end)
-            return 0;
+        if (r + 256 + sizeof(int32_t)*2 > end) return 0;
         char name[256];
         memcpy(name, r, 256); name[255] = '\0'; r += 256;
         int32_t dt; memcpy(&dt, r, sizeof(int32_t)); r += sizeof(int32_t);
         int32_t so; memcpy(&so, r, sizeof(int32_t)); r += sizeof(int32_t);
-        int64_t iv; memcpy(&iv, r, sizeof(int64_t)); r += sizeof(int64_t);
-        double  fv; memcpy(&fv, r, sizeof(double));  r += sizeof(double);
-        int32_t bv; memcpy(&bv, r, sizeof(int32_t)); r += sizeof(int32_t);
-        int32_t slen; memcpy(&slen, r, sizeof(int32_t)); r += sizeof(int32_t);
-        if (slen < 0 || r + slen > end) return 0;
 
-        Value v; v.type = (ValType)dt;
-        switch (v.type) {
-            case VAL_INT:    v.as.integer = (long)iv; break;
-            case VAL_FLOAT:  v.as.real    = fv; break;
-            case VAL_BOOL:   v.as.boolean = (int)bv; break;
-            case VAL_STRING:
-                v.as.string = slen > 0 ? (char*)malloc((size_t)slen + 1) : strdup("");
-                if (slen > 0) { memcpy(v.as.string, r, (size_t)slen); v.as.string[slen] = '\0'; }
-                break;
-            default:         v.type = VAL_NIL; break;
-        }
-        r += slen;
+        /* runtime value */
+        Value v = {0};
+        r = prst_deser_value(r, end, (ValType)dt, &v);
+        if (!r) return 0;
+
+        /* init_value (declared default at first run) */
+        Value iv_val = {0};
+        r = prst_deser_value(r, end, (ValType)dt, &iv_val);
+        if (!r) return 0;
 
         int idx = prst_pool_set(p, name, v, NULL);
         if (idx >= 0) {
             p->entries[idx].declared_type = (ValType)dt;
             p->entries[idx].stack_offset  = (int)so;
+            /* Restore init_value from wire — this is the key to correct
+             * reload detection: the source default that was declared at first run. */
+            if (p->entries[idx].init_value.type == VAL_STRING &&
+                p->entries[idx].init_value.as.string)
+                free(p->entries[idx].init_value.as.string);
+            p->entries[idx].init_value = iv_val;
+        } else {
+            /* Free strings if not stored */
+            if (iv_val.type == VAL_STRING && iv_val.as.string)
+                free(iv_val.as.string);
         }
-        /* free string we just copied — prst_pool_set will strdup again */
         if (v.type == VAL_STRING && v.as.string) free(v.as.string);
     }
     return 1;

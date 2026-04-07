@@ -616,21 +616,30 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         Value src_init = eval(rt, node->as.var_decl.initializer);
                         if (rt->had_error) return val_nil();
 
+                        /* Compare new source initializer against init_value
+                         * (the declared value at first run or at migration time).
+                         * If they differ → user edited the source → use source.
+                         * If they match → runtime mutated the value → keep pooled. */
+                        int entry_idx = prst_pool_find(&rt->prst_pool, vname);
+                        Value ref = (entry_idx >= 0)
+                            ? rt->prst_pool.entries[entry_idx].init_value
+                            : pooled;
+
                         int src_changed = 0;
-                        if (src_init.type != pooled.type) {
+                        if (src_init.type != ref.type) {
                             src_changed = 1;
                         } else if (src_init.type == VAL_INT &&
-                                   src_init.as.integer != pooled.as.integer) {
+                                   src_init.as.integer != ref.as.integer) {
                             src_changed = 1;
                         } else if (src_init.type == VAL_FLOAT &&
-                                   src_init.as.real != pooled.as.real) {
+                                   src_init.as.real != ref.as.real) {
                             src_changed = 1;
                         } else if (src_init.type == VAL_BOOL &&
-                                   src_init.as.boolean != pooled.as.boolean) {
+                                   src_init.as.boolean != ref.as.boolean) {
                             src_changed = 1;
                         } else if (src_init.type == VAL_STRING) {
                             const char *a = src_init.as.string ? src_init.as.string : "";
-                            const char *b = pooled.as.string   ? pooled.as.string   : "";
+                            const char *b = ref.as.string      ? ref.as.string      : "";
                             if (strcmp(a, b) != 0) src_changed = 1;
                         }
 
@@ -641,6 +650,16 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         prst_pool_set(&rt->prst_pool, vname, chosen, &rt->err_stack);
                         prst_pool_set_offset(&rt->prst_pool, vname,
                                              node->resolved_offset);
+                        /* If the source declaration changed, update init_value
+                         * so future reloads use the new declaration as baseline. */
+                        if (src_changed && entry_idx >= 0) {
+                            Value *iv = &rt->prst_pool.entries[entry_idx].init_value;
+                            if (iv->type == VAL_STRING && iv->as.string)
+                                free(iv->as.string);
+                            *iv = src_init;
+                            if (iv->type == VAL_STRING && iv->as.string)
+                                iv->as.string = strdup(iv->as.string);
+                        }
                         rt_set(rt, node, vname, chosen);
                         scope_table_set(&rt->global_table, vname, chosen);
                         return val_nil();
@@ -719,8 +738,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
             rt_set(rt, node, node->as.assign.var_name, v);
             /* Sprint 7: keep prst_pool in sync so fluxa explain shows
-             * current values and reload restores the latest state. */
-            if (rt->mode == FLUXA_MODE_PROJECT &&
+             * current values and reload restores the latest state.
+             * Skip during dry_run (Ciclo Imaginário) — mutations must not
+             * pollute the pool that will be transferred to the live runtime. */
+            if (!rt->dry_run &&
+                rt->mode == FLUXA_MODE_PROJECT &&
                 prst_pool_has(&rt->prst_pool, node->as.assign.var_name)) {
                 prst_pool_set(&rt->prst_pool, node->as.assign.var_name,
                               v, &rt->err_stack);
@@ -1514,40 +1536,67 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_FREE: {
             const char *var_name = node->as.free_stmt.var_name;
 
-            /* prst check — cannot free prst vars in any mode */
-            if (rt->mode == FLUXA_MODE_PROJECT) {
-                if (prst_pool_find(&rt->prst_pool, var_name) >= 0) {
-                    char buf[320];
-                    snprintf(buf, sizeof(buf),
-                        "cannot free prst variable '%s'"
-                        " — prst vars are managed by the runtime."
-                        " Remove the prst declaration to allow manual free.",
-                        var_name);
-                    /* Always an error — even inside danger */
-                    rt_error(rt, buf);
-                    return val_nil();
-            }
+            /* prst check — hard error in all modes, bypasses danger capture */
+            if (rt->mode == FLUXA_MODE_PROJECT &&
+                prst_pool_find(&rt->prst_pool, var_name) >= 0) {
+                char buf[320];
+                snprintf(buf, sizeof(buf),
+                    "[fluxa] Runtime error (line %d): cannot free prst variable '%s'"
+                    " — prst vars are managed by the runtime."
+                    " Remove the prst declaration to allow manual free.",
+                    rt->current_line, var_name);
+                fprintf(stderr, "%s\n", buf);
+                rt->had_error = 1;
+                return val_nil();
             }
 
-            /* Find in scope */
-            ScopeEntry *entry = NULL;
-            HASH_FIND_STR(rt->scope.table, var_name, entry);
-            if (!entry && rt->current_instance)
-                HASH_FIND_STR(rt->current_instance->scope.table, var_name, entry);
-            if (!entry) {
+            /* Locate the value — check stack first (covers script-mode locals,
+             * fn params, top-level vars resolved to a stack slot), then scope
+             * hash table, then Block instance scope. */
+            Value *target = NULL;
+
+            /* 1. Stack slot */
+            if (node->resolved_offset >= 0 &&
+                node->resolved_offset < rt->stack_size &&
+                rt->stack[node->resolved_offset].type != VAL_NIL) {
+                target = &rt->stack[node->resolved_offset];
+            }
+
+            /* 2. Current Block instance scope */
+            if (!target && rt->current_instance) {
+                ScopeEntry *e = NULL;
+                HASH_FIND_STR(rt->current_instance->scope.table, var_name, e);
+                if (e) target = &e->value;
+            }
+
+            /* 3. Current frame scope */
+            if (!target) {
+                ScopeEntry *e = NULL;
+                HASH_FIND_STR(rt->scope.table, var_name, e);
+                if (e) target = &e->value;
+            }
+
+            /* 4. Global table (cross-fn visibility) */
+            if (!target && rt->call_depth > 0) {
+                ScopeEntry *e = NULL;
+                HASH_FIND_STR(rt->global_table, var_name, e);
+                if (e) target = &e->value;
+            }
+
+            if (!target) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "free(): undefined variable '%s'", var_name);
-                rt_error(rt, buf); return val_nil();
+                rt_error(rt, buf);
+                return val_nil();
             }
 
             /* For dyn: unregister from GC before freeing */
-            if (entry->value.type == VAL_DYN && entry->value.as.dyn) {
-                gc_unregister(&rt->gc, entry->value.as.dyn);
-            }
+            if (target->type == VAL_DYN && target->as.dyn)
+                gc_unregister(&rt->gc, target->as.dyn);
 
-            /* Free all heap resources */
-            value_free_data(&entry->value);
-            entry->value = val_nil();
+            /* Free all heap resources and zero the slot */
+            value_free_data(target);
+            *target = val_nil();
             return val_nil();
         }
 

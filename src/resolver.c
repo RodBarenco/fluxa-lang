@@ -336,8 +336,12 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             resolve_node(r, node->as.danger_stmt.body);
             break;
 
-        case NODE_FREE:
+        case NODE_FREE: {
+            /* Resolve the variable name so runtime can find it via stack offset */
+            int off = symtable_find(r->current, node->as.free_stmt.var_name);
+            node->resolved_offset = (off >= 0) ? off : -1;
             break;
+        }
 
         /* Sprint 6.b */
         case NODE_IMPORT_C:
