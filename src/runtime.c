@@ -931,10 +931,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     /* GC safe point at while back-edge — only sweep when dyn objects exist */
                     if (rt->gc.count > 0) gc_sweep(&rt->gc, gc_dyn_free_fn);
 #ifdef FLUXA_STD_FLXTHREAD
-                    /* flxthread mailbox drain — O(1) fast path when no messages */
-                    if (rt->current_thread)
+                    /* flxthread mailbox drain — O(1) fast path when no messages.
+                     * Returns -1 when stop_requested — breaks the while loop. */
+                    if (rt->current_thread &&
                         flx_mailbox_drain((FlxThread *)rt->current_thread,
-                                          rt, rt->current_instance);
+                                          rt, rt->current_instance) < 0)
+                        break;  /* cooperative stop — exit while loop */
 #endif
                     /* IPC safe point (Sprint 9.b) */
                     if (g_ipc_view) ipc_rtview_update(g_ipc_view, rt);

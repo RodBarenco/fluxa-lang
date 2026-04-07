@@ -203,7 +203,7 @@ static inline Value fluxa_std_time_call(const char *fn_name,
      * On embedded targets without RTC, falls back to elapsed time format. */
     if (strcmp(fn_name, "format") == 0) {
         NEED(1); GET_INT(0, ms_ts);
-        char buf[32];
+        char buf[64];
 #if defined(FLUXA_TARGET_RP2040) || defined(FLUXA_TARGET_ESP32)
         /* No real-time clock available — format as elapsed time */
         long long total_s = ms_ts / 1000LL;
