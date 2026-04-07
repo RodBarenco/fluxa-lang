@@ -104,6 +104,20 @@ static inline int prst_pool_set(PrstPool *p, const char *name,
     p->entries[p->count].declared_type = value.type;
     if (value.type == VAL_STRING && value.as.string)
         value.as.string = strdup(value.as.string);
+    /* Deep-copy VAL_ARR data so pool and scope are independent */
+    if (value.type == VAL_ARR && value.as.arr.data && value.as.arr.size > 0) {
+        int _asz = value.as.arr.size;
+        Value *_dcopy = (Value*)malloc(sizeof(Value) * (size_t)_asz);
+        if (_dcopy) {
+            for (int _di = 0; _di < _asz; _di++) {
+                _dcopy[_di] = value.as.arr.data[_di];
+                if (_dcopy[_di].type == VAL_STRING && _dcopy[_di].as.string)
+                    _dcopy[_di].as.string = strdup(_dcopy[_di].as.string);
+            }
+            value.as.arr.data  = _dcopy;
+            value.as.arr.owned = 1;
+        }
+    }
     p->entries[p->count].value        = value;
     /* Store the declared initializer value — used to detect source edits on reload.
      * A separate strdup because init_value and value can diverge at runtime. */
@@ -213,14 +227,27 @@ static inline char *prst_ser_value(char *w, const Value *v) {
     memcpy(w, &bv,   sizeof(int32_t)); w += sizeof(int32_t);
     memcpy(w, &slen, sizeof(int32_t)); w += sizeof(int32_t);
     if (slen > 0) { memcpy(w, v->as.string, (size_t)slen); w += slen; }
+    /* VAL_ARR: count then (etag + value_block) per element */
+    int32_t arr_count = (v->type == VAL_ARR && v->as.arr.data)
+                        ? (int32_t)v->as.arr.size : 0;
+    memcpy(w, &arr_count, sizeof(int32_t)); w += sizeof(int32_t);
+    for (int _i = 0; _i < arr_count; _i++) {
+        int32_t etag = (int32_t)v->as.arr.data[_i].type;
+        memcpy(w, &etag, sizeof(int32_t)); w += sizeof(int32_t);
+        w = prst_ser_value(w, &v->as.arr.data[_i]);
+    }
     return w;
 }
 
 /* Helper: byte count of one serialized Value */
 static inline size_t prst_value_wire_size(const Value *v) {
-    size_t s = sizeof(int64_t) + sizeof(double) + sizeof(int32_t)*2;
+    size_t s = sizeof(int64_t) + sizeof(double) + sizeof(int32_t)*3; /* +arr_count */
     if (v->type == VAL_STRING && v->as.string)
         s += strlen(v->as.string);
+    if (v->type == VAL_ARR && v->as.arr.data) {
+        for (int _i = 0; _i < v->as.arr.size; _i++)
+            s += sizeof(int32_t) + prst_value_wire_size(&v->as.arr.data[_i]);
+    }
     return s;
 }
 
@@ -277,7 +304,38 @@ static inline const char *prst_deser_value(const char *r, const char *end,
             break;
         default: out->type = VAL_NIL; break;
     }
-    return r + sl;
+    r += sl;
+    /* VAL_ARR: read element count then deserialize each element recursively */
+    if (r + (int)sizeof(int32_t) > end) return r; /* no arr_count field (old format) */
+    int32_t arr_count; memcpy(&arr_count, r, sizeof(int32_t)); r += sizeof(int32_t);
+    if (arr_count > 0 && dt == VAL_ARR) {
+        Value *data = (Value*)calloc((size_t)arr_count, sizeof(Value));
+        if (!data) return NULL;
+        for (int _ai = 0; _ai < arr_count; _ai++) {
+            if (r + (int)sizeof(int32_t) > end) { free(data); return NULL; }
+            int32_t etag; memcpy(&etag, r, sizeof(int32_t)); r += sizeof(int32_t);
+            Value elem; memset(&elem, 0, sizeof(elem));
+            r = prst_deser_value(r, end, (ValType)etag, &elem);
+            if (!r) { free(data); return NULL; }
+            data[_ai] = elem;
+        }
+        out->type         = VAL_ARR;
+        out->as.arr.data  = data;
+        out->as.arr.size  = (int)arr_count;
+        out->as.arr.owned = 1;
+    } else if (arr_count > 0) {
+        /* non-ARR type: skip element blocks for forward compat */
+        for (int _ai = 0; _ai < arr_count; _ai++) {
+            if (r + (int)sizeof(int32_t) > end) return NULL;
+            int32_t etag; memcpy(&etag, r, sizeof(int32_t)); r += sizeof(int32_t);
+            Value skip; memset(&skip, 0, sizeof(skip));
+            r = prst_deser_value(r, end, (ValType)etag, &skip);
+            if (!r) return NULL;
+            if (skip.type == VAL_STRING && skip.as.string) free(skip.as.string);
+            if (skip.type == VAL_ARR && skip.as.arr.data)  free(skip.as.arr.data);
+        }
+    }
+    return r;
 }
 
 /* Deserialize into an existing PrstPool (resets it first).

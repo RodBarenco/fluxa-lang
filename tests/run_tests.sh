@@ -459,6 +459,18 @@ else
 $(echo "$sem_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── sprint10b: core fixes (for..in dyn + prst arr) ──────────────────────────
+printf "  %-56s" "sprint10b/core (for..in dyn, prst arr handover)"
+_out=$(bash "$SCRIPT_DIR/sprint10b_core_fixes.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "core: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint10b/core:
+$(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
+fi
+
 # ── std libs (tests/libs/) ───────────────────────────────────────────────────
 for _lib_script in "$SCRIPT_DIR/libs/"*.sh; do
     _lib_name=$(basename "$_lib_script" .sh)

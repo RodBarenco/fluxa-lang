@@ -123,6 +123,7 @@ struct ASTNode {
             char    *var_name;
             char    *arr_name;
             ASTNode *body;
+            int      arr_resolved_offset; /* stack slot of the iterable */
         } for_stmt;
 
         /* NODE_ARR_DECL */
