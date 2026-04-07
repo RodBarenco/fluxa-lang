@@ -1038,6 +1038,45 @@ static Value eval(Runtime *rt, ASTNode *node) {
                               node->as.arr_decl.arr_name, arr);
                 else
                     scope_set(&rt->scope, node->as.arr_decl.arr_name, arr);
+                /* Register in prst pool if declared persistent */
+                if (node->as.arr_decl.persistent && !rt->dry_run &&
+                    rt->mode == FLUXA_MODE_PROJECT) {
+                    int pi = prst_pool_find(&rt->prst_pool,
+                                            node->as.arr_decl.arr_name);
+                    if (pi < 0) {
+                        /* First run — register with init_value = declared arr */
+                        prst_pool_set(&rt->prst_pool,
+                                      node->as.arr_decl.arr_name,
+                                      arr, &rt->err_stack);
+                        pi = prst_pool_find(&rt->prst_pool,
+                                            node->as.arr_decl.arr_name);
+                        if (pi >= 0) {
+                            rt->prst_pool.entries[pi].declared_type = VAL_ARR;
+                            rt->prst_pool.entries[pi].init_value    = arr;
+                        }
+                    } else {
+                        /* Reload — deep copy pooled arr into scope so mutations
+                         * to scope don't alias the pool's copy */
+                        Value pooled = rt->prst_pool.entries[pi].value;
+                        if (pooled.type == VAL_ARR && pooled.as.arr.data) {
+                            int psz = pooled.as.arr.size;
+                            Value *dcopy = (Value*)malloc(
+                                sizeof(Value) * (size_t)psz);
+                            if (dcopy) {
+                                for (int _pi = 0; _pi < psz; _pi++) {
+                                    dcopy[_pi] = pooled.as.arr.data[_pi];
+                                    if (dcopy[_pi].type == VAL_STRING &&
+                                        dcopy[_pi].as.string)
+                                        dcopy[_pi].as.string =
+                                            strdup(dcopy[_pi].as.string);
+                                }
+                                Value restored = val_arr(dcopy, psz);
+                                scope_set(&rt->scope,
+                                          node->as.arr_decl.arr_name, restored);
+                            }
+                        }
+                    }
+                }
                 return val_nil();
             }
 
@@ -1231,6 +1270,25 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (v.type == VAL_STRING && v.as.string)
                 v.as.string = strdup(v.as.string);
             target_arr->data[idx] = v;
+
+            /* Sync mutated arr back to prst pool if it's a prst variable */
+            if (!rt->dry_run && rt->mode == FLUXA_MODE_PROJECT) {
+                int pi = prst_pool_find(&rt->prst_pool, arr_name);
+                if (pi >= 0) {
+                    /* The pool entry holds its own copy — update element in place */
+                    Value *pool_val = &rt->prst_pool.entries[pi].value;
+                    if (pool_val->type == VAL_ARR && pool_val->as.arr.data &&
+                        idx < pool_val->as.arr.size) {
+                        if (pool_val->as.arr.data[idx].type == VAL_STRING &&
+                            pool_val->as.arr.data[idx].as.string)
+                            free(pool_val->as.arr.data[idx].as.string);
+                        Value pv = v;
+                        if (pv.type == VAL_STRING && pv.as.string)
+                            pv.as.string = strdup(pv.as.string);
+                        pool_val->as.arr.data[idx] = pv;
+                    }
+                }
+            }
             return val_nil();
         }
 
@@ -1508,22 +1566,61 @@ static Value eval(Runtime *rt, ASTNode *node) {
         }
 
         case NODE_FOR: {
-            Value arr_val;
             const char *arr_name = node->as.for_stmt.arr_name;
-            if (!scope_get(&rt->scope, arr_name, &arr_val)) {
+            /* Look up the iterable — multi-scope search.
+             * We cannot use rt_get(rt, node, ...) here because
+             * node->resolved_offset belongs to the loop var, not the iterable.
+             * Instead search: stack (by name scan), instance scope, frame, global. */
+            Value arr_val; arr_val.type = VAL_NIL;
+            int found = 0;
+            /* 1. Stack slot via resolver-resolved offset */
+            int arr_off = node->as.for_stmt.arr_resolved_offset;
+            if (!found && arr_off >= 0 && arr_off < rt->stack_size) {
+                Value sv = rt->stack[arr_off];
+                if (sv.type != VAL_NIL) { arr_val = sv; found = 1; }
+            }
+            /* 2. Block instance scope */
+            if (!found && rt->current_instance)
+                found = scope_get(&rt->current_instance->scope, arr_name, &arr_val);
+            /* 3. Current frame scope */
+            if (!found)
+                found = scope_get(&rt->scope, arr_name, &arr_val);
+            /* 4. Global table (inside fn calls) */
+            if (!found && rt->call_depth > 0)
+                found = scope_table_get(rt->global_table, arr_name, &arr_val);
+            /* 5. prst pool */
+            if (!found && rt->mode == FLUXA_MODE_PROJECT) {
+                int pi = prst_pool_find(&rt->prst_pool, arr_name);
+                if (pi >= 0) { arr_val = rt->prst_pool.entries[pi].value; found = 1; }
+            }
+            if (!found) {
                 char buf[280];
-                snprintf(buf, sizeof(buf), "undefined array: %s", arr_name);
+                snprintf(buf, sizeof(buf), "for: undefined variable '%s'", arr_name);
                 rt_error(rt, buf); return val_nil();
             }
-            if (arr_val.type != VAL_ARR) {
+
+            if (arr_val.type == VAL_ARR) {
+                /* for x in arr */
+                for (int i = 0; i < arr_val.as.arr.size; i++) {
+                    rt_set(rt, node, node->as.for_stmt.var_name,
+                           arr_val.as.arr.data[i]);
+                    eval(rt, node->as.for_stmt.body);
+                    if (rt->had_error || rt->ret.active) break;
+                }
+            } else if (arr_val.type == VAL_DYN && arr_val.as.dyn) {
+                /* for x in dyn — iterate over all elements */
+                FluxaDyn *d = arr_val.as.dyn;
+                for (int i = 0; i < d->count; i++) {
+                    rt_set(rt, node, node->as.for_stmt.var_name, d->items[i]);
+                    eval(rt, node->as.for_stmt.body);
+                    if (rt->had_error || rt->ret.active) break;
+                }
+            } else {
                 char buf[280];
-                snprintf(buf, sizeof(buf), "'%s' is not an array", arr_name);
-                rt_error(rt, buf); return val_nil();
-            }
-            for (int i = 0; i < arr_val.as.arr.size; i++) {
-                rt_set(rt, node, node->as.for_stmt.var_name, arr_val.as.arr.data[i]);
-                eval(rt, node->as.for_stmt.body);
-                if (rt->had_error || rt->ret.active) break;
+                snprintf(buf, sizeof(buf),
+                    "'%s' is not iterable — for..in requires arr or dyn",
+                    arr_name);
+                rt_error(rt, buf);
             }
             return val_nil();
         }

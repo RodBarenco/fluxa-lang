@@ -181,6 +181,10 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             break;
 
         case NODE_FOR: {
+            /* Resolve the iterable (arr/dyn name) before declaring loop var */
+            int arr_off = symtable_find(r->current, node->as.for_stmt.arr_name);
+            node->as.for_stmt.arr_resolved_offset = (arr_off >= 0) ? arr_off : -1;
+            /* Declare the loop variable */
             int off = symtable_declare(r->current, node->as.for_stmt.var_name);
             node->resolved_offset = off;
             if (r->current->count > r->max_slots)
