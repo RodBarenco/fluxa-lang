@@ -459,6 +459,23 @@ else
 $(echo "$sem_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── std libs (tests/libs/) ───────────────────────────────────────────────────
+for _lib_script in "$SCRIPT_DIR/libs/"*.sh; do
+    _lib_name=$(basename "$_lib_script" .sh)
+    printf "  %-56s" "std.${_lib_name}"
+    _lib_out=$(bash "$_lib_script" --fluxa "$FLUXA" 2>&1)
+    if echo "$_lib_out" | grep -q "std\.${_lib_name}: PASS"; then
+        echo "PASS"
+        PASS=$((PASS+1))
+    else
+        echo "FAIL"
+        FAIL=$((FAIL+1))
+        ERRORS="${ERRORS}
+  std.${_lib_name}:
+$(echo "$_lib_out" | grep "FAIL" | sed 's/^/    /')"
+    fi
+done
+
 echo "──────────────────────────────────────────────────────────────────"
 echo "  Results: $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then

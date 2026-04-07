@@ -41,7 +41,10 @@ else
 endif
 
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
-           -Isrc -Ivendor $(FFI_CFLAGS)
+           -Isrc -Ivendor $(FFI_CFLAGS) \
+           -DFLUXA_STD_MATH=1 \
+           -DFLUXA_STD_CSV=1 \
+           -DFLUXA_STD_JSON=1
 LDFLAGS = $(FFI_LDFLAGS) -ldl -lm -lpthread
 
 # All source files for the native build (includes IPC server and FFI)
@@ -190,6 +193,7 @@ CORTEXM_CFLAGS = $(EMBEDDED_CFLAGS)  \
         test-suite2-types test-suite2-embedded                  \
         test-integration test-integration-s1 test-integration-s2 \
         test-all                                                 \
+        test-libs test-libs-math                                          \
         bench examples clean
 
 all: build
@@ -420,6 +424,31 @@ test-suite2-embedded: build
 	@bash tests/suite2/s2_embedded.sh --fluxa ./$(TARGET)
 
 
+# ── Stdlib library tests (tests/libs/) ───────────────────────────────────────
+#
+# Each std lib has its own test script under tests/libs/<lib>.sh
+# The binary must be compiled with the corresponding -DFLUXA_STD_<LIB>=1 flag.
+# make build already passes these flags when detected.
+#
+#   make test-libs         Run all lib test scripts
+#   make test-libs-math    Run only std.math tests
+
+test-libs: build
+	@echo "── stdlib library tests ─────────────────────────────────────────────"
+	@for f in tests/libs/*.sh; do \
+	    chmod +x "$$f" && bash "$$f" --fluxa ./$(TARGET) || exit 1; \
+	done
+	@echo "── all lib tests passed ─────────────────────────────────────────────"
+
+test-libs-math: build
+	@bash tests/libs/math.sh --fluxa ./$(TARGET)
+
+test-libs-csv: build
+	@bash tests/libs/csv.sh --fluxa ./$(TARGET)
+
+test-libs-json: build
+	@bash tests/libs/json.sh --fluxa ./$(TARGET)
+
 # ── Integration tests ─────────────────────────────────────────────────────────
 #
 # End-to-end simulation of the Atomic Handover protocol using real .flx programs.
@@ -448,6 +477,9 @@ test-integration-s2: build
 test-all: build
 	@./tests/run_tests.sh ./$(TARGET)
 	@bash tests/suite2/run_suite2.sh --fluxa ./$(TARGET)
+	@bash tests/libs/math.sh --fluxa ./$(TARGET)
+	@bash tests/libs/csv.sh --fluxa ./$(TARGET)
+	@bash tests/libs/json.sh --fluxa ./$(TARGET)
 	@./tests/integration/run_all.sh --fluxa ./$(TARGET)
 
 
