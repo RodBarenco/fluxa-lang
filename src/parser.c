@@ -633,7 +633,8 @@ static ASTNode *parse_statement(Parser *p) {
                 strcmp(lib_name, "csv")  != 0 &&
                 strcmp(lib_name, "json") != 0 &&
                 strcmp(lib_name, "vec")  != 0 &&
-                strcmp(lib_name, "strings") != 0) {
+                strcmp(lib_name, "strings") != 0 &&
+                strcmp(lib_name, "time")    != 0) {
                 char errbuf[200];
                 snprintf(errbuf, sizeof(errbuf),
                     "unknown std library '%s' — available: math, csv, json, str, vec",
