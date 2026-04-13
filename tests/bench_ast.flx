@@ -1,0 +1,11 @@
+// bench_ast.flx — pure AST walker path (no bytecode VM)
+// Exercises: function calls, variable resolution, type checks, scope lookup
+// This is what warm path would accelerate
+
+fn fib(int n) int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+int r = fib(32)
+print(r)

@@ -471,6 +471,18 @@ else
 $(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
 fi
 
+# ── sprint11: warm path (WHT + QJL, cold/warm/hot tiers) ─────────────────────
+printf "  %-56s" "sprint11/warm_path (warm tier, edge cases)"
+_out=$(bash "$SCRIPT_DIR/sprint11_warm_path.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "warm_path: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint11/warm_path:
+$(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
+fi
+
 # ── std libs (tests/libs/) ───────────────────────────────────────────────────
 for _lib_script in "$SCRIPT_DIR/libs/"*.sh; do
     _lib_name=$(basename "$_lib_script" .sh)

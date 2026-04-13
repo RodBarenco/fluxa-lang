@@ -1,0 +1,27 @@
+# Fluxa — .gitignore
+
+# Binários nativos
+fluxa
+fluxa_asan
+fluxa_debug
+
+# Binários embedded (gerados por make build-rp2040 / build-esp32)
+fluxa-rp2040
+fluxa-esp32
+fluxa-cortex-m
+*.o
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+
+# Artefatos de teste temporários
+/tmp/fluxa-*.sock
+/tmp/fluxa-*.lock
+/tmp/_fluxa_*.flx
+
+# Editor
+*.swp
+*.swo
+.DS_Store
