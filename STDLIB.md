@@ -1,7 +1,7 @@
 # Fluxa Standard Library
-**v0.10 | Sprint 10.a**
+**v0.10 | Sprint 10.c**
 
-Reference documentation for all stdlib libs implemented so far: `std.math`, `std.csv`, `std.json`.
+Reference documentation for all stdlib libs implemented: `std.math`, `std.csv`, `std.json`, `std.strings`, `std.time`, `std.flxthread`.
 
 ---
 
@@ -543,6 +543,7 @@ max_out_bytes = 8192    # max output string size (default 8192)
 |---|---|---|
 | `strings.split(str s, str delim)` | dyn | Split `s` on `delim`. Returns dyn of str. Empty delim splits into individual bytes. |
 | `strings.join(dyn parts, str glue)` | str | Join elements of dyn with `glue` between each. |
+| `strings.concat(a, b, ...)` | str | Concatenate any number of values (int, float, bool, str) into one string. |
 | `strings.slice(str s, int start, int end)` | str | Byte substring. Negative indices count from end. `end` is exclusive. |
 | `strings.trim(str s)` | str | Remove leading and trailing whitespace. |
 | `strings.find(str s, str sub)` | int | Byte offset of first occurrence of `sub`, or `-1` if not found. |
@@ -554,6 +555,8 @@ max_out_bytes = 8192    # max output string size (default 8192)
 | `strings.lower(str s)` | str | ASCII lowercase. |
 | `strings.upper(str s)` | str | ASCII uppercase. |
 | `strings.repeat(str s, int n)` | str | Repeat `s` `n` times. Returns `""` if `n <= 0`. |
+| `strings.from_int(int n)` | str | Convert int or float to its string representation. |
+| `strings.to_int(str s)` | int | Parse str as integer (via `atol`). Returns 0 if not parseable. |
 
 ### Examples
 
@@ -863,6 +866,10 @@ max_fields     = 64     # fields per row — used by csv.field internally
 
 [libs.json]
 max_str_bytes  = 4096   # max size of a JSON str value or loaded file
+
+[ffi]
+str_buf_size   = 1024   # writable char* buffer allocated per pointer arg (default 1024)
+                        # range: 64–65536. Applies to all char* output params in FFI calls.
 ```
 
 **RP2040 recommended (264 KB SRAM):**
@@ -873,6 +880,9 @@ max_fields     = 16
 
 [libs.json]
 max_str_bytes  = 512
+
+[ffi]
+str_buf_size   = 64
 ```
 
 **ESP32 recommended (520 KB SRAM):**
@@ -883,6 +893,9 @@ max_fields     = 32
 
 [libs.json]
 max_str_bytes  = 2048
+
+[ffi]
+str_buf_size   = 512
 ```
 
 ---

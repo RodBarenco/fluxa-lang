@@ -18,25 +18,19 @@ Fluxa enforces a strict fail-fast model. Silent errors are a design non-goal. Th
 
 ### Persistent State and Hot Reload
 
-The `prst` keyword marks variables that survive a file reload. The runtime tracks inter-variable dependencies via `PrstGraph` and serializes live values via `PrstPool`. In `fluxa run -dev` mode, the interpreter watches the source file for changes and reloads automatically while preserving all `prst` state. Arrays declared with `prst` survive reloads element-by-element — mutations made at runtime are preserved across handovers.
+The `prst` keyword marks variables that survive a file reload. The runtime tracks inter-variable dependencies via `PrstGraph` and serializes live values via `PrstPool`. In `fluxa run -dev` mode, the interpreter watches the source file for changes and reloads automatically while preserving all `prst` state.
 
 ### Atomic Handover
 
-The Atomic Handover protocol allows zero-downtime replacement of a running Fluxa program. The new version runs a Dry Run (Ciclo Imaginário) in parallel with the live runtime — if it passes, state is migrated and control is handed over atomically. If the Dry Run fails, Runtime A keeps control and the error is reported. This makes Fluxa suitable for long-running IoT processes and robotic controllers that cannot afford downtime.
-
-### Prototypal Modularity
-
-State and behavior are grouped in `Block` structures. Each `typeof` instance is fully isolated — no shared state, no hidden coupling, no locks. Block instances can be stored in `dyn` arrays, cloned independently, and passed to functions.
+The Atomic Handover protocol allows zero-downtime replacement of a running Fluxa program. The new version runs a Dry Run in parallel with the live runtime — if it passes, state is migrated and control is handed over atomically. If the Dry Run fails, the original runtime keeps control and the error is reported.
 
 ### C Interoperability
 
-Built-in FFI via `libffi` allows calling compiled C libraries directly from Fluxa scripts inside `danger` blocks. The standard library (`std.math`, `std.csv`, `std.json`, `std.strings`) provides safe wrappers callable outside `danger`.
+Built-in FFI via `libffi` calls compiled C libraries directly from Fluxa scripts inside `danger` blocks. The runtime reads C signatures from `fluxa.toml` and handles all pointer marshalling automatically: `int*` / `double*` / `bool*` parameters are passed by address and written back, `char*` output buffers are allocated internally and copied back into `str` variables, and `uint8_t*` buffers are flattened from `int arr` and scattered back after the call. The user writes plain Fluxa types and the runtime does the rest.
 
 ---
 
 ## Core Design Principles
-
-Every language decision in Fluxa is anchored to at least one of these five principles:
 
 | Principle | What it means in practice |
 |---|---|
@@ -85,62 +79,164 @@ brew install libffi
 
 ---
 
-## Language Overview
+## Writing Fluxa — Programming Guide
+
+This section walks through the core concepts in the order you would encounter them writing a real Fluxa program.
+
+### 1. Variables — always typed, always explicit
+
+Every variable must declare its type before its name. There is no inference.
 
 ```fluxa
-// Variables — statically typed at declaration
-int    count = 0
-float  temp  = 23.5
-str    label = "sensor_01"
+int    count  = 0
+float  temp   = 23.5
+str    label  = "sensor_01"
 bool   active = true
+char   sep    = ','
+```
 
-// Persistent state — survives hot reload and Atomic Handover
-prst int tick = 0
-tick = tick + 1
+Assignment enforces the declared type at runtime. Assigning a `str` to an `int` variable is a runtime error with a line number.
 
-// Persistent array — element mutations survive handover
-prst float arr readings[8] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-readings[0] = 23.5
+### 2. Persistent state — `prst`
 
-// Dynamic heterogeneous array
-dyn events = ["startup", 42, true]
-events[3] = "new_event"
+Add `prst` before a declaration to make it survive a hot reload. Without `prst`, every variable is reset when the file is reloaded.
 
-// for..in works on both arr and dyn
-for item in events {
-    print(item)
+```fluxa
+prst int tick   = 0     // survives reload — keeps its value
+int      temp   = 0     // reset to 0 on every reload
+```
+
+`prst` variables are serialized in `PrstPool`. Removing a `prst` declaration invalidates it and all variables that depended on it atomically — no ghost state.
+
+### 3. Arrays — `arr` for fixed, `dyn` for flexible
+
+`arr` is a fixed-size, single-type array. Size is declared at write time and cannot change.
+
+```fluxa
+int arr readings[4] = [10, 20, 30, 40]
+readings[0] = 99          // ok
+readings[10] = 1          // runtime error: index out of bounds (line N)
+```
+
+`dyn` is a heterogeneous dynamic array. It grows automatically and each element carries its own type tag.
+
+```fluxa
+dyn events = ["startup", 42, true, 3.14]
+events[4] = "new_event"   // auto-grows
+len(events)               // 5
+```
+
+Both work with `for..in`:
+
+```fluxa
+for r in readings { print(r) }
+for e in events   { print(e) }
+```
+
+### 4. Control flow
+
+Standard `if/else`, `while`, and `for..in`. Braces are always required — no single-line shortcuts.
+
+```fluxa
+if count > 10 {
+    print("high")
+} else {
+    print("low")
 }
 
-// Block — prototypal struct with methods
-Block PIDController {
-    prst float kp = 2.0
-    prst float ki = 0.1
-    prst float integral = 0.0
-    fn update(float error) float {
-        integral = integral + error
-        return kp * error + ki * integral
-    }
+while active {
+    count = count + 1
+    if count >= 100 { active = false }
+}
+```
+
+Logical operators with short-circuit evaluation: `&&`, `||`, `!`.
+
+### 5. Functions
+
+Return type is declared after the parameter list. `nil` means no return value. TCO handles tail calls without stack overflow.
+
+```fluxa
+fn add(int a, int b) int {
+    return a + b
 }
 
-// typeof — independent instance, no shared state
-Block pid typeof PIDController
-pid.kp = 3.0
-float output = pid.update(5.0)
+fn greet(str name) nil {
+    print("hello " + name)
+}
 
-// danger — contains FFI and risky operations
+fn factorial(int n) int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)    // TCO applies at tail position
+}
+```
+
+### 6. Blocks — state + behavior grouped together
+
+`Block` is Fluxa's unit of encapsulation. No inheritance, no hierarchy.
+
+```fluxa
+Block Counter {
+    prst int total = 0
+
+    fn increment() nil { total = total + 1 }
+    fn value() int     { return total }
+}
+
+Counter.increment()
+print(Counter.value())   // 1
+```
+
+`typeof` creates an independent clone. State is fully isolated — changing one instance never affects another.
+
+```fluxa
+Block c1 typeof Counter
+Block c2 typeof Counter
+
+c1.increment()
+c1.increment()
+
+print(c1.value())   // 2
+print(c2.value())   // 0 — completely independent
+```
+
+### 7. Error handling — `danger` and `err`
+
+`danger` contains operations that might fail. Errors inside are captured in `err[]` instead of aborting.
+
+```fluxa
 danger {
-    float bad = 1.0 / 0.0
+    float r = libm.sqrt(-1.0)   // domain error — captured
+    int   x = arr[999]          // OOB — captured
 }
-// execution continues; err[0] has the message
 
-// Standard library (opt-in via fluxa.toml)
+if err != nil {
+    print(err[0])   // most recent error message + line number
+}
+```
+
+Outside `danger`, any error aborts immediately with a line number. This is intentional — fail-fast outside, capture inside.
+
+### 8. Standard library
+
+All stdlib is opt-in. Declare in `fluxa.toml`, then `import` in code.
+
+```toml
+[libs]
+std.math    = "1.0"
+std.csv     = "1.0"
+std.json    = "1.0"
+std.strings = "1.0"
+std.time    = "1.0"
+```
+
+```fluxa
 import std math
-import std csv
-import std json
 import std strings
+import std json
 
-float hyp = math.hypot(3.0, 4.0)          // 5.0
-bool  ok  = math.approx(0.1 + 0.2, 0.3)  // true
+float h = math.hypot(3.0, 4.0)         // 5.0
+bool  ok = math.approx(0.1 + 0.2, 0.3) // true
 
 dyn parts = strings.split("a,b,c", ",")
 str upper = strings.upper("hello")
@@ -150,11 +246,154 @@ obj = json.set(obj, "temp", json.from_float(23.5))
 float t = json.get_float(obj, "temp")
 ```
 
+### 9. Calling C libraries — FFI
+
+Declare the library and its function signatures in `fluxa.toml`. Then call inside `danger`. The runtime handles all pointer marshalling.
+
+```toml
+[ffi]
+libm = "auto"
+libc = "auto"
+str_buf_size = 1024    # writable char* buffer size per argument (default)
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+modf  = "(double, double*) -> double"
+frexp = "(double, int*) -> double"
+
+[ffi.libc.signatures]
+scanf  = "(char*, int*) -> int"
+fgets  = "(char*, int, dyn) -> dyn"
+fopen  = "(char*, char*) -> dyn"
+fclose = "(dyn) -> int"
+fread  = "(uint8_t*, int, int, dyn) -> int"
+```
+
+```fluxa
+// int* — runtime passes &exp, writes result back automatically
+int exp = 0
+float mantissa = 0.0
+danger {
+    mantissa = libm.frexp(8.0, exp)
+}
+print(exp)        // 4  (8 == 0.5 * 2^4)
+print(mantissa)   // 0.5
+
+// double* — same pattern
+float whole = 0.0
+float frac  = 0.0
+danger {
+    frac = libm.modf(3.7, whole)
+}
+print(whole)   // 3
+print(frac)    // 0.7
+
+// char* output — runtime allocates buffer, copies result back into str
+str buf = ""
+danger {
+    dyn fp = libc.fopen("/dev/stdin", "r")
+    dyn ret = libc.fgets(buf, 64, fp)
+}
+print(buf)   // whatever the user typed
+
+// int* from stdin
+int val = 0
+danger {
+    int matched = libc.scanf("%d", val)
+}
+print(val)   // the integer the user typed
+
+// uint8_t* — runtime flattens int arr to bytes, scatters back after call
+int arr buf[8] = [0,0,0,0,0,0,0,0]
+danger {
+    dyn fp = libc.fopen("/dev/stdin", "r")
+    int n = libc.fread(buf, 1, 8, fp)
+}
+print(buf[0])   // ASCII value of first byte read
+print(buf[1])   // ASCII value of second byte read
+
+// dyn opaque — void* stored as VAL_PTR, passed back to C unchanged
+danger {
+    dyn fp = libc.fopen("/etc/hostname", "r")
+    int r  = libc.fclose(fp)
+    print(r)    // 0 = success
+}
+```
+
+**Pointer mapping reference:**
+
+| C signature type | Fluxa type | Behaviour |
+|---|---|---|
+| `int` / `double` / `bool` | `int` / `float` / `bool` | Passed by value directly |
+| `int*` | `int` | `&var` passed; value written back after call |
+| `double*` / `float*` | `float` | `&var` passed; value written back after call |
+| `bool*` | `bool` | `&var` passed; value written back after call |
+| `char*` | `str` | Internal buffer allocated; result copied back to `str` |
+| `uint8_t*` / `void*` buf | `int arr` | Flattened to byte buffer; bytes scattered back to arr |
+| `dyn` / `struct*` / `void*` | `dyn` | `VAL_PTR` extracted from `dyn[0]` |
+| Pointer return type | `dyn` | Stored as `VAL_PTR` in `dyn[0]` |
+
+### 10. Hot reload and Atomic Handover
+
+Run in development mode — the runtime watches the file and reloads on every save:
+
+```bash
+fluxa run main.flx -dev
+```
+
+`prst` variables survive the reload. Everything else resets. Edit the file, save — the running program picks up the new logic instantly.
+
+For zero-downtime production handover between two different program versions:
+
+```bash
+fluxa handover v1.flx v2.flx
+```
+
+The new program runs a full Dry Run in parallel. If it passes, state is migrated atomically. If it fails, v1 keeps running untouched.
+
+---
+
+## Language Overview — Quick Reference
+
+```fluxa
+// Types
+int count = 0 | float temp = 23.5 | str name = "x" | bool on = true | char c = 'a'
+
+// Arrays
+int arr fixed[3] = [1, 2, 3]          // fixed size, one type
+dyn  mixed       = [1, "two", true]   // dynamic, any type, auto-grows
+
+// Persistence
+prst int tick = 0                      // survives hot reload
+
+// Control
+if x > 0 { ... } else { ... }
+while active { ... }
+for item in arr { ... }
+
+// Functions
+fn add(int a, int b) int { return a + b }
+
+// Blocks
+Block Sensor { prst float reading = 0.0; fn read() float { return reading } }
+Block s typeof Sensor                  // independent clone
+
+// Errors
+danger { risky_operation() }
+if err != nil { print(err[0]) }       // err[0] = most recent error
+
+// Stdlib (declare in fluxa.toml first)
+import std math | import std csv | import std json | import std strings
+
+// FFI (declare lib + signatures in fluxa.toml)
+danger { float r = libm.sqrt(9.0) }   // r = 3.0
+```
+
 ---
 
 ## Standard Library
 
-All standard libraries are opt-in via `fluxa.toml`. They compile into the binary but require explicit declaration to use at runtime.
+All standard libraries are opt-in via `fluxa.toml`:
 
 ```toml
 [libs]
@@ -162,22 +401,85 @@ std.math    = "1.0"
 std.csv     = "1.0"
 std.json    = "1.0"
 std.strings = "1.0"
+std.time    = "1.0"
 ```
 
-| Library | Functions | Notes |
+| Library | Key functions | `danger` required? |
 |---|---|---|
-| `std.math` | 39 functions — sqrt, pow, sin/cos/tan, log, clamp, approx, ... | No `danger` required |
-| `std.csv` | open/next/close cursor, chunk, load, save, field, field_count, skip | File I/O requires `danger` |
-| `std.json` | object, set, get_*, has, parse_array, stringify, load, cursor | No `danger` for pure string ops |
-| `std.strings` | split, join, slice, trim, find, replace, upper, lower, count, ... | No `danger` required |
+| `std.math` | `sqrt`, `pow`, `sin/cos/tan`, `log`, `clamp`, `approx`, `pi`, `e` | No |
+| `std.csv` | `open/next/close`, `chunk`, `load`, `save`, `field`, `field_count` | File ops only |
+| `std.json` | `object`, `set`, `get_str/float/int/bool`, `has`, `stringify`, `load` | File ops only |
+| `std.strings` | `split`, `join`, `trim`, `replace`, `upper`, `lower`, `find`, `count` | No |
+| `std.time` | `now_ms`, `sleep`, `elapsed` | No |
 
 Full documentation: [`STDLIB.md`](STDLIB.md)
 
 ---
 
-## Embedded Targets
+## `fluxa.toml` Configuration
 
-Fluxa-lang runs on Linux and macOS natively, and cross-compiles to embedded hardware:
+```toml
+[project]
+name  = "my_project"
+entry = "main.flx"
+
+[runtime]
+gc_cap         = 1024  # GC table hard cap (default 1024)
+prst_cap       = 64    # PrstPool initial capacity (default 64, grows automatically)
+prst_graph_cap = 256   # PrstGraph initial capacity (default 256, grows automatically)
+
+[libs]
+std.math    = "1.0"
+std.csv     = "1.0"
+std.json    = "1.0"
+std.strings = "1.0"
+
+[ffi]
+libm = "auto"           # resolved via dlopen — tries platform candidates automatically
+libc = "auto"
+str_buf_size = 1024     # writable char* buffer per pointer arg (default 1024, range 64–65536)
+                        # increase for functions that write large strings (e.g. sprintf into big buffers)
+                        # decrease for memory-constrained embedded targets
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+modf  = "(double, double*) -> double"
+frexp = "(double, int*) -> double"
+
+[ffi.libc.signatures]
+scanf  = "(char*, int*) -> int"
+fgets  = "(char*, int, dyn) -> dyn"
+fopen  = "(char*, char*) -> dyn"
+fclose = "(dyn) -> int"
+fread  = "(uint8_t*, int, int, dyn) -> int"
+puts   = "(char*) -> int"
+strlen = "(char*) -> int"
+```
+
+---
+
+## CLI Reference
+
+```bash
+fluxa run <file.flx>                   Run a script (auto-detects script vs project)
+fluxa run <file.flx> -proj <dir>       Run as project (enables prst, reads fluxa.toml)
+fluxa run <file.flx> -dev              Watch mode — reload on file save (inotify/kqueue)
+fluxa run <file.flx> -prod             Production mode — IPC server active
+fluxa run <file.flx> -p                Preflight check — parse + resolve, no execution
+fluxa handover <old.flx> <new.flx>     Execute Atomic Handover (5-step protocol)
+fluxa explain <file.flx>               Show prst vars, Block deps, GC state
+fluxa apply <key>=<value>              Send IPC set command to live runtime
+fluxa observe                          Stream live prst state from running process
+fluxa logs                             Stream runtime log output
+fluxa status                           Show live runtime status (cycle count, errors)
+fluxa ffi list                         List available shared libraries via ldconfig
+fluxa ffi inspect <lib>                Generate suggested toml signatures for a library
+fluxa runtime info                     Show current runtime configuration
+```
+
+---
+
+## Embedded Targets
 
 | Target | Toolchain | Memory | Notes |
 |---|---|---|---|
@@ -196,38 +498,32 @@ make build-embedded  # attempts all targets, skips missing toolchains
 ## Testing
 
 ```bash
-make test-runner          # 52-case automated PASS/FAIL suite (CI-friendly)
-make test-suite2          # 70-case edge cases: prst, handover, GC, dyn, Block, embedded
-make test-libs            # stdlib tests: math (15), csv (10), json (10), strings (15)
-make test-all             # everything: unit + suite2 + libs + integration
-make examples             # run all example programs (sort, BST, Dijkstra, PageRank, ...)
-make bench                # performance benchmarks
+make test-runner   # full automated suite — PASS/FAIL per section
+make test-all      # unit + suite2 + libs + integration
+make bench         # performance benchmarks
 ```
 
-Test structure:
+```bash
+bash tests/run_tests.sh              # 54 cases across all sprints and stdlib
+bash tests/ffi_ptr.sh                # 12 cases: int*, double*, char*, uint8_t*, dyn
+bash tests/sprint9c_ffi_toml.sh      # 10 cases: [ffi] toml auto-resolve
+bash tests/libs/math.sh              # std.math
+bash tests/libs/csv.sh               # std.csv
+bash tests/libs/json.sh              # std.json
+bash tests/libs/strings.sh           # std.strings
+```
 
+---
+
+## Building
+
+```bash
+make              # native binary → ./fluxa
+make build-asan   # AddressSanitizer build (development only)
+make clean        # remove all build artifacts
 ```
-tests/
-  run_tests.sh               Main runner — auto-discovers tests/libs/
-  sprint10b_core_fixes.sh    for..in dyn + prst arr handover
-  libs/
-    math.sh                  std.math tests (15 cases)
-    csv.sh                   std.csv tests (10 cases)
-    json.sh                  std.json tests (10 cases)
-    strings.sh               std.strings tests (15 cases)
-  suite2/
-    run_suite2.sh            Edge case master runner
-    s2_prst.sh               Persistent state edge cases
-    s2_handover.sh           Atomic Handover protocol
-    s2_gc.sh                 Garbage collector
-    s2_dyn.sh                Dynamic array extremes
-    s2_block.sh              Block isolation
-    s2_types_danger.sh       Type enforcement + danger
-    s2_embedded.sh           Memory-constrained scenarios
-  integration/
-    scenario1/               Normal IoT handover simulation
-    scenario2/               Fault injection (kill at each step)
-```
+
+The Makefile auto-detects `libffi` via `pkg-config`. If unavailable, the build proceeds without FFI support (`FLUXA_HAS_FFI=0`).
 
 ---
 
@@ -250,7 +546,8 @@ fluxa-lang/
     prst_graph.h        PrstGraph dependency tracker
     handover.c/h        Atomic Handover protocol
     gc.h                GC pin/unpin (open-addressing table)
-    ffi.c/h             libffi C interop
+    ffi.c               libffi C interop — pointer marshalling, writeback
+    fluxa_ffi.h         FFI public API
     ipc_server.c/h      Unix socket IPC for live inspection
     toml_config.h       fluxa.toml parser
     err.h               Error ring buffer
@@ -259,77 +556,22 @@ fluxa-lang/
       csv/              std.csv implementation
       json/             std.json implementation
       str/              std.strings implementation
-  tests/                Test suite
+      time/             std.time implementation
+      flxthread/        std.flxthread implementation
+  tests/
+    run_tests.sh        Main runner — auto-discovers tests/libs/
+    ffi_ptr.sh          FFI pointer mapping tests (12 cases)
+    sprint9c_ffi_toml.sh  [ffi] toml auto-resolve tests (10 cases)
+    libs/               stdlib test scripts
+    suite2/             Edge case master suite
+    integration/        Real-world scenario simulations
   examples/             Example programs
   vendor/               uthash (single-header hash table)
-  fluxa.toml            Project configuration
-  STDLIB.md             Standard library documentation
+  fluxa_spec_v10.md     Full language specification
+  STDLIB.md             Standard library reference
+  CREATING_LIBS.md      Guide for adding new stdlib libraries
   Makefile
 ```
-
----
-
-## `fluxa.toml` Configuration
-
-```toml
-[project]
-name  = "my_project"
-entry = "main.flx"
-
-[runtime]
-gc_cap         = 256   # GC table capacity (default 256)
-prst_cap       = 32    # PrstPool initial capacity
-prst_graph_cap = 64    # PrstGraph capacity
-
-[libs]
-std.math    = "1.0"
-std.csv     = "1.0"
-std.json    = "1.0"
-std.strings = "1.0"
-
-[libs.csv]
-max_line_bytes = 1024
-max_fields     = 64
-
-[libs.json]
-max_str_bytes = 4096
-
-[ffi]
-libm = "auto"          # resolved via dlopen at runtime
-
-[ffi.libm.signatures]
-cos = { ret = "double", params = ["double"] }
-sin = { ret = "double", params = ["double"] }
-```
-
----
-
-## CLI Reference
-
-```bash
-fluxa run <file.flx>                  Run a script
-fluxa run <file.flx> -proj <dir>      Run as project (enables prst)
-fluxa run <file.flx> -dev             Watch mode — reload on file change
-fluxa run <file.flx> -prod            Production mode — IPC server active
-fluxa handover <old.flx> <new.flx>    Execute Atomic Handover
-fluxa explain <file.flx>              Show prst vars, Block deps, GC state
-fluxa apply <key>=<value>             Send IPC set command to live runtime
-fluxa observe                         Stream live prst state from running process
-fluxa logs                            Stream runtime log output
-fluxa status                          Show live runtime status
-```
-
----
-
-## Building
-
-```bash
-make              # native binary → ./fluxa
-make build-asan   # AddressSanitizer build (development only)
-make clean        # remove all build artifacts
-```
-
-The Makefile auto-detects `libffi` via `pkg-config`. If unavailable, the build proceeds without FFI support (`FLUXA_HAS_FFI=0`).
 
 ---
 

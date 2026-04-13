@@ -1,5 +1,5 @@
 # Creating Standard Libraries for Fluxa-lang
-**A practical guide based on the implementation of std.math, std.csv, std.json, std.strings, and std.time**
+**A practical guide based on the implementation of std.math, std.csv, std.json, std.strings, std.time, and std.flxthread**
 
 ---
 
@@ -209,6 +209,7 @@ typedef struct {
     int has_json;
     int has_strings;
     int has_time;
+    int has_flxthread;
     int has_mylib;   /* ← add this */
 } FluxaStdLibs;
 ```
@@ -216,10 +217,13 @@ typedef struct {
 Then add the toml parser line in `fluxa_config_load_libs()`:
 
 ```c
-if (strncmp(p, "std.math",    8)  == 0) cfg->std_libs.has_math    = 1;
-if (strncmp(p, "std.csv",     7)  == 0) cfg->std_libs.has_csv     = 1;
+if (strncmp(p, "std.math",      8)  == 0) cfg->std_libs.has_math      = 1;
+if (strncmp(p, "std.csv",       7)  == 0) cfg->std_libs.has_csv       = 1;
+if (strncmp(p, "std.strings",  11)  == 0) cfg->std_libs.has_strings   = 1;
+if (strncmp(p, "std.time",      8)  == 0) cfg->std_libs.has_time      = 1;
+if (strncmp(p, "std.flxthread",13)  == 0) cfg->std_libs.has_flxthread = 1;
 // ...
-if (strncmp(p, "std.mylib",   9)  == 0) cfg->std_libs.has_mylib   = 1; /* ← add */
+if (strncmp(p, "std.mylib",    9)  == 0) cfg->std_libs.has_mylib   = 1; /* ← add */
 ```
 
 The `strncmp` length must match exactly the length of the key string (`std.mylib` = 9 chars).
@@ -231,19 +235,20 @@ The `strncmp` length must match exactly the length of the key string (`std.mylib
 In `src/parser.c`, find the `import std <lib>` validation block and add your lib name:
 
 ```c
-if (strcmp(lib_name, "math")    != 0 &&
-    strcmp(lib_name, "csv")     != 0 &&
-    strcmp(lib_name, "json")    != 0 &&
-    strcmp(lib_name, "strings") != 0 &&
-    strcmp(lib_name, "time")    != 0 &&
-    strcmp(lib_name, "mylib")   != 0 &&  /* ← add */
-    strcmp(lib_name, "vec")     != 0) {
+if (strcmp(lib_name, "math")      != 0 &&
+    strcmp(lib_name, "csv")       != 0 &&
+    strcmp(lib_name, "json")      != 0 &&
+    strcmp(lib_name, "strings")   != 0 &&
+    strcmp(lib_name, "time")      != 0 &&
+    strcmp(lib_name, "flxthread") != 0 &&
+    strcmp(lib_name, "mylib")     != 0 &&  /* ← add */
+    strcmp(lib_name, "vec")       != 0) {
 ```
 
 Also update the error message:
 
 ```c
-"unknown std library '%s' — available: math, csv, json, strings, time, mylib, vec"
+"unknown std library '%s' — available: math, csv, json, strings, time, flxthread, mylib, vec"
 ```
 
 ### Special case: reserved type keywords as lib names
@@ -268,6 +273,9 @@ Find the block of stdlib includes (near the top of the file, after `#include "gc
 #ifdef FLUXA_STD_TIME
 #include "std/time/fluxa_std_time.h"
 #endif
+#ifdef FLUXA_STD_FLXTHREAD
+#include "std/flxthread/fluxa_std_flxthread.h"
+#endif
 #ifdef FLUXA_STD_MYLIB                    /* ← add */
 #include "std/mylib/fluxa_std_mylib.h"   /* ← add */
 #endif                                    /* ← add */
@@ -275,7 +283,7 @@ Find the block of stdlib includes (near the top of the file, after `#include "gc
 
 ### 4b. Dispatch in NODE_MEMBER_CALL
 
-Find the std dispatch block in `NODE_MEMBER_CALL` (search for `FLUXA_STD_TIME`). Add your lib after the last existing one, before `BlockInstance *inst = ...`:
+Find the std dispatch block in `NODE_MEMBER_CALL` (search for `FLUXA_STD_FLXTHREAD`). Add your lib after the last existing one, before `BlockInstance *inst = ...`:
 
 ```c
 #ifdef FLUXA_STD_MYLIB
@@ -303,8 +311,10 @@ Find the std dispatch block in `NODE_MEMBER_CALL` (search for `FLUXA_STD_TIME`).
 Find the block that validates the lib name at runtime (search for `declared = 1`):
 
 ```c
-if (strcmp(lib, "time")   == 0 && rt->config.std_libs.has_time)   declared = 1;
-if (strcmp(lib, "mylib")  == 0 && rt->config.std_libs.has_mylib)  declared = 1; /* ← add */
+if (strcmp(lib, "time")      == 0 && rt->config.std_libs.has_time)      declared = 1;
+if (strcmp(lib, "flxthread") == 0 && rt->config.std_libs.has_flxthread) declared = 1;
+if (strcmp(lib, "ft")        == 0 && rt->config.std_libs.has_flxthread) declared = 1;
+if (strcmp(lib, "mylib")     == 0 && rt->config.std_libs.has_mylib)     declared = 1; /* ← add */
 ```
 
 ---
@@ -321,6 +331,7 @@ CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
           -DFLUXA_STD_MATH=1                    \
           # ... existing flags ...
           -DFLUXA_STD_TIME=1                    \
+          -DFLUXA_STD_FLXTHREAD=1               \
           -DFLUXA_STD_MYLIB=1                   # ← add
 ```
 
@@ -487,16 +498,17 @@ This is the order in which `lib.fn()` calls are resolved in `NODE_MEMBER_CALL`:
 ```
 lib.fn(args)
     │
-    ├─ FLUXA_STD_MATH    → "math"    → fluxa_std_math_call()
-    ├─ FLUXA_STD_CSV     → "csv"     → fluxa_std_csv_call()
-    ├─ FLUXA_STD_JSON    → "json"    → fluxa_std_json_call()
-    ├─ FLUXA_STD_STRINGS → "strings" → fluxa_std_strings_call()
-    ├─ FLUXA_STD_TIME    → "time"    → fluxa_std_time_call()
-    ├─ FLUXA_STD_MYLIB   → "mylib"   → fluxa_std_mylib_call()   ← your lib
+    ├─ FLUXA_STD_MATH      → "math"      → fluxa_std_math_call()
+    ├─ FLUXA_STD_CSV       → "csv"       → fluxa_std_csv_call()
+    ├─ FLUXA_STD_JSON      → "json"      → fluxa_std_json_call()
+    ├─ FLUXA_STD_STRINGS   → "strings"   → fluxa_std_strings_call()
+    ├─ FLUXA_STD_TIME      → "time"      → fluxa_std_time_call()
+    ├─ FLUXA_STD_FLXTHREAD → "ft"        → fluxa_std_flxthread_call()
+    ├─ FLUXA_STD_MYLIB     → "mylib"     → fluxa_std_mylib_call()   ← your lib
     │
     ├─ resolve_instance()  → Block instance method call
     ├─ ffi_find_lib()      → FFI call (import c libname, inside danger)
-    └─ error: undefined
+    └─ error: undefined (with hint for known stdlib/FFI names)
 ```
 
 Each check is `O(1)` — a `strcmp` and a struct field read. The chain is negligible even if it grows to 20+ libs.
