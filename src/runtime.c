@@ -167,6 +167,81 @@ static inline void rt_gc_unpin(Runtime *rt, Value *v) {
 
 
 static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
+    /* ── Warm path (Sprint 11) ───────────────────────────────────────────────
+     * warm_local: resolver confirmed this is a function-local variable, never
+     * prst. We read the WarmSlot (1 byte) rather than the full ASTNode union.
+     * If the slot is stable (QJL guard = 1, stable_runs >= 2) and the type
+     * in the stack slot matches the observed type, return directly —
+     * zero prst_pool_has, zero scope_get, zero strcmp.
+     *
+     * If the slot is not yet warm, we still skip prst_pool_has (safe because
+     * warm_local guarantees the variable is never prst) and fall through to
+     * the stack slot read + scope fallback. warm_record() observes the result
+     * for future promotion. */
+    if (node && node->warm_local && node->resolved_offset >= 0) {
+        int off = node->resolved_offset;
+
+        /* ── Promoted warm read ──────────────────────────────────────────────
+         * rt->current_wf is set once at call_function entry (O(1) hash).
+         * Inside rt_get it is just a pointer load — zero hash cost.
+         * Only active when the function has been promoted (stable_runs >= 2). */
+        WarmFunc *wf = rt->current_wf;
+        if (wf && rt->current_instance == NULL) {
+            if (warm_func_is_promoted(wf) && off < WARM_SLOTS_MAX &&
+                off < rt->stack_size) {
+                WarmSlot *ws = &wf->slots[off];
+                if (ws->qjl_guard) {
+                    Value v = rt->stack[off];
+                    /* QJL residual: exact type match — 1-byte WarmSlot read */
+                    if (v.type != 0 &&
+                        warm_type_from_val_type((int)v.type) == ws->observed_type) {
+                        return v; /* warm read: 1B slot + 8B stack = 9B touched */
+                    }
+                    /* Type diverged: QJL guard fires, demote to cold */
+                    ws->qjl_guard   = 0;
+                    wf->stable_runs = 0;
+                }
+            } else if (warm_func_observing(wf)) {
+                /* Observation phase — build profile for future promotion.
+                 * Stops automatically after WARM_OBS_LIMIT function calls.
+                 * After that: either promoted (fast) or cold-locked (just
+                 * falls through to direct stack read below — zero overhead). */
+                if (off < rt->stack_size) {
+                    Value v = rt->stack[off];
+                    if (v.type != 0) {
+                        warm_record(wf, off, (int)v.type);
+                        return v;
+                    }
+                }
+            }
+        }
+
+        /* ── Direct stack read (warm_local: never-prst, skip prst_pool_has) ─ */
+        if (off < rt->stack_size) {
+            Value v = rt->stack[off];
+            if (v.type != 0) return v;
+        }
+        Value v; v.type = 0;
+        if (scope_get(&rt->scope, name, &v)) return v;
+        { char buf[280];
+          snprintf(buf, sizeof(buf), "undefined variable: %s", name);
+          rt_error(rt, buf); }
+        return v;
+    }
+
+    /* ── Cold path — full resolution ─────────────────────────────────────────
+     * When inside a function call, prst globals must be read from scope,
+     * not from the stack. Local fn vars (params, locals) share stack slot
+     * numbers with global prst vars in the resolver's flat offset space. */
+    if (rt->call_depth > 0 && node && node->resolved_offset >= 0 &&
+        prst_pool_has(&rt->prst_pool, name)) {
+        Value v; v.type = VAL_NIL;
+        if (scope_get(&rt->scope, name, &v) && v.type != VAL_NIL) return v;
+        /* prst var not yet in scope (first access before fn writes it) —
+         * try the global scope table which holds the top-level frame. */
+        if (scope_table_get(rt->global_table, name, &v) && v.type != VAL_NIL) return v;
+        return v;
+    }
     if (node && node->resolved_offset >= 0 &&
         node->resolved_offset < rt->stack_size) {
         Value v = rt->stack[node->resolved_offset];
@@ -370,6 +445,7 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     Scope          caller_scope = rt->scope;
     int            caller_sz    = rt->stack_size;
     BlockInstance *caller_inst  = rt->current_instance;
+    ASTNode       *caller_fn    = rt->current_fn;   /* warm path: save caller fn */
     int            save_slots   = (caller_sz < FLUXA_STACK_SIZE) ? caller_sz : FLUXA_STACK_SIZE;
     Value         *caller_stack = NULL;
     if (save_slots > 0) {
@@ -381,7 +457,31 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     rt->scope            = scope_new();
     rt->stack_size       = 0;
     rt->current_instance = method_inst;
+    rt->current_fn       = fn_node;   /* warm path: this fn is the stable key */
+    rt->current_wf       = (rt->warm.enabled)
+                           ? warm_profile_get_func(&rt->warm, (uintptr_t)fn_node)
+                           : NULL;    /* O(1) hash — done once per call entry */
     rt->call_depth++;
+
+    /* Populate new scope with scalar prst vars so rt_get can find them
+     * by name without aliasing stack slots with local fn vars.
+     * Skip pointer-based types (Block, dyn, arr) — they must not be
+     * shallow-copied into each frame as that corrupts pointer semantics.
+     * For VAL_STRING: scope_free() will free the char* — so we must
+     * strdup() to give each frame its own copy independent of the pool. */
+    if (rt->mode == FLUXA_MODE_PROJECT) {
+        for (int _pi = 0; _pi < rt->prst_pool.count; _pi++) {
+            PrstEntry *_pe = &rt->prst_pool.entries[_pi];
+            ValType _vt = _pe->value.type;
+            if (_vt == VAL_INT || _vt == VAL_FLOAT || _vt == VAL_BOOL) {
+                scope_set(&rt->scope, _pe->name, _pe->value);
+            } else if (_vt == VAL_STRING && _pe->value.as.string) {
+                Value _sv = _pe->value;
+                _sv.as.string = strdup(_pe->value.as.string);
+                scope_set(&rt->scope, _pe->name, _sv);
+            }
+        }
+    }
 
     Value result = val_nil();
 
@@ -422,6 +522,14 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
             if (rt->had_error || rt->ret.active || rt->ret.tco_active) break;
         }
 
+        /* Update WHT path signature after body completes — warm profile
+         * uses this to detect stable execution paths (stable_runs counter).
+         * current_wf is already set for this function — no hash lookup. */
+        if (rt->warm.enabled && rt->current_wf != NULL &&
+            rt->current_instance == NULL) {
+            warm_update_sig(rt->current_wf);
+        }
+
         if (rt->had_error) { result = val_nil(); break; }
 
         /* ── Tail call detected — loop instead of recurse ── */
@@ -449,10 +557,15 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
             rt->stack_size = 0;
             rt->ret.tco_active = 0;
 
-            fn_node    = next_fn;
+            fn_node     = next_fn;
             param_count = next_fn->as.func_decl.param_count;
             args        = next_args;    /* already evaluated */
             method_inst = rt->current_instance; /* keep same instance context */
+            /* Warm path: update cached fn identity for the new TCO target */
+            rt->current_fn = next_fn;
+            rt->current_wf = (rt->warm.enabled)
+                             ? warm_profile_get_func(&rt->warm, (uintptr_t)next_fn)
+                             : NULL;
             continue;  /* trampoline: go back to top of while(1) */
         }
 
@@ -468,6 +581,10 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
     rt->current_instance = caller_inst;
+    rt->current_fn       = caller_fn;   /* warm path: restore caller fn */
+    rt->current_wf       = (rt->warm.enabled && caller_fn)
+                           ? warm_profile_get_func(&rt->warm, (uintptr_t)caller_fn)
+                           : NULL;
     if (save_slots > 0)
         memcpy(rt->stack, caller_stack, sizeof(Value) * save_slots);
     free(caller_stack);
@@ -1817,7 +1934,24 @@ static Value eval(Runtime *rt, ASTNode *node) {
             Value result = fluxa_ffi_call(lib, sym_name, ret_vt,
                                           sig,
                                           args, arg_count,
-                                          &rt->err_stack, ctx);
+                                          &rt->err_stack, ctx,
+                                          rt->config.ffi_str_buf_size);
+            /* Sprint 9.c-3: write back pointer args into Fluxa vars */
+            /* Sprint 9.c-3: write back pointer args into Fluxa vars.
+             * FPARAM_ARR excluded: bytes are scattered in-place into
+             * arr->data[j] inside ffi.c — no rt_set needed. */
+            if (sig && !rt->had_error) {
+                for (int i = 0; i < arg_count && i < sig->param_count; i++) {
+                    FParamKind k = sig->param_kinds[i];
+                    if (k != FPARAM_PTR_INT  &&
+                        k != FPARAM_PTR_FLT  &&
+                        k != FPARAM_PTR_BOOL &&
+                        k != FPARAM_STR) continue;
+                    ASTNode *anode = node->as.ffi_call.args[i];
+                    if (!anode || anode->type != NODE_IDENTIFIER) continue;
+                    rt_set(rt, anode, anode->as.str.value, args[i]);
+                }
+            }
             free(args);
             return result;
         }
@@ -1943,9 +2077,18 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     args[i] = eval(rt, node->as.member_call.args[i]);
                     if (rt->had_error) return val_nil();
                 }
-                return fluxa_std_json_call(method, args, argc,
+                Value _json_result = fluxa_std_json_call(method, args, argc,
                                            &rt->err_stack, &rt->had_error,
-                                           rt->current_line);
+                                           rt->current_line,
+                                           rt->config.json_max_str);
+                if (rt->had_error && rt->danger_depth == 0) {
+                    const ErrEntry *_e = errstack_get(&rt->err_stack, 0);
+                    if (_e)
+                        fprintf(stderr, "[fluxa] Runtime error (line %d): %s\n",
+                                _e->line > 0 ? _e->line : rt->current_line,
+                                _e->message);
+                }
+                return _json_result;
             }
 #endif /* FLUXA_STD_JSON */
 
@@ -2022,12 +2165,47 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     Value result = fluxa_ffi_call(lib, method, ret_vt,
                                                   msig,
                                                   args, argc,
-                                                  &rt->err_stack, ctx);
+                                                  &rt->err_stack, ctx,
+                                                  rt->config.ffi_str_buf_size);
+                    /* Sprint 9.c-3: write back pointer args into Fluxa vars.
+                     * fluxa_ffi_call already updated args[i] for PTR_* kinds,
+                     * writable char* (FPARAM_STR), and arr byte buffers (FPARAM_ARR).
+                     * Propagate updated values to the original Fluxa variables.
+                     * NOTE: FPARAM_ARR is excluded here — the scatter already
+                     * wrote bytes directly into arr->data[j] in ffi.c, so
+                     * calling rt_set with the whole VAL_ARR would corrupt memory. */
+                    if (msig && !rt->had_error) {
+                        for (int i = 0; i < argc && i < msig->param_count; i++) {
+                            FParamKind k = msig->param_kinds[i];
+                            if (k != FPARAM_PTR_INT  &&
+                                k != FPARAM_PTR_FLT  &&
+                                k != FPARAM_PTR_BOOL &&
+                                k != FPARAM_STR) continue;
+                            ASTNode *anode = node->as.member_call.args[i];
+                            if (!anode || anode->type != NODE_IDENTIFIER) continue;
+                            rt_set(rt, anode, anode->as.str.value, args[i]);
+                        }
+                    }
                     free(args);
                     return result;
                 }
                 char buf[280];
-                snprintf(buf, sizeof(buf), "undefined Block instance: %s", owner);
+                /* Hint at stdlib or FFI when the name looks like a known lib */
+                if (strcmp(owner, "math") == 0 || strcmp(owner, "csv")  == 0 ||
+                    strcmp(owner, "json") == 0 || strcmp(owner, "strings") == 0 ||
+                    strcmp(owner, "time") == 0 || strcmp(owner, "ft") == 0 ||
+                    strcmp(owner, "flxthread") == 0) {
+                    snprintf(buf, sizeof(buf),
+                        "'%s' is not enabled — add 'std.%s = \"1.0\"' "
+                        "under [libs] in fluxa.toml and 'import std %s' "
+                        "at the top of your file.",
+                        owner, owner, owner);
+                } else {
+                    snprintf(buf, sizeof(buf),
+                        "undefined identifier '%s' — if this is a C library "
+                        "add it under [ffi] in fluxa.toml: %s = \"auto\"",
+                        owner, owner);
+                }
                 rt_error(rt, buf); return val_nil();
             }
             Value fn_val;
@@ -2145,6 +2323,10 @@ int runtime_exec(ASTNode *program) {
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
+    warm_profile_init(&rt.warm);
+    rt.warm.enabled = 1;  /* warm path active from first execution */
+    rt.current_fn   = NULL;
+    rt.current_wf   = NULL;
     /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
     ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
     /* std libs: propagate config flags to runtime (has_math, has_csv, etc.) */

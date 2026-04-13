@@ -212,6 +212,21 @@ build:
 	@echo "✓ build ok → ./$(TARGET)"
 
 
+build-dis:
+	$(CC) $(CFLAGS) \
+	    src/dis_main.c \
+	    src/lexer.c    \
+	    src/parser.c   \
+	    src/scope.c    \
+	    src/resolver.c \
+	    src/bytecode.c \
+	    src/builtins.c \
+	    src/block.c    \
+	    -o fluxa_dis   \
+	    -lm
+	@echo "✓ build ok → ./fluxa_dis"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Embedded builds
 # ─────────────────────────────────────────────────────────────────────────────

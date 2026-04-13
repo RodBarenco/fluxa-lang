@@ -9,6 +9,7 @@
 #define FLUXA_AST_H
 
 #include <stdlib.h>
+#include <stdint.h>
 
 typedef enum {
     NODE_PROGRAM,
@@ -63,6 +64,9 @@ struct ASTNode {
     NodeType type;
     int      resolved_offset;  /* set by resolver — -1 = unresolved */
     int      line;             /* source line — set by parser (Sprint 8) */
+    uint8_t  warm_local;       /* warm path: 1 = confirmed function-local,
+                                * never prst — skip prst_pool_has in rt_get.
+                                * Set by resolver. 0 = unknown (safe default). */
 
     union {
         /* NODE_PROGRAM / NODE_FUNC_CALL / NODE_BLOCK_STMT */

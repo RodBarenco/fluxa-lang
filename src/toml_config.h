@@ -76,6 +76,9 @@ typedef struct {
     TomlFfiEntry ffi[TOML_FFI_MAX];
     int          ffi_count;
     FluxaStdLibs std_libs;  /* opt-in stdlib — declared in [libs] toml */
+    int          json_max_str;    /* [libs.json] max_str_bytes, default 4096  */
+    int          ffi_str_buf_size; /* [ffi] str_buf_size — writable char* buffer
+                                   * allocated per pointer arg, default 1024   */
 } FluxaConfig;
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -86,6 +89,8 @@ static inline FluxaConfig fluxa_config_defaults(void) {
     c.gc_cap         = GC_TABLE_CAP;
     c.prst_cap       = PRST_POOL_INIT_CAP;
     c.prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
+    c.json_max_str      = 4096;
+    c.ffi_str_buf_size  = 1024;
     return c;
 }
 
@@ -123,9 +128,16 @@ static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
         snprintf(out->ret_type, sizeof(out->ret_type), "nil");
     }
 
-    /* params: between ( and ) */
+    /* params: between ( and last ) before -> */
     const char *open  = strchr(sig_str, '(');
-    const char *close = arrow ? arrow : strchr(sig_str, ')');
+    /* find the ) that closes the param list — search backwards from arrow or end */
+    const char *close = NULL;
+    {
+        const char *search_end = arrow ? arrow : (sig_str + strlen(sig_str));
+        for (const char *p = search_end - 1; p > open; p--) {
+            if (*p == ')') { close = p; break; }
+        }
+    }
     if (!open || !close || close <= open) return;
 
     char inner[512];
@@ -237,8 +249,17 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
             continue;
         }
 
-        /* ── [ffi] root: alias = "auto" | "path" ── */
+        /* ── [ffi] root: alias = "auto" | "path" | str_buf_size = N ── */
         if (in_ffi_root) {
+            /* str_buf_size is a special scalar key, not a lib alias */
+            if (strcmp(key, "str_buf_size") == 0) {
+                int v = atoi(val);
+                if (v >= 64 && v <= 65536) cfg.ffi_str_buf_size = v;
+                else fprintf(stderr,
+                    "[fluxa] toml: ffi.str_buf_size %d out of range [64..65536],"
+                    " keeping default %d\n", v, cfg.ffi_str_buf_size);
+                continue;
+            }
             char resolved[256];
             cfg_unquote(val, resolved, sizeof(resolved));
             TomlFfiEntry *e = cfg_ffi_find_or_create(&cfg, key);
@@ -278,23 +299,34 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
     if (!f) return;
     char line[512];
     int in_libs = 0;
+    int in_libs_json = 0;
     while (fgets(line, sizeof(line), f)) {
         /* Strip leading whitespace */
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
         /* Section header */
         if (*p == '[') {
-            in_libs = (strncmp(p, "[libs]", 6) == 0);
+            in_libs      = (strncmp(p, "[libs]",      6) == 0);
+            in_libs_json = (strncmp(p, "[libs.json]", 11) == 0);
             continue;
         }
-        if (!in_libs) continue;
-        /* Parse key = value */
-        if (strncmp(p, "std.math", 8) == 0) cfg->std_libs.has_math = 1;
-        if (strncmp(p, "std.csv",  7) == 0) cfg->std_libs.has_csv  = 1;
-        if (strncmp(p, "std.json", 8) == 0) cfg->std_libs.has_json = 1;
-        if (strncmp(p, "std.strings", 11) == 0) cfg->std_libs.has_strings = 1;
-        if (strncmp(p, "std.time",      8)  == 0) cfg->std_libs.has_time      = 1;
-        if (strncmp(p, "std.flxthread", 13) == 0) cfg->std_libs.has_flxthread = 1;
+        if (in_libs) {
+            if (strncmp(p, "std.math", 8) == 0) cfg->std_libs.has_math = 1;
+            if (strncmp(p, "std.csv",  7) == 0) cfg->std_libs.has_csv  = 1;
+            if (strncmp(p, "std.json", 8) == 0) cfg->std_libs.has_json = 1;
+            if (strncmp(p, "std.strings", 11) == 0) cfg->std_libs.has_strings = 1;
+            if (strncmp(p, "std.time",      8)  == 0) cfg->std_libs.has_time      = 1;
+            if (strncmp(p, "std.flxthread", 13) == 0) cfg->std_libs.has_flxthread = 1;
+        }
+        if (in_libs_json) {
+            if (strncmp(p, "max_str_bytes", 13) == 0) {
+                char *eq = strchr(p, '=');
+                if (eq) {
+                    int v = (int)strtol(eq + 1, NULL, 10);
+                    if (v > 0) cfg->json_max_str = v;
+                }
+            }
+        }
     }
     fclose(f);
 }

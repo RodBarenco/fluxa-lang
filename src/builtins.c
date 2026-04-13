@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *BUILTINS[] = { "print", "len", NULL };
+static const char *BUILTINS[] = { "print", "len", "input", "input_int", "str_alloc", NULL };
 
 int builtin_is(const char *name) {
     for (int i = 0; BUILTINS[i]; i++)
@@ -95,9 +95,75 @@ static Value builtin_len(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
     return val_nil();
 }
 
+/* str_alloc(n) — allocate a mutable char buffer of n bytes for FFI out-params.
+ * Returns a str backed by calloc(n+1) — all zeroes, ready for C to write into.
+ * The caller owns the buffer; it lives as long as the variable is in scope. */
+static Value builtin_str_alloc(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
+    if (call->as.list.count != 1) {
+        rt->had_error = 1;
+        fprintf(stderr, "[fluxa] Runtime error: str_alloc() expects exactly 1 argument\n");
+        return val_nil();
+    }
+    Value n = eval_fn(rt, call->as.list.children[0]);
+    if (rt->had_error) return val_nil();
+    if (n.type != VAL_INT || n.as.integer <= 0) {
+        rt->had_error = 1;
+        fprintf(stderr, "[fluxa] Runtime error: str_alloc() argument must be a positive int\n");
+        return val_nil();
+    }
+    size_t sz = (size_t)n.as.integer;
+    char *buf = calloc(sz + 1, 1);   /* zero-initialised, +1 for null terminator */
+    if (!buf) { rt->had_error = 1; return val_nil(); }
+    Value v; v.type = VAL_STRING; v.as.string = buf;
+    return v;
+}
+
+/* input() — reads a line from stdin, returns str (newline stripped) */
+static Value builtin_input(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
+    /* optional prompt argument */
+    if (call->as.list.count > 0) {
+        Value prompt = eval_fn(rt, call->as.list.children[0]);
+        if (prompt.type == VAL_STRING && prompt.as.string)
+            printf("%s", prompt.as.string);
+        fflush(stdout);
+    }
+    char buf[1024];
+    if (!fgets(buf, sizeof(buf), stdin)) {
+        /* EOF or error — return empty string */
+        Value v; v.type = VAL_STRING; v.as.string = "";
+        return v;
+    }
+    /* strip trailing newline */
+    int len = (int)strlen(buf);
+    if (len > 0 && buf[len-1] == '\n') buf[--len] = '\0';
+    if (len > 0 && buf[len-1] == '\r') buf[--len] = '\0';
+    /* copy to heap so the caller owns the string */
+    char *s = malloc((size_t)len + 1);
+    if (!s) { rt->had_error = 1; return val_nil(); }
+    memcpy(s, buf, (size_t)len + 1);
+    Value v; v.type = VAL_STRING; v.as.string = s;
+    return v;
+}
+
+/* input_int() — reads a line from stdin, parses as int */
+static Value builtin_input_int(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
+    if (call->as.list.count > 0) {
+        Value prompt = eval_fn(rt, call->as.list.children[0]);
+        if (prompt.type == VAL_STRING && prompt.as.string)
+            printf("%s", prompt.as.string);
+        fflush(stdout);
+    }
+    char buf[64];
+    if (!fgets(buf, sizeof(buf), stdin)) return val_int(0);
+    return val_int((long)atol(buf));
+}
+
 Value builtin_dispatch(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
     const char *name = call->as.list.name;
     if (strcmp(name, "print") == 0) return builtin_print(rt, call, eval_fn);
-    if (strcmp(name, "len")   == 0) return builtin_len(rt, call, eval_fn);
+    if (strcmp(name, "len")       == 0) return builtin_len(rt, call, eval_fn);
+    if (strcmp(name, "input")     == 0) return builtin_input(rt, call, eval_fn);
+    if (strcmp(name, "input_int") == 0) return builtin_input_int(rt, call, eval_fn);
+    if (strcmp(name, "str_alloc") == 0) return builtin_str_alloc(rt, call, eval_fn);
     return val_nil();
 }

@@ -98,7 +98,8 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                      ValType ret_type,
                      const FfiSig *sig,       /* NULL = legacy mode */
                      Value *args, int arg_count,
-                     ErrStack *err, const char *ctx);
+                     ErrStack *err, const char *ctx,
+                     int str_buf_size);       /* writable char* buf size, 0=default */
 
 /* ── CLI helpers ─────────────────────────────────────────────────────────── */
 /* fluxa ffi list — print available shared libs via ldconfig/pkg-config */

@@ -300,7 +300,7 @@ void ffi_cli_list(void) {
             pclose(fp);
         }
     }
-    printf("\nDeclare no fluxa.toml:\n");
+    printf("\nDeclare in fluxa.toml:\n");
     printf("  [ffi]\n");
     printf("  libm = \"auto\"\n");
 }
@@ -357,7 +357,7 @@ void ffi_cli_inspect(const char *lib_name_or_path) {
     char *dot = strchr(alias, '.');
     if (dot) *dot = '\0';
 
-    printf("# Cole no seu fluxa.toml:\n");
+    printf("# Paste into your fluxa.toml:\n");
     printf("[ffi]\n%s = \"auto\"\n\n", alias);
     printf("[ffi.%s.signatures]\n", alias);
 
@@ -374,10 +374,10 @@ void ffi_cli_inspect(const char *lib_name_or_path) {
     pclose(fp);
 
     if (count == 0)
-        printf("# (nenhum símbolo público encontrado)\n");
+        printf("# (no public symbols found)\n");
     else
-        printf("\n# %d função(ões) encontrada(s)."
-               " Ajuste os tipos conforme a assinatura C real.\n", count);
+        printf("\n# %d function(s) found."
+               " Adjust types to match the actual C signature.\n", count);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -416,7 +416,13 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                      ValType ret_type,
                      const FfiSig *sig,
                      Value *args, int arg_count,
-                     ErrStack *err, const char *ctx) {
+                     ErrStack *err, const char *ctx,
+                     int str_buf_size) {
+    /* str_buf_size: bytes allocated for each writable char* argument.
+     * Caller passes rt->config.ffi_str_buf_size (default 1024, configurable
+     * via [ffi] str_buf_size in fluxa.toml). Clamp to sane range. */
+    if (str_buf_size < 64)    str_buf_size = 1024;
+    if (str_buf_size > 65536) str_buf_size = 65536;
     if (arg_count > 32) {
         errstack_push(err, ERR_C_FFI, "FFI: too many arguments (max 32)", ctx, 0);
         return val_nil();
@@ -443,11 +449,36 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
     char    *sval[32];
     void    *pval[32];
 
-    /* Storage for pointer args (int*, double*, bool*) — written back after call */
-    int64_t  ptr_ival[32];
-    double   ptr_fval[32];
-    int32_t  ptr_bval[32];
-    void    *ptr_ptr[32];   /* pointer storage for pointer types */
+    /* Storage for pointer args — written back into Fluxa Values after the call.
+     *
+     * int* ABI note: C functions write int (32-bit). We must use int32_t here,
+     * not int64_t — on x86-64 the upper 4 bytes would stay stale and corrupt
+     * the value when read back as long. */
+    int32_t  ptr_ival32[32];   /* FPARAM_PTR_INT  — matches C int*   */
+    double   ptr_fval[32];     /* FPARAM_PTR_FLT  — matches C double* */
+    int32_t  ptr_bval[32];     /* FPARAM_PTR_BOOL — matches C bool*   */
+    void    *ptr_ptr[32];      /* pointer to the storage above        */
+
+    /* Writable char* buffers: allocated when sig says char* and the Fluxa
+     * value is str. The C function writes into this buffer; after the call
+     * we copy the result back into args[i].as.string (strdup). */
+    char    *str_wbuf[32];     /* malloc'd write buffer, one per arg  */
+    int      str_wbuf_used[32];/* 1 = this slot holds a writable buf  */
+
+    /* Writable byte buffers: allocated when sig says uint8_t* and the Fluxa
+     * value is int arr. We flatten Value[] → uint8_t[], pass to C, then
+     * scatter bytes back into the arr elements after the call. */
+    uint8_t *arr_wbuf[32];    /* malloc'd byte buffer, one per arg   */
+    int      arr_wbuf_used[32];
+    int      arr_wbuf_len[32]; /* element count of the source arr     */
+
+    for (int i = 0; i < 32; i++) {
+        str_wbuf[i]      = NULL;
+        str_wbuf_used[i] = 0;
+        arr_wbuf[i]      = NULL;
+        arr_wbuf_used[i] = 0;
+        arr_wbuf_len[i]  = 0;
+    }
 
     for (int i = 0; i < arg_count; i++) {
         FParamKind kind = FPARAM_VALUE;
@@ -489,41 +520,95 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                 break;
 
             case FPARAM_PTR_INT:
-                /* Pass &int_val; write back after call */
-                ptr_ival[i] = (int64_t)args[i].as.integer;
-                ptr_ptr[i]  = &ptr_ival[i];
-                arg_types[i] = &ffi_type_pointer;
-                arg_vals[i]  = &ptr_ptr[i];
+                /* Pass &int32 so C writes exactly 4 bytes; read back after call */
+                ptr_ival32[i] = (int32_t)args[i].as.integer;
+                ptr_ptr[i]    = &ptr_ival32[i];
+                arg_types[i]  = &ffi_type_pointer;
+                arg_vals[i]   = &ptr_ptr[i];
                 break;
 
             case FPARAM_PTR_FLT:
-                ptr_fval[i] = args[i].as.real;
-                ptr_ptr[i]  = &ptr_fval[i];
+                ptr_fval[i]  = args[i].as.real;
+                ptr_ptr[i]   = &ptr_fval[i];
                 arg_types[i] = &ffi_type_pointer;
                 arg_vals[i]  = &ptr_ptr[i];
                 break;
 
             case FPARAM_PTR_BOOL:
-                ptr_bval[i] = (int32_t)args[i].as.boolean;
-                ptr_ptr[i]  = &ptr_bval[i];
+                ptr_bval[i]  = (int32_t)args[i].as.boolean;
+                ptr_ptr[i]   = &ptr_bval[i];
                 arg_types[i] = &ffi_type_pointer;
                 arg_vals[i]  = &ptr_ptr[i];
                 break;
 
             case FPARAM_STR:
-                sval[i]      = args[i].as.string;
+                /* char* as read-only input: pass the sds pointer directly.
+                 * char* as writable output: allocate a buffer, pass it to C,
+                 * copy result back into args[i].as.string after the call.
+                 *
+                 * Heuristic: if the next arg in the sig is int/int* with a
+                 * value that looks like a buffer size (> 0), treat this as a
+                 * writable buffer. Otherwise treat as read-only.
+                 *
+                 * Simpler rule used here: always allocate a writable buffer.
+                 * If the function only reads (puts, strlen), it just reads from
+                 * the buffer copy — no harm. If it writes (fgets, scanf %s),
+                 * the result is captured and written back. */
+                str_wbuf[i] = (char *)malloc(str_buf_size);
+                if (!str_wbuf[i]) {
+                    errstack_push(err, ERR_C_FFI,
+                        "FFI: out of memory allocating char* buffer", ctx, 0);
+                    return val_nil();
+                }
+                str_wbuf_used[i] = 1;
+                /* Copy current string content into the buffer (read-only callers
+                 * need the data; write callers will overwrite it). */
+                if (args[i].as.string) {
+                    size_t slen = strlen(args[i].as.string);
+                    if (slen >= (size_t)str_buf_size) slen = (size_t)str_buf_size - 1;
+                    memcpy(str_wbuf[i], args[i].as.string, slen);
+                    str_wbuf[i][slen] = '\0';
+                } else {
+                    str_wbuf[i][0] = '\0';
+                }
+                sval[i]      = str_wbuf[i];
                 arg_types[i] = &ffi_type_pointer;
                 arg_vals[i]  = &sval[i];
                 break;
 
-            case FPARAM_ARR:
-                /* arr → raw data pointer */
-                pval[i]      = args[i].type == VAL_ARR
-                               ? (void*)args[i].as.arr.data
-                               : NULL;
+            case FPARAM_ARR: {
+                /* uint8_t* / void* buffer: flatten arr Value[] → byte array.
+                 * Each Value element contributes its integer value as one byte.
+                 * After the call, scatter bytes back into the arr elements.
+                 * If the arg is not an arr, pass NULL. */
+                if (args[i].type == VAL_ARR && args[i].as.arr.data &&
+                    args[i].as.arr.size > 0) {
+                    int n = args[i].as.arr.size;
+                    arr_wbuf[i] = (uint8_t *)malloc((size_t)n);
+                    if (!arr_wbuf[i]) {
+                        errstack_push(err, ERR_C_FFI,
+                            "FFI: out of memory allocating uint8_t* buffer",
+                            ctx, 0);
+                        return val_nil();
+                    }
+                    arr_wbuf_used[i] = 1;
+                    arr_wbuf_len[i]  = n;
+                    /* Gather: Value[] → uint8_t[] */
+                    for (int j = 0; j < n; j++) {
+                        Value *elem = &args[i].as.arr.data[j];
+                        arr_wbuf[i][j] = (uint8_t)(
+                            elem->type == VAL_INT   ? (uint8_t)elem->as.integer :
+                            elem->type == VAL_BOOL  ? (uint8_t)elem->as.boolean :
+                            0);
+                    }
+                    pval[i] = arr_wbuf[i];
+                } else {
+                    pval[i] = NULL;
+                }
                 arg_types[i] = &ffi_type_pointer;
                 arg_vals[i]  = &pval[i];
                 break;
+            }
 
             case FPARAM_DYN:
                 /* Extract void* from VAL_PTR stored in dyn[0] */
@@ -552,8 +637,11 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
             ffi_ret = &ffi_type_double;
         else if (strstr(rt_s, "*") || strcmp(rt_s, "dyn") == 0)
             ffi_ret = &ffi_type_pointer;
+        else if (strcmp(rt_s, "int") == 0 || strcmp(rt_s, "uint") == 0 ||
+                 strcmp(rt_s, "bool") == 0)
+            ffi_ret = &ffi_type_sint32;   /* 32-bit int return — must match C ABI */
         else
-            ffi_ret = &ffi_type_sint64;
+            ffi_ret = &ffi_type_sint64;   /* long, size_t, int64 */
     } else {
         ffi_ret = (ret_type == VAL_NIL)
                 ? &ffi_type_void
@@ -583,7 +671,8 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
         for (int i = 0; i < arg_count && i < sig->param_count; i++) {
             switch (sig->param_kinds[i]) {
                 case FPARAM_PTR_INT:
-                    args[i].as.integer = (long)ptr_ival[i];
+                    /* int32_t → long, sign-extend correctly */
+                    args[i].as.integer = (long)ptr_ival32[i];
                     break;
                 case FPARAM_PTR_FLT:
                     args[i].as.real = ptr_fval[i];
@@ -591,9 +680,46 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                 case FPARAM_PTR_BOOL:
                     args[i].as.boolean = (int)ptr_bval[i];
                     break;
-                default: break;
+                case FPARAM_STR:
+                    /* Writable char* buffer: copy result back into the str Value.
+                     * Always null-terminated because str_buf_size-1 cap.
+                     * Only update if the buffer was allocated for this slot. */
+                    if (str_wbuf_used[i] && str_wbuf[i]) {
+                        str_wbuf[i][str_buf_size - 1] = '\0';
+                        /* Replace the string value with the new content.
+                         * The old string will be freed by the runtime GC. */
+                        char *updated = strdup(str_wbuf[i]);
+                        if (updated) {
+                            /* Free old sds string if owned, replace pointer */
+                            if (args[i].as.string)
+                                free(args[i].as.string);
+                            args[i].as.string = updated;
+                        }
+                    }
+                    break;
+                case FPARAM_ARR:
+                    /* uint8_t* buffer: scatter bytes back into arr elements */
+                    if (arr_wbuf_used[i] && arr_wbuf[i] &&
+                        args[i].type == VAL_ARR && args[i].as.arr.data) {
+                        int n = arr_wbuf_len[i];
+                        if (n > args[i].as.arr.size) n = args[i].as.arr.size;
+                        for (int j = 0; j < n; j++) {
+                            args[i].as.arr.data[j].type        = VAL_INT;
+                            args[i].as.arr.data[j].as.integer  =
+                                (long)(unsigned char)arr_wbuf[i][j];
+                        }
+                    }
+                    break;
+                default:
+                    break;
             }
         }
+    }
+
+    /* Free writable buffers allocated during arg marshalling */
+    for (int i = 0; i < arg_count; i++) {
+        if (str_wbuf_used[i] && str_wbuf[i]) { free(str_wbuf[i]); str_wbuf[i] = NULL; }
+        if (arr_wbuf_used[i] && arr_wbuf[i]) { free(arr_wbuf[i]); arr_wbuf[i] = NULL; }
     }
 
     /* Build return Value */
@@ -633,9 +759,10 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
 Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                      ValType ret_type, const FfiSig *sig,
                      Value *args, int arg_count,
-                     ErrStack *err, const char *ctx) {
+                     ErrStack *err, const char *ctx,
+                     int str_buf_size) {
     (void)lib; (void)sym_name; (void)ret_type; (void)sig;
-    (void)args; (void)arg_count;
+    (void)args; (void)arg_count; (void)str_buf_size;
     errstack_push(err, ERR_C_FFI,
         "FFI not available — libffi not found at compile time", ctx, 0);
     return val_nil();

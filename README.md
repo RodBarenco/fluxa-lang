@@ -28,6 +28,20 @@ The Atomic Handover protocol allows zero-downtime replacement of a running Fluxa
 
 Built-in FFI via `libffi` calls compiled C libraries directly from Fluxa scripts inside `danger` blocks. The runtime reads C signatures from `fluxa.toml` and handles all pointer marshalling automatically: `int*` / `double*` / `bool*` parameters are passed by address and written back, `char*` output buffers are allocated internally and copied back into `str` variables, and `uint8_t*` buffers are flattened from `int arr` and scattered back after the call. The user writes plain Fluxa types and the runtime does the rest.
 
+### Three-Tier Execution
+
+The Fluxa runtime selects the fastest execution path per function automatically:
+
+**Cold** — full AST walker on the first few calls. The resolver already marks function-local variables with `warm_local`, skipping the `prst_pool_has` scan even here.
+
+**Warm** — after 2 stable executions, the runtime promotes the function. Variable reads touch a 1-byte `WarmSlot` (type tag + QJL guard) and the stack slot directly — 9 bytes total, versus 18–2000+ bytes in cold mode depending on how many `prst` variables the program has. A Walsh-Hadamard Transform (WHT) signature detects type instability; a 1-bit QJL residual demotes the function back to cold if types diverge.
+
+**Hot** — the bytecode VM handles `while` and `if` loops deterministically, unchanged.
+
+Memory touched per variable read in a function with 20 `prst` variables: **418 bytes cold → 9 bytes warm**. On RP2040 (264 KB SRAM, no cache) this directly reduces SRAM accesses from 7–8 to 2 per variable read. Benchmark results on x86-64: recursive functions +21%, method calls +12%, PROJECT-mode loops +23%. Zero regression on VM hot paths.
+
+This is the first known application of TurboQuant-inspired orthogonal quantization to language runtime execution profiling.
+
 ---
 
 ## Core Design Principles
@@ -551,6 +565,8 @@ fluxa-lang/
     ipc_server.c/h      Unix socket IPC for live inspection
     toml_config.h       fluxa.toml parser
     err.h               Error ring buffer
+    warm_profile.h      Warm path: WarmProfile (WHT signature + QJL guard),
+                        WarmSlot (1 byte/node), warm_func_is_promoted()
     std/
       math/             std.math implementation
       csv/              std.csv implementation

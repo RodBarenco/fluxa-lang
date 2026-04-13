@@ -54,6 +54,10 @@ static void resolve_expr(Resolver *r, ASTNode *node) {
         case NODE_IDENTIFIER: {
             int off = symtable_find(r->current, node->as.str.value);
             node->resolved_offset = (off >= 0) ? off : -1;
+            /* Warm path: inside a function body, local variables are never
+             * prst — mark so rt_get can skip prst_pool_has (O(n) scan). */
+            if (r->in_func_depth > 0 && off >= 0)
+                node->warm_local = 1;
             break;
         }
 
@@ -151,6 +155,9 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             resolve_expr(r, node->as.var_decl.initializer);
             int off = symtable_declare(r->current, node->as.var_decl.var_name);
             node->resolved_offset = off;
+            /* Warm path: local fn vars that are NOT prst can skip prst_pool_has */
+            if (r->in_func_depth > 0 && !node->as.var_decl.persistent && off >= 0)
+                node->warm_local = 1;
             if (r->current->count > r->max_slots)
                 r->max_slots = r->current->count;
             break;
@@ -222,10 +229,15 @@ static void resolve_node(Resolver *r, ASTNode *node) {
             SymTable *saved = r->current;
             r->current = &child;
 
+            /* All parameters are local — never prst. Mark them warm_local
+             * via in_func_depth so the body's NODE_IDENTIFIER nodes get the
+             * flag set automatically. */
+            r->in_func_depth++;
             for (int i = 0; i < node->as.func_decl.param_count; i++)
                 symtable_declare(&child, node->as.func_decl.param_names[i]);
 
             resolve_node(r, node->as.func_decl.body);
+            r->in_func_depth--;
 
             if (child.count > r->max_slots)
                 r->max_slots = child.count;
@@ -377,9 +389,10 @@ int resolver_run(ASTNode *program) {
     symtable_init(&global, NULL);
 
     Resolver r;
-    r.current   = &global;
-    r.had_error = 0;
-    r.max_slots = 0;
+    r.current       = &global;
+    r.had_error     = 0;
+    r.max_slots     = 0;
+    r.in_func_depth = 0;
 
     resolve_node(&r, program);
 

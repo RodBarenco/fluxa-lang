@@ -18,6 +18,7 @@
 #include "prst_graph.h"
 #include "fluxa_ffi.h"
 #include "toml_config.h"
+#include "warm_profile.h"
 
 #define FLUXA_MAX_DEPTH  500
 #define FLUXA_STACK_SIZE 512
@@ -73,7 +74,16 @@ typedef struct Runtime {
     long           cycle_count;   /* incremented per top-level statement    */
     int            dry_run;       /* 1 = suppress all output (print, FFI)   */
     volatile int  *cancel_flag;   /* non-NULL in -dev: set to 1 to abort VM */
-    int            current_line;  /* Sprint 8: current line being executed      */
+    int            current_line;  /* Sprint 8: current line being executed  */
+
+    /* Sprint 11 — warm path */
+    WarmProfile    warm;          /* compact execution profile (WHT + QJL)
+                                   * max 8.7 KB; zero overhead when disabled */
+    ASTNode       *current_fn;   /* ASTNode* of the function currently executing —
+                                   * used as stable key for warm_profile_get_func */
+    WarmFunc      *current_wf;   /* cached WarmFunc for current_fn — set once per
+                                   * call_function entry, cleared on return.
+                                   * Eliminates repeated hash lookups in rt_get. */
 } Runtime;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */

@@ -37,6 +37,9 @@ typedef struct {
     SymTable *current;
     int       had_error;
     int       max_slots;
+    int       in_func_depth; /* > 0 when resolving inside a fn/Block method body.
+                              * Variables declared here are never prst — safe to
+                              * mark warm_local=1 and skip prst_pool_has at runtime. */
 } Resolver;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */

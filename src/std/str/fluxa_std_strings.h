@@ -309,6 +309,46 @@ static inline Value fluxa_std_strings_call(const char *fn_name,
         return strlib_str(out);
     }
 
+    if (strcmp(fn_name, "from_int") == 0) {
+        if (argc != 1) { STR_ERR("from_int: expected 1 argument"); return strlib_nil(); }
+        Value v = args[0];
+        char buf[32];
+        if (v.type == VAL_INT)        snprintf(buf, sizeof(buf), "%ld", v.as.integer);
+        else if (v.type == VAL_FLOAT) snprintf(buf, sizeof(buf), "%g",  v.as.real);
+        else { STR_ERR("from_int: expected int or float"); return strlib_nil(); }
+        return strlib_str(buf);
+    }
+
+    if (strcmp(fn_name, "to_int") == 0) {
+        if (argc != 1) { STR_ERR("to_int: expected 1 argument"); return strlib_nil(); }
+        Value v = args[0];
+        if (v.type != VAL_STRING) { STR_ERR("to_int: expected str"); return strlib_nil(); }
+        return strlib_int(atol(v.as.string ? v.as.string : "0"));
+    }
+
+    if (strcmp(fn_name, "concat") == 0) {
+        /* str.concat(a, b, ...) — joins any number of values as strings */
+        if (argc == 0) return strlib_str("");
+        char out[4096]; out[0] = '\0';
+        int pos = 0;
+        for (int _i = 0; _i < argc && pos < (int)sizeof(out) - 1; _i++) {
+            char tmp[512]; tmp[0] = '\0';
+            Value v = args[_i];
+            if (v.type == VAL_INT)        snprintf(tmp, sizeof(tmp), "%ld", v.as.integer);
+            else if (v.type == VAL_FLOAT) snprintf(tmp, sizeof(tmp), "%g",  v.as.real);
+            else if (v.type == VAL_BOOL)  snprintf(tmp, sizeof(tmp), "%s",  v.as.boolean ? "true" : "false");
+            else if (v.type == VAL_STRING && v.as.string)
+                                          snprintf(tmp, sizeof(tmp), "%s",  v.as.string);
+            int tlen = (int)strlen(tmp);
+            if (pos + tlen < (int)sizeof(out) - 1) {
+                memcpy(out + pos, tmp, (size_t)tlen);
+                pos += tlen;
+            }
+        }
+        out[pos] = '\0';
+        return strlib_str(out);
+    }
+
 #undef STR_ERR
 #undef NEED
 #undef GET_S

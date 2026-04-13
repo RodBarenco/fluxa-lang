@@ -457,7 +457,10 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
 #undef GET_INT
 
     snprintf(errbuf, sizeof(errbuf),
-             "csv.%s: unknown function", fn_name);
+        "csv.%s: unknown function — available: "
+        "open, next, close, chunk, load, save, field, field_count, skip, is_eof. "
+        "Make sure 'std.csv = \"1.0\"' is declared under [libs] in fluxa.toml.",
+        fn_name);
     errstack_push(err, ERR_FLUXA, errbuf, "csv", line);
     *had_error = 1;
     return csv_nil();

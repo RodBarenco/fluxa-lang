@@ -211,15 +211,14 @@ static inline JsonCursor *json_cursor_from_val(const Value *v,
 static inline Value fluxa_std_json_call(const char *fn_name,
                                          const Value *args, int argc,
                                          ErrStack *err, int *had_error,
-                                         int line) {
+                                         int line, int max_str) {
     char errbuf[1024];
+    if (max_str <= 0) max_str = FLUXA_JSON_MAX_STR;
 
 #define JSON_ERR(msg) do { \
-    /* Two-step: build prefix separately to avoid restrict/truncation warnings */ \
     char _m[1024]; \
     strncpy(_m, msg, sizeof(_m)-1); _m[sizeof(_m)-1] = '\0'; \
-    snprintf(errbuf, sizeof(errbuf), "json.%s (line %d): %.900s", \
-             fn_name, line, _m); \
+    snprintf(errbuf, sizeof(errbuf), "json.%s: %.900s", fn_name, _m); \
     errstack_push(err, ERR_FLUXA, errbuf, "json", line); \
     *had_error = 1; return json_nil(); \
 } while(0)
@@ -318,14 +317,31 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         REQUIRE_ARGC_MIN(1); GET_STR(0, path);
         FILE *fp = fopen(path, "r");
         if (!fp) {
-            snprintf(errbuf, sizeof(errbuf), "json.load: cannot open '%s'", path);
+            snprintf(errbuf, sizeof(errbuf), "cannot open '%s'", path);
             JSON_ERR(errbuf);
         }
-        char *buf = (char *)malloc(FLUXA_JSON_MAX_STR);
+        char *buf = (char *)malloc((size_t)max_str);
         if (!buf) { fclose(fp); JSON_ERR("out of memory"); }
-        size_t n = fread(buf, 1, (size_t)(FLUXA_JSON_MAX_STR - 1), fp);
-        buf[n] = '\0';
+        size_t n = fread(buf, 1, (size_t)(max_str - 1), fp);
+        /* Check if file was truncated — if there's still data left, the
+         * buffer was too small. Emit a clear error instead of silently
+         * loading partial JSON which would produce confusing key-not-found
+         * errors later. */
+        int truncated = 0;
+        if ((int)n == max_str - 1) {
+            int c = fgetc(fp);
+            if (c != EOF) truncated = 1;
+        }
         fclose(fp);
+        if (truncated) {
+            free(buf);
+            snprintf(errbuf, sizeof(errbuf),
+                "file '%s' exceeds buffer (%d bytes). "
+                "Increase [libs.json] max_str_bytes in fluxa.toml and reload the runtime.",
+                path, max_str);
+            JSON_ERR(errbuf);
+        }
+        buf[n] = '\0';
         Value ret = json_str_val(buf);
         free(buf);
         return ret;
@@ -410,12 +426,14 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         REQUIRE_ARGC_MIN(2); GET_STR(0, jsn); GET_STR(1, key);
         const char *vp = json_find_key(jsn, key);
         if (!vp) {
-            snprintf(errbuf, sizeof(errbuf),
-                "json.get_str: key '%s' not found", key);
+            snprintf(errbuf, sizeof(errbuf), "key '%s' not found", key);
             JSON_ERR(errbuf);
         }
         vp = json_skip_ws(vp);
-        if (*vp != '"') JSON_ERR("json.get_str: value is not a string");
+        if (*vp != '"') {
+            snprintf(errbuf, sizeof(errbuf), "key '%s' is not a string", key);
+            JSON_ERR(errbuf);
+        }
         char vbuf[FLUXA_JSON_MAX_STR];
         json_read_string(vp, vbuf, sizeof(vbuf));
         return json_str_val(vbuf);
@@ -426,12 +444,12 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         REQUIRE_ARGC_MIN(2); GET_STR(0, jsn); GET_STR(1, key);
         const char *vp = json_find_key(jsn, key);
         if (!vp) {
-            snprintf(errbuf, sizeof(errbuf), "json.get_float: key '%s' not found", key);
+            snprintf(errbuf, sizeof(errbuf), "key '%s' not found", key);
             JSON_ERR(errbuf);
         }
         vp = json_skip_ws(vp);
         char *end; double val = strtod(vp, &end);
-        if (end == vp) JSON_ERR("json.get_float: value is not a number");
+        if (end == vp) JSON_ERR("value is not a number");
         return json_float(val);
     }
 
@@ -440,12 +458,12 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         REQUIRE_ARGC_MIN(2); GET_STR(0, jsn); GET_STR(1, key);
         const char *vp = json_find_key(jsn, key);
         if (!vp) {
-            snprintf(errbuf, sizeof(errbuf), "json.get_int: key '%s' not found", key);
+            snprintf(errbuf, sizeof(errbuf), "key '%s' not found", key);
             JSON_ERR(errbuf);
         }
         vp = json_skip_ws(vp);
         char *end; long val = strtol(vp, &end, 10);
-        if (end == vp) JSON_ERR("json.get_int: value is not an integer");
+        if (end == vp) JSON_ERR("value is not an integer");
         return json_int(val);
     }
 
@@ -454,13 +472,13 @@ static inline Value fluxa_std_json_call(const char *fn_name,
         REQUIRE_ARGC_MIN(2); GET_STR(0, jsn); GET_STR(1, key);
         const char *vp = json_find_key(jsn, key);
         if (!vp) {
-            snprintf(errbuf, sizeof(errbuf), "json.get_bool: key '%s' not found", key);
+            snprintf(errbuf, sizeof(errbuf), "key '%s' not found", key);
             JSON_ERR(errbuf);
         }
         vp = json_skip_ws(vp);
         if (strncmp(vp, "true",  4) == 0) return json_bool(1);
         if (strncmp(vp, "false", 5) == 0) return json_bool(0);
-        JSON_ERR("json.get_bool: value is not a boolean");
+        JSON_ERR("value is not a boolean");
     }
 
     /* ── json.has(str json, str key) → bool ─────────────────────────────── */
@@ -676,7 +694,13 @@ static inline Value fluxa_std_json_call(const char *fn_name,
 #undef GET_STR
 #undef GET_INT_ARG
 
-    snprintf(errbuf, sizeof(errbuf), "json.%s: unknown function", fn_name);
+    snprintf(errbuf, sizeof(errbuf),
+        "json.%s: unknown function — available: "
+        "open, next, close, load, parse_array, get_str, get_float, get_int, "
+        "get_bool, has, object, array, set, from_str, from_float, from_int, "
+        "from_bool, valid, is_eof, stringify. "
+        "Make sure 'std.json = \"1.0\"' is declared under [libs] in fluxa.toml.",
+        fn_name);
     errstack_push(err, ERR_FLUXA, errbuf, "json", line);
     *had_error = 1;
     return json_nil();
