@@ -45,9 +45,40 @@
 #define IPC_SOCKET_DIR     "/tmp"
 #define IPC_SOCKET_FMT     "/tmp/fluxa-%d.sock"   /* %d = server PID */
 #define IPC_LOCK_FMT       "/tmp/fluxa-%d.lock"
-#define IPC_TIMEOUT_MS     100
+#ifdef FLUXA_SECURE
+#define IPC_TIMEOUT_MS     50    /* AC 1.2: default 50ms — overridable via
+                                  * [security] handshake_timeout_ms in toml */
+#else
+#define IPC_TIMEOUT_MS     100   /* dev/default — 100ms handshake timeout     */
+#endif
 #define IPC_VAR_NAME_MAX   64            /* max prst variable name length    */
 #define IPC_LOG_LINE_MAX   128           /* max single log line in response  */
+
+/* ── Security / resilience constants ────────────────────────────────────── *
+ * Only compiled when FLUXA_SECURE=1 (make build-secure).                   *
+ * Zero overhead in regular builds. Intended for -prod deployments.         */
+#ifdef FLUXA_SECURE
+#define IPC_MAX_CONNS_DEFAULT      16    /* AC 4.1: default max simultaneous conns  *
+                                          * overridable via [security] ipc_max_conns */
+#define IPC_RATE_WINDOW_SEC         1    /* AC 1.1: rate limit window (seconds)      */
+#define IPC_BURST_THRESHOLD        10    /* AC 2.1: invalid pkts → RESCUE_SOFT       */
+#define IPC_RESCUE_DRAIN_SEC       30    /* AC 2.2: hard drain duration (seconds)    *
+                                          * drain timer is IMMUNE to new bursts —    *
+                                          * attacker cannot extend it               */
+
+/* RESCUE_MODE levels — prevents attacker from keeping system in degraded state:
+ *   RESCUE_NONE: normal operation
+ *   RESCUE_SOFT: burst threshold hit — silent drop on bad packets,
+ *                legitimate operator traffic unaffected, burst decays normally
+ *   RESCUE_HARD: burst threshold hit WHILE already in RESCUE_SOFT —
+ *                drain timer starts, cannot be reset by attacker until
+ *                IPC_RESCUE_DRAIN_SEC expires regardless of new bursts      */
+typedef enum {
+    RESCUE_NONE = 0,
+    RESCUE_SOFT = 1,
+    RESCUE_HARD = 2
+} RescueLevel;
+#endif /* FLUXA_SECURE */
 
 /* ── Opcodes ─────────────────────────────────────────────────────────────── */
 typedef enum {
@@ -262,6 +293,20 @@ typedef struct {
      * SET is only applied at safe points, OBSERVE is read-only. */
     void          *rt;             /* Runtime* — avoids circular include   */
     pthread_mutex_t mu;            /* protects rt access from server thread */
+
+#ifdef FLUXA_SECURE
+    /* ── AC 1.1 / 2.1 / 4.1: Rate limiting + RESCUE levels + conn cap ───── *
+     * Only present when FLUXA_SECURE=1 (make build-secure).               *
+     * Zero struct overhead in regular builds.                              */
+    volatile int   invalid_burst;    /* invalid connections in current window */
+    volatile RescueLevel rescue_mode;/* NONE / SOFT / HARD                   */
+    volatile int   active_conns;     /* current open client fds               */
+    time_t         window_start;     /* start of current rate window          */
+    time_t         drain_start;      /* when RESCUE_HARD began (immune timer) */
+    /* Runtime-configurable overrides (from [security] in fluxa.toml) */
+    int            ipc_max_conns;    /* default IPC_MAX_CONNS_DEFAULT=16      */
+    int            handshake_timeout_ms; /* default IPC_TIMEOUT_MS=50         */
+#endif /* FLUXA_SECURE */
 } IpcServer;
 
 /* ── IPC client state (used by CLI commands: observe, set, logs) ─────────── */
@@ -301,7 +346,13 @@ static inline int ipc_server_bind(IpcServer *srv, int pid) {
     /* Explicit chmod to be safe even if umask was already permissive */
     chmod(srv->sock_path, 0600);
 
-    if (listen(srv->server_fd, 4) < 0) {
+    if (listen(srv->server_fd,
+#ifdef FLUXA_SECURE
+               IPC_MAX_CONNS_DEFAULT
+#else
+               4
+#endif
+               ) < 0) {
         close(srv->server_fd);
         srv->server_fd = -1;
         return -1;

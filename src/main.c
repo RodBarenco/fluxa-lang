@@ -34,6 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/resource.h>
 
 #include "lexer.h"
 #include "parser.h"
@@ -44,6 +45,11 @@
 #include "handover.h"
 #include "watcher.h"
 #include "fluxa_ipc.h"
+#ifdef FLUXA_SECURE
+#include "fluxa_keygen.h"
+#endif
+/* fluxa dis — forward declaration; linked from dis.c via Makefile */
+int fluxa_dis_file(const char *inpath, const char *outpath);
 #include "ipc_server.h"
 #include <pthread.h>
 
@@ -70,6 +76,9 @@ static void usage(void) {
         "  fluxa run <file.flx> -prod              prod mode (manual apply)\n"
         "  fluxa explain                           live state from running runtime (IPC)\n"
         "  fluxa explain <file.flx>                execute file and show prst + deps\n"
+        "  fluxa dis <file.flx>                    disassemble: AST, warm forecast,\n"
+        "                                            hot bytecode, call order, prst fork\n"
+        "  fluxa dis <file.flx> -o out.txt         write dis report to explicit path\n"
         "  fluxa apply <file.flx>                  reload preserving prst state\n"
         "  fluxa apply <file.flx> -p               preflight before applying\n"
         "  fluxa apply <file.flx> -p --force       force apply with warnings (prod only)\n"
@@ -83,6 +92,8 @@ static void usage(void) {
         "  fluxa ffi list                           list shared libs available on system\n"
         "  fluxa ffi inspect <lib>                  generate toml signatures from lib\n"
         "  fluxa runtime info                       show runtime state + config\n"
+        "  fluxa keygen [--dir <path>]              generate Ed25519 + HMAC keys\n"
+        "                                             (FLUXA_SECURE builds only)\n"
     );
 }
 
@@ -239,6 +250,31 @@ static int run_dev(const char *path) {
 static int run_prod(const char *path) {
     fprintf(stderr, "[fluxa] -prod: running %s\n", path);
 
+#ifdef FLUXA_SECURE
+    /* Load config to check security settings before starting IPC server */
+    {
+        char proj_dir[512]; strncpy(proj_dir, path, sizeof(proj_dir)-1);
+        char *sl = strrchr(proj_dir, '/');
+        if (sl) *sl = '\0'; else strncpy(proj_dir, ".", sizeof(proj_dir)-1);
+        char toml_path[600];
+        snprintf(toml_path, sizeof(toml_path), "%s/fluxa.toml", proj_dir);
+        FluxaConfig cfg = fluxa_config_load(toml_path);
+        if (fluxa_security_check(
+                cfg.security.signing_key_path[0] ? cfg.security.signing_key_path : NULL,
+                cfg.security.ipc_hmac_key_path[0] ? cfg.security.ipc_hmac_key_path : NULL,
+                cfg.security.mode) != 0) {
+            fprintf(stderr,
+                "[fluxa] -prod: security check failed. Fix [security] in fluxa.toml\n"
+                "  or run with standard ./fluxa (non-secure build) for development.\n");
+            return 1;
+        }
+        if (cfg.security.mode != FLUXA_SEC_MODE_OFF) {
+            fprintf(stderr, "[fluxa] -prod: security mode=%s\n",
+                cfg.security.mode == FLUXA_SEC_MODE_STRICT ? "strict" : "warn");
+        }
+    }
+#endif
+
     static ASTPool ast_pool;
 
     /* Create stable IPC view — IPC server uses this for all queries */
@@ -250,6 +286,27 @@ static int run_prod(const char *path) {
         if (ipc_view) ipc_rtview_destroy(ipc_view);
         return 1;
     }
+
+#ifdef FLUXA_SECURE
+    /* Apply [security] config values to IPC server runtime parameters.
+     * These override compile-time defaults — set before the first accept(). */
+    {
+        char proj_dir2[512]; strncpy(proj_dir2, path, sizeof(proj_dir2)-1);
+        char *sl2 = strrchr(proj_dir2, '/');
+        if (sl2) *sl2 = '\0'; else strncpy(proj_dir2, ".", sizeof(proj_dir2)-1);
+        char toml_path2[600];
+        snprintf(toml_path2, sizeof(toml_path2), "%s/fluxa.toml", proj_dir2);
+        FluxaConfig cfg2 = fluxa_config_load(toml_path2);
+        ipc->handshake_timeout_ms = cfg2.security.handshake_timeout_ms;
+        ipc->ipc_max_conns        = cfg2.security.ipc_max_conns;
+        if (cfg2.security.handshake_timeout_ms != 50 ||
+            cfg2.security.ipc_max_conns != 16) {
+            fprintf(stderr,
+                "[fluxa] -prod: ipc config: timeout=%dms max_conns=%d\n",
+                ipc->handshake_timeout_ms, ipc->ipc_max_conns);
+        }
+    }
+#endif
 
     ASTNode *program = parse_file(path, &ast_pool);
     if (!program) {
@@ -1094,6 +1151,17 @@ static int run_test_handover(void) {
 }
 
 int main(int argc, char **argv) {
+    /* Enlarge the process stack to handle deep ASTs (large Block programs,
+     * heavily nested while/if). Default 8MB is insufficient for programs
+     * like Dijkstra with many nested method bodies.
+     * 64MB covers all practical Fluxa programs without wasting memory. */
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+        if (rl.rlim_cur < 64 * 1024 * 1024) {
+            rl.rlim_cur = 64 * 1024 * 1024;
+            setrlimit(RLIMIT_STACK, &rl);
+        }
+    }
     if (argc >= 2 && strcmp(argv[1], "test-reload")   == 0) return run_test_reload();
     if (argc >= 2 && strcmp(argv[1], "test-handover") == 0) return run_test_handover();
 
@@ -1105,6 +1173,39 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "logs")   == 0) return run_logs();
     if (strcmp(cmd, "status") == 0) return run_status();
+
+    if (strcmp(cmd, "keygen") == 0) {
+#ifdef FLUXA_SECURE
+        const char *dir = ".";
+        for (int i = 2; i < argc; i++)
+            if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc) dir = argv[++i];
+        if (sodium_init() < 0) {
+            fprintf(stderr, "[fluxa] keygen: libsodium not available\n");
+            return 1;
+        }
+        int r = 0;
+        r |= fluxa_keygen_ed25519(dir);
+        r |= fluxa_keygen_hmac(dir);
+        return r;
+#else
+        fprintf(stderr,
+            "[fluxa] keygen: only available in FLUXA_SECURE builds.\n"
+            "  Build with: make build-secure\n");
+        return 1;
+#endif
+    }
+
+    if (strcmp(cmd, "dis") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: fluxa dis <file.flx> [-o output.txt]\n");
+            return 1;
+        }
+        const char *inpath  = argv[2];
+        const char *outpath = NULL;
+        for (int i = 3; i < argc; i++)
+            if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) outpath = argv[++i];
+        return fluxa_dis_file(inpath, outpath);
+    }
 
     if (strcmp(cmd, "init") == 0) {
         const char *dir = (argc >= 3) ? argv[2] : ".";

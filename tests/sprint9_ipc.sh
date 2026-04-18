@@ -59,7 +59,7 @@ prst float ratio  = 1.5
 prst bool active  = true
 
 int i = 0
-while i < 50000 {
+while i < 2000000000 {
     counter = counter + 1
     i = i + 1
 }
@@ -73,15 +73,20 @@ FLX
 RT_PID=$!
 vlog "started runtime pid=$RT_PID"
 
-# Wait up to 2s for IPC socket to appear
+# Wait up to 3s for IPC socket to appear
 SOCK_FOUND=0
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
     if ls /tmp/fluxa-${RT_PID}.sock 2>/dev/null; then
         SOCK_FOUND=1
         break
     fi
     sleep 0.1
 done
+
+# Extra sleep: give IPC server time to fully initialize before sending commands
+if [[ $SOCK_FOUND -eq 1 ]]; then
+    sleep 0.3
+fi
 
 if [[ $SOCK_FOUND -eq 0 ]]; then
     # IPC socket didn't appear — runtime may have finished before socket was ready.

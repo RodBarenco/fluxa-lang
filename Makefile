@@ -40,15 +40,68 @@ else
     FFI_LDFLAGS :=
 endif
 
+HAVE_SODIUM := $(shell pkg-config --exists libsodium 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAVE_SODIUM),1)
+    SODIUM_CFLAGS  := -DFLUXA_STD_CRYPTO=1
+    SODIUM_LDFLAGS := -lsodium
+else
+    SODIUM_CFLAGS  :=
+    SODIUM_LDFLAGS :=
+endif
+
+HAVE_SQLITE := $(shell pkg-config --exists sqlite3 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAVE_SQLITE),1)
+    SQLITE_CFLAGS  := -DFLUXA_STD_SQLITE=1 $(shell pkg-config --cflags sqlite3)
+    SQLITE_LDFLAGS := $(shell pkg-config --libs sqlite3)
+else
+    SQLITE_CFLAGS  :=
+    SQLITE_LDFLAGS :=
+endif
+
+HAVE_SERIAL := $(shell pkg-config --exists libserialport 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAVE_SERIAL),1)
+    SERIAL_CFLAGS  := -DFLUXA_STD_SERIAL=1 $(shell pkg-config --cflags libserialport)
+    SERIAL_LDFLAGS := $(shell pkg-config --libs libserialport)
+else
+    SERIAL_CFLAGS  :=
+    SERIAL_LDFLAGS :=
+endif
+
+# i2c-dev is part of the Linux kernel headers — no pkg-config needed
+# Always enabled on Linux; no-op stub on other platforms
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    I2C_CFLAGS  := -DFLUXA_STD_I2C=1
+    I2C_LDFLAGS :=
+else
+    I2C_CFLAGS  := -DFLUXA_STD_I2C=1  # stub returns error on non-Linux
+    I2C_LDFLAGS :=
+endif
+
+# std.pid — pure C99, zero deps, always enabled
+PID_CFLAGS := -DFLUXA_STD_PID=1
+
+# FLUXA_SECURE — optional hardened prod mode
+# Adds: rate limiting, RESCUE_MODE, connection cap, 50ms handshake timeout.
+# Only meaningful with -prod. Zero overhead when not defined.
+# Build with: make build-secure   or   make SECURE=1
+ifeq ($(SECURE),1)
+    SECURE_CFLAGS := -DFLUXA_SECURE=1
+else
+    SECURE_CFLAGS :=
+endif
+
 CFLAGS  = -std=c99 -Wall -Wextra -pedantic -O2 \
-           -Isrc -Ivendor $(FFI_CFLAGS) \
+           -Isrc -Ivendor $(FFI_CFLAGS) $(SODIUM_CFLAGS) $(SECURE_CFLAGS) \
+           $(SQLITE_CFLAGS) $(SERIAL_CFLAGS) $(I2C_CFLAGS) $(PID_CFLAGS) \
            -DFLUXA_STD_MATH=1 \
            -DFLUXA_STD_CSV=1 \
            -DFLUXA_STD_JSON=1 \
            -DFLUXA_STD_STRINGS=1 \
            -DFLUXA_STD_TIME=1 \
            -DFLUXA_STD_FLXTHREAD=1
-LDFLAGS = $(FFI_LDFLAGS) -ldl -lm -lpthread
+LDFLAGS = $(FFI_LDFLAGS) $(SODIUM_LDFLAGS) $(SQLITE_LDFLAGS) \
+          $(SERIAL_LDFLAGS) $(I2C_LDFLAGS) -ldl -lm -lpthread
 
 # All source files for the native build (includes IPC server and FFI)
 SRCS = src/main.c       \
@@ -63,6 +116,7 @@ SRCS = src/main.c       \
        src/runtime.c    \
        src/handover.c   \
        src/ipc_server.c \
+       src/dis.c        \
        src/std/flxthread/fluxa_std_flxthread.c
 
 TARGET = fluxa
@@ -225,6 +279,18 @@ build-dis:
 	    -o fluxa_dis   \
 	    -lm
 	@echo "✓ build ok → ./fluxa_dis"
+
+
+# Hardened prod binary — FLUXA_SECURE=1 enables:
+#   rate limiting (100 invalid/sec → RESCUE_MODE)
+#   connection cap (IPC_MAX_CONNS=16)
+#   50ms handshake timeout (was 100ms)
+#   RESCUE_MODE with 30s auto-drain
+# Use for production deployments. Zero overhead compared to regular build
+# when not in -prod mode (guards are in ipc_server.c only).
+build-secure:
+	$(CC) $(CFLAGS) -DFLUXA_SECURE=1 $(SRCS) -o fluxa_secure $(LDFLAGS)
+	@echo "✓ build ok → ./fluxa_secure  [FLUXA_SECURE=1]"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -477,7 +543,22 @@ test-libs-time: build
 test-libs-flxthread: build
 	@bash tests/libs/flxthread.sh --fluxa ./$(TARGET)
 
-# ── Integration tests ─────────────────────────────────────────────────────────
+test-libs-crypto: build
+	@bash tests/libs/crypto.sh --fluxa ./$(TARGET)
+
+test-libs-pid: build
+	@bash tests/libs/pid.sh --fluxa ./$(TARGET)
+
+test-libs-sqlite: build
+	@bash tests/libs/sqlite.sh --fluxa ./$(TARGET)
+
+test-libs-serial: build
+	@bash tests/libs/serial.sh --fluxa ./$(TARGET)
+
+test-libs-i2c: build
+	@bash tests/libs/i2c.sh --fluxa ./$(TARGET)
+
+
 #
 # End-to-end simulation of the Atomic Handover protocol using real .flx programs.
 # No Docker required — runs locally with bash + python3 only.

@@ -1,7 +1,7 @@
 /* toml_config.h — Minimal fluxa.toml configuration loader
  *
  * Supported sections:
- *   [runtime]        gc_cap, prst_cap, prst_graph_cap
+ *   [runtime]        gc_cap, prst_cap, prst_graph_cap, warm_func_cap
  *   [ffi]            libname = "auto" | "/path/to/lib.so"
  *   [ffi.<lib>.signatures]
  *                    fnname = "(type, type*, ...) -> type"
@@ -60,25 +60,58 @@ typedef struct {
  * Each lib is only compiled into the binary when its FLUXA_STD_* macro
  * is defined at build time (set by the Makefile reading fluxa.toml). */
 typedef struct {
-    int has_math;   /* std.math — math functions (sqrt, pow, sin, ...) */
-    int has_csv;    /* std.csv  — CSV parser, returns dyn               */
+    int has_math;     /* std.math   — math functions (sqrt, pow, sin, ...)   */
+    int has_csv;      /* std.csv    — CSV parser, returns dyn                */
     int has_json;   /* std.json — JSON stringify/extract, uses str      */
     int has_strings; /* std.strings — split, join, trim, replace, ...     */
     int has_time;      /* std.time      — sleep, now_ms, elapsed, timeout   */
     int has_flxthread; /* std.flxthread — ft.new, ft.message, ft.await, ...   */
+    int has_crypto;    /* std.crypto    — BLAKE2b, XSalsa20-Poly1305, Ed25519, Curve25519 */
+    int has_pid;       /* std.pid       — PID controller, pure C99, zero deps             */
+    int has_sqlite;    /* std.sqlite    — embedded SQL via libsqlite3                      */
+    int has_serial;    /* std.serial    — UART/serial via libserialport                    */
+    int has_i2c;       /* std.i2c       — I2C protocol via libgpiod                        */
 } FluxaStdLibs;
 
 /* ── Main config ──────────────────────────────────────────────────────────── */
+/* ── Security configuration ([security] section) ─────────────────────────── *
+ * Only meaningful with FLUXA_SECURE=1 builds, but parsed always so the      *
+ * toml is valid regardless of build flags.                                   *
+ * Keys are NEVER stored inline in fluxa.toml — only file paths.             */
+typedef enum {
+    FLUXA_SEC_MODE_OFF    = 0,  /* no validation — dev default              */
+    FLUXA_SEC_MODE_WARN   = 1,  /* accept but log unsigned commands         */
+    FLUXA_SEC_MODE_STRICT = 2   /* reject apply/update without valid sig    */
+} FluxaSecMode;
+
+typedef struct {
+    char         signing_key_path[256]; /* path to Ed25519 private key file  *
+                                         * 0400, generated with fluxa keygen */
+    char         ipc_hmac_key_path[256];/* path to HMAC-SHA512 secret        *
+                                         * 0400, optional — auto-generated   *
+                                         * in memory if absent               */
+    FluxaSecMode mode;                  /* off / warn / strict               */
+    int          handshake_timeout_ms;  /* IPC recv timeout, default 50ms    *
+                                         * Increase for slow/embedded links  */
+    int          ipc_max_conns;         /* max simultaneous IPC connections  *
+                                         * default 16, increase if needed    */
+} FluxaSecurityConfig;
+
 typedef struct {
     int          gc_cap;
     int          prst_cap;
     int          prst_graph_cap;
+    int          warm_func_cap;   /* WarmProfile hash table size: default 32,
+                                   * range 4..256, must be power of 2.
+                                   * Larger = more functions profiled, more RAM.
+                                   * Each slot = 276 bytes. 32 = 8.8KB, 256 = 70KB */
     TomlFfiEntry ffi[TOML_FFI_MAX];
     int          ffi_count;
     FluxaStdLibs std_libs;  /* opt-in stdlib — declared in [libs] toml */
     int          json_max_str;    /* [libs.json] max_str_bytes, default 4096  */
     int          ffi_str_buf_size; /* [ffi] str_buf_size — writable char* buffer
                                    * allocated per pointer arg, default 1024   */
+    FluxaSecurityConfig security; /* [security] — key paths + enforcement mode */
 } FluxaConfig;
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -89,8 +122,15 @@ static inline FluxaConfig fluxa_config_defaults(void) {
     c.gc_cap         = GC_TABLE_CAP;
     c.prst_cap       = PRST_POOL_INIT_CAP;
     c.prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
+    c.warm_func_cap  = 32;  /* WARM_FUNC_CAP_DEFAULT */
     c.json_max_str      = 4096;
     c.ffi_str_buf_size  = 1024;
+    /* security: off by default — must be explicitly enabled in [security] */
+    c.security.mode = FLUXA_SEC_MODE_OFF;
+    c.security.signing_key_path[0]  = '\0';
+    c.security.ipc_hmac_key_path[0] = '\0';
+    c.security.handshake_timeout_ms = 50;   /* IPC_TIMEOUT_MS default */
+    c.security.ipc_max_conns        = 16;   /* IPC_MAX_CONNS_DEFAULT  */
     return c;
 }
 
@@ -184,6 +224,7 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
     /* section state */
     int  in_runtime  = 0;
     int  in_ffi_root = 0;   /* [ffi] */
+    int  in_security = 0;   /* [security] */
     char sig_lib[128] = ""; /* "libm" when in [ffi.libm.signatures] */
 
     while (fgets(line, sizeof(line), f)) {
@@ -194,10 +235,13 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
         if (*l == '[') {
             in_runtime  = 0;
             in_ffi_root = 0;
+            in_security = 0;
             sig_lib[0]  = '\0';
 
             if (strcmp(l, "[runtime]") == 0) {
                 in_runtime = 1;
+            } else if (strcmp(l, "[security]") == 0) {
+                in_security = 1;
             } else if (strcmp(l, "[ffi]") == 0) {
                 in_ffi_root = 1;
             } else if (strncmp(l, "[ffi.", 5) == 0) {
@@ -245,6 +289,73 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 if (v > 0) cfg.prst_cap = v;
             } else if (strcmp(key, "prst_graph_cap") == 0) {
                 if (v > 0 && v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
+            } else if (strcmp(key, "warm_func_cap") == 0) {
+                /* Must be power of 2 in [4, 256]. Round down to nearest pow2. */
+                if (v >= 4 && v <= 256) {
+                    int p = 4;
+                    while (p * 2 <= v) p *= 2;
+                    cfg.warm_func_cap = p;
+                } else {
+                    fprintf(stderr,
+                        "[fluxa] toml: warm_func_cap %d out of range [4,256]"
+                        " — using default 32\n", v);
+                }
+            }
+            continue;
+        }
+
+        /* ── [security] ─────────────────────────────────────────────────── *
+         * Keys reference FILE PATHS only — never inline key material.      *
+         * signing_key   = "/path/to/signing.key"   (Ed25519 private, 0400) *
+         * ipc_hmac_key  = "/path/to/ipc_hmac.key"  (HMAC secret, 0400)    *
+         * mode          = "off" | "warn" | "strict"                        */
+        if (in_security) {
+            /* key and val are already parsed and trimmed by the outer block */
+            /* Strip surrounding quotes from val (paths may be quoted)       */
+            char clean_val[256];
+            strncpy(clean_val, val, sizeof(clean_val)-1);
+            clean_val[sizeof(clean_val)-1] = '\0';
+            /* strip leading/trailing quotes */
+            char *cv = clean_val;
+            if (*cv == '"') cv++;
+            char *cvend = cv + strlen(cv);
+            while (cvend > cv && (*(cvend-1) == '"' ||
+                                   isspace((unsigned char)*(cvend-1))))
+                *--cvend = '\0';
+
+            if (strcmp(key, "signing_key") == 0) {
+                snprintf(cfg.security.signing_key_path,
+                         sizeof(cfg.security.signing_key_path), "%s", cv);
+            } else if (strcmp(key, "ipc_hmac_key") == 0) {
+                snprintf(cfg.security.ipc_hmac_key_path,
+                         sizeof(cfg.security.ipc_hmac_key_path), "%s", cv);
+            } else if (strcmp(key, "handshake_timeout_ms") == 0) {
+                int v = atoi(cv);
+                if (v >= 10 && v <= 5000)
+                    cfg.security.handshake_timeout_ms = v;
+                else
+                    fprintf(stderr,
+                        "[fluxa] toml: security.handshake_timeout_ms %d "
+                        "out of range [10, 5000] — using default 50\n", v);
+            } else if (strcmp(key, "ipc_max_conns") == 0) {
+                int v = atoi(cv);
+                if (v >= 1 && v <= 256)
+                    cfg.security.ipc_max_conns = v;
+                else
+                    fprintf(stderr,
+                        "[fluxa] toml: security.ipc_max_conns %d "
+                        "out of range [1, 256] — using default 16\n", v);
+            } else if (strcmp(key, "mode") == 0) {
+                if (strcmp(cv, "strict") == 0)
+                    cfg.security.mode = FLUXA_SEC_MODE_STRICT;
+                else if (strcmp(cv, "warn") == 0)
+                    cfg.security.mode = FLUXA_SEC_MODE_WARN;
+                else if (strcmp(cv, "off") == 0)
+                    cfg.security.mode = FLUXA_SEC_MODE_OFF;
+                else
+                    fprintf(stderr,
+                        "[fluxa] toml: security.mode '%s' unknown "
+                        "(use: off / warn / strict)\n", cv);
             }
             continue;
         }
@@ -317,6 +428,11 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
             if (strncmp(p, "std.strings", 11) == 0) cfg->std_libs.has_strings = 1;
             if (strncmp(p, "std.time",      8)  == 0) cfg->std_libs.has_time      = 1;
             if (strncmp(p, "std.flxthread", 13) == 0) cfg->std_libs.has_flxthread = 1;
+            if (strncmp(p, "std.crypto",   10) == 0) cfg->std_libs.has_crypto    = 1;
+            if (strncmp(p, "std.pid",       7) == 0) cfg->std_libs.has_pid       = 1;
+            if (strncmp(p, "std.sqlite",   10) == 0) cfg->std_libs.has_sqlite    = 1;
+            if (strncmp(p, "std.serial",   10) == 0) cfg->std_libs.has_serial    = 1;
+            if (strncmp(p, "std.i2c",       7) == 0) cfg->std_libs.has_i2c       = 1;
         }
         if (in_libs_json) {
             if (strncmp(p, "max_str_bytes", 13) == 0) {

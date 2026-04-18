@@ -925,3 +925,307 @@ Quoted fields with embedded commas (`"hello, world"`) and escaped quotes (`"say 
 - In-place mutation of JSON objects (always returns new `str`)
 
 These limitations are intentional — the goal is predictable memory use on embedded hardware, not feature parity with desktop JSON/CSV libraries.
+
+## std.crypto
+
+**Sprint 12.a** — Cryptographic primitives via libsodium 1.0.18+. All functions follow the standard error model: errors abort outside `danger`, are captured in `err[]` inside `danger`. Key material is stored in `int arr` (each byte as `VAL_INT [0..255]`), so `prst int arr key` survives hot reloads.
+
+**Dependency:** libsodium must be installed (`apt install libsodium-dev` or equivalent). Auto-detected via `pkg-config`.
+
+```toml
+[libs]
+std.crypto = "1.0"
+```
+
+```fluxa
+import std crypto
+```
+
+### Hash
+
+| Function | Signature | Description |
+|---|---|---|
+| `hash` | `hash(data: str\|arr) → dyn[32]` | BLAKE2b-256 hash. No secret key. Deterministic. |
+| `to_hex` | `to_hex(arr) → str` | Encode byte arr as lowercase hex string. |
+| `from_hex` | `from_hex(str) → dyn` | Decode hex string to byte arr. Error on invalid hex. |
+
+### Symmetric Encryption (XSalsa20-Poly1305)
+
+| Function | Signature | Description |
+|---|---|---|
+| `keygen` | `keygen() → dyn[32]` | Random 32-byte symmetric key. Use with `encrypt`/`decrypt`. |
+| `nonce` | `nonce() → dyn[24]` | Random 24-byte nonce. **Generate fresh per message.** |
+| `encrypt` | `encrypt(msg, key, nonce) → dyn` | Authenticated encryption. Output = 16-byte MAC + ciphertext. |
+| `decrypt` | `decrypt(cipher, key, nonce) → str` | Verify MAC then decrypt. Fails on authentication error. |
+
+### Signing (Ed25519)
+
+| Function | Signature | Description |
+|---|---|---|
+| `sign_keygen` | `sign_keygen(pk: int arr[32], sk: int arr[64]) → nil` | Generate Ed25519 keypair. Writes into existing arr args. |
+| `sign` | `sign(msg, sk) → dyn` | Sign message. Output = 64-byte signature + message. |
+| `sign_open` | `sign_open(signed, pk) → str` | Verify signature and extract message. Fails on invalid sig. |
+
+### Key Exchange (Curve25519)
+
+| Function | Signature | Description |
+|---|---|---|
+| `kx_keygen` | `kx_keygen(pk: int arr[32], sk: int arr[32]) → nil` | Curve25519 keypair for key exchange. |
+| `kx_client` | `kx_client(rx, tx, cpk, csk, spk) → nil` | Client-side session keys. rx/tx: int arr[32]. |
+| `kx_server` | `kx_server(rx, tx, spk, ssk, cpk) → nil` | Server-side session keys. rx/tx: int arr[32]. |
+
+### Utilities
+
+| Function | Signature | Description |
+|---|---|---|
+| `compare` | `compare(a, b) → bool` | Constant-time comparison. Safe against timing attacks. |
+| `wipe` | `wipe(arr) → nil` | Securely zero arr in place. Compiler-barrier safe. |
+| `version` | `version() → str` | libsodium version string. |
+
+### Example — Encrypt/Decrypt
+
+```fluxa
+import std crypto
+
+// Key generation — store as prst to survive reloads
+prst dyn session_key = crypto.keygen()
+
+// Encrypt a message
+dyn nonce  = crypto.nonce()                              // fresh nonce per message
+dyn cipher = crypto.encrypt("secret payload", session_key, nonce)
+
+// Decrypt
+str plain = crypto.decrypt(cipher, session_key, nonce)
+print(plain)    // secret payload
+```
+
+### Example — Ed25519 Signature
+
+```fluxa
+import std crypto
+
+// Generate keypair into pre-sized arrs
+int arr pk[32] = 0
+int arr sk[64] = 0
+crypto.sign_keygen(pk, sk)
+
+// Sign
+dyn signed = crypto.sign("data to sign", sk)
+
+// Verify and extract — fails with err if signature invalid
+danger {
+    str msg = crypto.sign_open(signed, pk)
+    print(msg)    // data to sign
+}
+```
+
+### Example — Key Exchange (Curve25519)
+
+```fluxa
+import std crypto
+
+// Server generates keypair
+int arr spk[32] = 0; int arr ssk[32] = 0
+crypto.kx_keygen(spk, ssk)
+
+// Client generates keypair
+int arr cpk[32] = 0; int arr csk[32] = 0
+crypto.kx_keygen(cpk, csk)
+
+// Client computes session keys
+int arr crx[32] = 0; int arr ctx[32] = 0
+crypto.kx_client(crx, ctx, cpk, csk, spk)
+
+// Server computes session keys
+int arr srx[32] = 0; int arr stx[32] = 0
+crypto.kx_server(srx, stx, spk, ssk, cpk)
+
+// crx == stx and ctx == srx (symmetric session keys established)
+```
+
+### Notes
+
+- `keygen()`, `nonce()`, `sign_keygen()`, `kx_keygen()` use `randombytes_buf()` — cryptographically secure random, seeded by the OS.
+- `compare()` uses `sodium_memcmp()` — constant time regardless of input content. Use for MAC and signature comparison.
+- `wipe()` zeros the arr elements (type preserved as VAL_INT) with a compiler barrier. Call on key material after use.
+- On RP2040 with libsodium-minimal: all functions work. `randombytes` uses hardware RNG if available, otherwise system entropy.
+- `prst dyn key` survives hot reloads. The key material lives in the PrstPool and is serialized in Handover snapshots.
+
+---
+
+## std.pid — PID Controller
+
+Pure C99, zero external dependencies. Embedded-friendly (RP2040, ESP32).
+
+**Declaration:**
+```toml
+[libs]
+std.pid = "1.0"
+```
+
+**State:** The controller state (integral, prev_error, gains, limits) lives inside a heap-allocated struct wrapped in a `dyn` cursor. Use `prst dyn ctrl` so state survives hot reloads — this is the correct pattern for PID in a control loop.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `pid.new(kp, ki, kd)` | `dyn` | Create controller cursor. kp/ki/kd are float gains. |
+| `pid.compute(ctrl, setpoint, pv)` | `float` | Compute output. setpoint = desired value, pv = measured value. |
+| `pid.reset(ctrl)` | `nil` | Zero integral and prev_error. Call on mode switch or startup. |
+| `pid.set_limits(ctrl, min, max)` | `nil` | Clamp output to [min, max]. Enables anti-windup. min must be < max. |
+| `pid.set_deadband(ctrl, band)` | `nil` | Ignore errors smaller than band (treat as zero). Reduces chatter. |
+| `pid.state(ctrl)` | `dyn` | Returns [kp, ki, kd, integral, prev_error, out_min, out_max]. |
+
+**Anti-windup:** When `set_limits` is configured, `compute` back-calculates the integral when the output is clamped — preventing the integral from growing unbounded during saturation.
+
+### Example
+
+```fluxa
+import std pid
+
+prst dyn heater = pid.new(2.0, 0.5, 0.1)
+pid.set_limits(heater, 0.0, 100.0)    // output: 0–100% duty cycle
+pid.set_deadband(heater, 0.2)          // ignore error < 0.2°C
+
+float setpoint = 72.0
+float temperature = 68.5              // from sensor
+
+float duty = pid.compute(heater, setpoint, temperature)
+// → duty ≈ 7.0 (kp * 3.5 + accumulated integral)
+```
+
+---
+
+## std.sqlite — Embedded SQL
+
+SQLite 3 wrapper. Requires `libsqlite3-dev`. Works on RP2040 with filesystem support.
+
+**Declaration:**
+```toml
+[libs]
+std.sqlite = "1.0"
+```
+
+**State:** DB connection is a `dyn` cursor wrapping a `sqlite3*`. Use `prst dyn db` to keep the connection open across hot reloads.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `sqlite.open(path)` | `dyn` | Open (or create) a SQLite database file. |
+| `sqlite.close(db)` | `nil` | Close connection. Double-close is a no-op. |
+| `sqlite.exec(db, sql)` | `nil` | Execute DDL or DML (CREATE, INSERT, UPDATE, DELETE). |
+| `sqlite.query(db, sql)` | `dyn` | Execute SELECT. Returns dyn of rows, each row a dyn of values. |
+| `sqlite.last_insert_id(db)` | `int` | Row ID of the last INSERT. |
+| `sqlite.changes(db)` | `int` | Rows affected by the last DML statement. |
+| `sqlite.version()` | `str` | libsqlite3 version string (e.g. "3.45.1"). |
+
+### Example
+
+```fluxa
+import std sqlite
+
+danger {
+    dyn db = sqlite.open("sensors.db")
+    sqlite.exec(db, "CREATE TABLE IF NOT EXISTS readings (ts INTEGER, val REAL)")
+    sqlite.exec(db, "INSERT INTO readings VALUES (1700000000, 23.5)")
+
+    dyn rows = sqlite.query(db, "SELECT ts, val FROM readings ORDER BY ts DESC LIMIT 5")
+    int i = 0
+    while i < len(rows) {
+        dyn row = rows[i]
+        print(row[0])    // ts (int)
+        print(row[1])    // val (float)
+        i = i + 1
+    }
+    sqlite.close(db)
+}
+```
+
+---
+
+## std.serial — UART / Serial
+
+UART communication via libserialport. Requires `libserialport-dev`. Fundamental for RP2040/ESP32 debug and device communication.
+
+**Declaration:**
+```toml
+[libs]
+std.serial = "1.0"
+```
+
+**State:** Port cursor wraps an `sp_port*`. Use `prst dyn port` to keep the port open across hot reloads.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `serial.list()` | `dyn` | List available port names as strings (e.g. ["/dev/ttyUSB0"]). |
+| `serial.open(port, baud)` | `dyn` | Open port at given baud rate. 8N1 by default. |
+| `serial.close(port)` | `nil` | Close port. Double-close is a no-op. |
+| `serial.write(port, data)` | `int` | Write string to port. Returns bytes written. |
+| `serial.read(port, max_bytes, timeout_ms)` | `str` | Read up to max_bytes with timeout. Returns what arrived. |
+| `serial.readline(port, timeout_ms)` | `str` | Read until `\n` or timeout. |
+| `serial.flush(port)` | `nil` | Flush TX and RX buffers. |
+| `serial.bytes_available(port)` | `int` | Bytes waiting in RX buffer (non-blocking). |
+
+### Example
+
+```fluxa
+import std serial
+
+prst dyn port = serial.list()    // list on first load
+
+danger {
+    dyn p = serial.open("/dev/ttyUSB0", 115200)
+    serial.write(p, "AT\r\n")
+    str resp = serial.readline(p, 500)
+    print(resp)
+    serial.close(p)
+}
+```
+
+---
+
+## std.i2c — I2C Protocol
+
+I2C via Linux i2c-dev kernel interface. No external library required — i2c-dev is part of the Linux kernel. For RP2040: use PICO_SDK `hardware_i2c` directly (i2c-dev is Linux-only; the lib returns a clear error on non-Linux).
+
+**Declaration:**
+```toml
+[libs]
+std.i2c = "1.0"
+```
+
+**State:** Bus cursor wraps an `I2cBus` struct (fd + addr). Use `prst dyn bus` to keep the handle open across hot reloads.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `i2c.open(device, addr)` | `dyn` | Open I2C bus and set slave address. e.g. `i2c.open("/dev/i2c-1", 72)` |
+| `i2c.close(bus)` | `nil` | Close bus handle. Double-close is a no-op. |
+| `i2c.write(bus, data)` | `int` | Write int arr bytes to device. Returns bytes written. |
+| `i2c.read(bus, nbytes)` | `dyn` | Read nbytes. Returns dyn of int (each element 0–255). |
+| `i2c.write_reg(bus, reg, value)` | `nil` | Write single byte to register. |
+| `i2c.read_reg(bus, reg)` | `int` | Read single byte from register. |
+| `i2c.read_reg16(bus, reg)` | `int` | Read 16-bit big-endian value from register (common for sensors). |
+| `i2c.scan(device)` | `dyn` | Scan bus for responding addresses. Returns dyn of int addresses. |
+
+**Note:** I2C addresses in Fluxa are plain integers. `0x48` in C = `72` in Fluxa (no hex literal support).
+
+### Example
+
+```fluxa
+import std i2c
+
+// ADS1115 ADC at address 72 (0x48) on /dev/i2c-1
+prst dyn adc = i2c.open("/dev/i2c-1", 72)
+
+danger {
+    // Read conversion register (register 0)
+    int raw = i2c.read_reg16(adc, 0)
+    float voltage = raw * 0.0001875    // ADS1115 at ±6.144V, 16-bit
+    print(voltage)
+}
+```

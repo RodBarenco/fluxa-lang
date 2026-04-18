@@ -135,6 +135,21 @@ extern Value fluxa_std_flxthread_call(const char *fn_name,
                                        ErrStack *err, int *had_error,
                                        int line, void *rt_ptr);
 #endif
+#ifdef FLUXA_STD_CRYPTO
+#include "std/crypto/fluxa_std_crypto.h"
+#endif
+#ifdef FLUXA_STD_PID
+#include "std/pid/fluxa_std_pid.h"
+#endif
+#ifdef FLUXA_STD_SQLITE
+#include "std/sqlite/fluxa_std_sqlite.h"
+#endif
+#ifdef FLUXA_STD_SERIAL
+#include "std/serial/fluxa_std_serial.h"
+#endif
+#ifdef FLUXA_STD_I2C
+#include "std/i2c/fluxa_std_i2c.h"
+#endif
 
 /* ── Block clone free callback ───────────────────────────────────────────── */
 /* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
@@ -577,6 +592,33 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
 
     /* ── Restore caller frame ── */
     free(args); /* safety — NULL if already freed in trampoline */
+
+    /* ── arr return ownership fix ────────────────────────────────────────
+     * If the function returns a VAL_ARR, its data pointer is shared with
+     * a scope entry in rt->scope. scope_free() below will call
+     * value_free_data() on that entry and free the data — leaving
+     * result.as.arr.data as a dangling pointer.
+     *
+     * Fix: deep-copy the arr data before freeing the scope.
+     * The copy is owned by the caller; the scope entry is freed normally.
+     * This is O(n) on arr size — negligible for typical arr returns.     */
+    if (result.type == VAL_ARR && result.as.arr.data &&
+        result.as.arr.owned && result.as.arr.size > 0) {
+        int n = result.as.arr.size;
+        Value *copy = (Value *)malloc(sizeof(Value) * (size_t)n);
+        if (copy) {
+            for (int _i = 0; _i < n; _i++) {
+                copy[_i] = result.as.arr.data[_i];
+                if (copy[_i].type == VAL_STRING && copy[_i].as.string)
+                    copy[_i].as.string = strdup(copy[_i].as.string);
+            }
+            result.as.arr.data  = copy;
+            result.as.arr.owned = 1;
+        }
+        /* If malloc fails: result.as.arr.data will be freed by scope_free
+         * and become dangling. This is an OOM edge case — better than a
+         * silent use-after-free on every arr return. */
+    }
     scope_free(&rt->scope);
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
@@ -1860,6 +1902,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (strcmp(lib, "time")      == 0 && rt->config.std_libs.has_time)      declared = 1;
             if (strcmp(lib, "flxthread") == 0 && rt->config.std_libs.has_flxthread) declared = 1;
             if (strcmp(lib, "ft")         == 0 && rt->config.std_libs.has_flxthread) declared = 1;
+            if (strcmp(lib, "crypto")     == 0 && rt->config.std_libs.has_crypto)    declared = 1;
+            if (strcmp(lib, "pid")        == 0 && rt->config.std_libs.has_pid)       declared = 1;
+            if (strcmp(lib, "sqlite")     == 0 && rt->config.std_libs.has_sqlite)    declared = 1;
+            if (strcmp(lib, "serial")     == 0 && rt->config.std_libs.has_serial)    declared = 1;
+            if (strcmp(lib, "i2c")        == 0 && rt->config.std_libs.has_i2c)       declared = 1;
             if (!declared) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
@@ -2137,6 +2184,77 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
 #endif /* FLUXA_STD_FLXTHREAD */
 
+#ifdef FLUXA_STD_CRYPTO
+            if (rt->config.std_libs.has_crypto && strcmp(owner, "crypto") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_crypto_call(method, args, argc,
+                                             &rt->err_stack, &rt->had_error,
+                                             rt->current_line);
+            }
+#endif /* FLUXA_STD_CRYPTO */
+#ifdef FLUXA_STD_PID
+            if (rt->config.std_libs.has_pid && strcmp(owner, "pid") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_pid_call(method, args, argc,
+                                          &rt->err_stack, &rt->had_error,
+                                          rt->current_line);
+            }
+#endif /* FLUXA_STD_PID */
+#ifdef FLUXA_STD_SQLITE
+            if (rt->config.std_libs.has_sqlite && strcmp(owner, "sqlite") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_sqlite_call(method, args, argc,
+                                             &rt->err_stack, &rt->had_error,
+                                             rt->current_line);
+            }
+#endif /* FLUXA_STD_SQLITE */
+#ifdef FLUXA_STD_SERIAL
+            if (rt->config.std_libs.has_serial && strcmp(owner, "serial") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_serial_call(method, args, argc,
+                                             &rt->err_stack, &rt->had_error,
+                                             rt->current_line);
+            }
+#endif /* FLUXA_STD_SERIAL */
+#ifdef FLUXA_STD_I2C
+            if (rt->config.std_libs.has_i2c && strcmp(owner, "i2c") == 0) {
+                int argc = node->as.member_call.arg_count;
+                Value args[16];
+                if (argc > 16) argc = 16;
+                for (int i = 0; i < argc; i++) {
+                    args[i] = eval(rt, node->as.member_call.args[i]);
+                    if (rt->had_error) return val_nil();
+                }
+                return fluxa_std_i2c_call(method, args, argc,
+                                          &rt->err_stack, &rt->had_error,
+                                          rt->current_line);
+            }
+#endif /* FLUXA_STD_I2C */
+
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {
                 /* Sprint 6.b: try as FFI call — lib.symbol(args) */
@@ -2323,7 +2441,7 @@ int runtime_exec(ASTNode *program) {
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
-    warm_profile_init(&rt.warm);
+    warm_profile_init(&rt.warm, config.warm_func_cap);
     rt.warm.enabled = 1;  /* warm path active from first execution */
     rt.current_fn   = NULL;
     rt.current_wf   = NULL;

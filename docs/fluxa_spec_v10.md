@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.10 — Sprint 11 Edition**
+**v0.10 — Sprint 12.a Edition**
 
-*Base v0.10 + Sprint 11: Warm Path · FFI Pointer Mapping · Full Stdlib · Atomic Handover*
+*Base v0.10 + Sprint 12.a: Warm Path · std.crypto · FLUXA_SECURE · Atomic Handover · Stdlib*
 
 *FLUXA v0.10 — Hobby language — Rio de Janeiro, Brazil*
 
@@ -61,11 +61,23 @@ Fluxa uses explicit static typing. The type always precedes the identifier — n
 
 Size declared at write time. All elements share the declared type. Out-of-bounds access produces a runtime error with line number (fail-fast).
 
+**Declaration forms:**
+
 ```fluxa
+// Explicit list initializer
 int arr values[3] = [1, 2, 3]
+
+// Scalar fill — all elements initialized to the same value
+int arr zeroes[2000] = 0       // all 2000 elements set to 0
+float arr temps[100] = 0.0     // all 100 elements set to 0.0
+bool arr flags[64] = false     // all 64 elements set to false
+
+// Element access and assignment
 values[0] = 9       // ok
 values[5] = 1       // [fluxa] Runtime error (line N): array index out of bounds
 ```
+
+The scalar form (`int arr a[N] = 0`) is the standard pattern for large arrays on embedded targets — no need to list N elements explicitly, and the type is enforced on the fill value at runtime.
 
 ### 3.3 dyn — Heterogeneous Dynamic Array
 
@@ -87,8 +99,13 @@ typedef struct { Value *items; int count; int cap; } FluxaDyn;
 **Block in dyn:** Block instances can be stored as dyn elements. When a Block instance is placed into a dyn, the runtime creates a fully independent copy — the same isolation guarantee as `typeof`. The element in the dyn and the original Block variable are completely separate: mutations to one never affect the other.
 
 ```fluxa
-Block Sensor { prst float reading = 0.0; fn set(float v) nil { reading = v } fn get() float { return reading } }
-Block s1 typeof Sensor; Block s2 typeof Sensor
+Block Sensor {
+    prst float reading = 0.0
+    fn set(float v) nil { reading = v }
+    fn get() float { return reading }
+}
+Block s1 typeof Sensor
+Block s2 typeof Sensor
 s1.set(5.0)
 dyn sensors = [s1, s2]
 sensors[0].set(99.0)
@@ -197,7 +214,10 @@ if x > 5 { print("high") } else { print("low") }
 
 ```fluxa
 int i = 0
-while i < 3 { print(i); i = i + 1 }
+while i < 3 {
+    print(i)
+    i = i + 1
+}
 ```
 
 ### 5.3 for x in arr / dyn
@@ -311,20 +331,50 @@ if err != nil { print(err[0]) }
 
 Hot reload is a first-class citizen. The runtime maintains a dependency graph (PrstGraph) between prst variables and active executions.
 
-### 9.1 Live vs Static Modules
+### 9.1 Import Types
 
-- `live` → reloadable automatically on save
-- `static` → loaded once at startup
-- `c` → FFI integration (only inside danger)
+Fluxa supports three import forms:
+
+- `import std <lib>` → opt-in standard library (declared in `[libs]` of fluxa.toml)
+- `import c <lib>`   → C FFI via dlopen/libffi — only valid inside `danger` blocks
+- `import live` / `import static` → planned; not yet implemented
 
 ### 9.2 Execution Mode — Script vs Project
 
-| Mode | Condition / Characteristics |
-|---|---|
-| FLUXA_MODE_SCRIPT | No prst declarations. PrstPool and PrstGraph not instantiated. Zero overhead. |
-| FLUXA_MODE_PROJECT | At least one prst declaration. PrstPool + PrstGraph active. Reload-capable. |
+Fluxa has two internal modes determined automatically at parse time:
 
-### 9.3 PrstGraph — Dependency Graph
+| Internal Mode | Condition | Characteristics |
+|---|---|---|
+| FLUXA_MODE_SCRIPT | No `prst` declarations anywhere in the file | PrstPool and PrstGraph not instantiated. Zero overhead. No toml required. |
+| FLUXA_MODE_PROJECT | At least one `prst` declaration | PrstPool + PrstGraph active. Reads `fluxa.toml`. Reload-capable. |
+
+### 9.3 Runtime Flags — How You Invoke Fluxa
+
+The runtime flag controls lifecycle behavior, independent of SCRIPT/PROJECT mode:
+
+| Flag | Command | Behavior |
+|---|---|---|
+| *(none)* | `fluxa run file.flx` | **Default** — run once, exit. Auto-detects SCRIPT vs PROJECT mode. No file watcher, no IPC server. Ideal for one-shot programs, tools, and development iteration. |
+| `-dev` | `fluxa run file.flx -dev` | **Dev mode** — starts IPC server + file watcher. On every save, the runtime reloads automatically, preserving `prst` state. Hot reload is instant: parse → resolver → dry run → apply. Errors are logged but do not crash the watcher loop. |
+| `-prod` | `fluxa run file.flx -prod` | **Prod mode** — starts IPC server, no file watcher. Reload is manual via `fluxa apply` or `fluxa handover`. Designed for long-running production deployments. With `make build-secure` + `FLUXA_SECURE=1`, adds IPC hardening: rate limiting, RESCUE_SOFT/HARD, configurable timeouts and connection caps. |
+| `-p` | `fluxa run file.flx -p` | **Preflight** — parse + resolve only, no execution. Validates syntax, name resolution, and type declarations. Exits with code 0 (ok) or 1 (errors). Use in CI before deploying. |
+
+```bash
+# Development workflow
+fluxa run main.flx -dev           # watch + hot reload on save
+
+# Production deployment
+fluxa run main.flx -prod          # IPC server, manual reload
+fluxa apply new.flx               # reload preserving prst state
+fluxa handover old.flx new.flx    # atomic 5-step handover
+
+# CI validation
+fluxa run main.flx -p             # parse + resolve only, exit 0/1
+```
+
+*`-dev` and `-prod` both require at least one `prst` declaration to activate the PrstPool. A pure script (no `prst`) runs identically under any flag — prst infrastructure is never instantiated for FLUXA_MODE_SCRIPT programs.*
+
+### 9.4 PrstGraph — Dependency Graph
 
 Records which function/method read each prst variable. Dynamic — grows via realloc.
 
@@ -333,7 +383,7 @@ Records which function/method read each prst variable. Dynamic — grows via rea
 - `prst_graph_checksum(g)` — FNV-32; used in Handover for integrity
 - `prst_graph_init_cap(g, cap)` — initializes with configurable cap
 
-### 9.4 Reload Behavior Table
+### 9.5 Reload Behavior Table
 
 | Action on Reload | Result | Guarantee |
 |---|---|---|
@@ -411,6 +461,9 @@ fluxa run <file.flx> -dev           Dev: watch + auto-reload on save (inotify/kq
 fluxa run <file.flx> -prod          Prod: manual reload via fluxa apply
 fluxa run <file.flx> -p             Preflight: parse + resolve only, no execution
 fluxa explain <file.flx>            Print prst state + dependency graph
+fluxa dis <file.flx>                Static analysis: AST, warm forecast, hot
+                                      bytecode, call order, prst fork — writes .dis
+fluxa dis <file.flx> -o out.txt     Write dis report to explicit path
 fluxa apply <file.flx>              One-shot reload preserving prst state
 fluxa handover <old> <new>          Atomic Handover: replace old.flx with new.flx
 fluxa test-handover                 Internal suite: validates all 5 protocol steps
@@ -422,6 +475,8 @@ fluxa init                          Create a new fluxa.toml in the current direc
 fluxa ffi list                      List available shared libraries via ldconfig
 fluxa ffi inspect <lib>             Generate suggested toml signatures for a library
 fluxa runtime info                  Show current runtime configuration
+fluxa keygen [--dir <path>]         Generate Ed25519 + HMAC keys for FLUXA_SECURE
+                                      (only in fluxa_secure binary)
 ```
 
 ### 11.1 fluxa -dev: File Watcher
@@ -434,7 +489,118 @@ fluxa runtime info                  Show current runtime configuration
 
 ### 11.2 IPC — Unix Socket
 
-In `-prod` mode the runtime opens a Unix socket at `~/.fluxa/<pid>.sock`. The IPC server accepts JSON commands from `fluxa observe`, `fluxa set`, `fluxa logs`, and `fluxa status`. The socket is also used by `std.mcp` to expose Fluxa state as MCP tools.
+In `-prod` and `-dev` modes the runtime opens a Unix socket at `/tmp/fluxa-<pid>.sock` (mode 0600 — owner only). The IPC server accepts binary commands from `fluxa observe`, `fluxa set`, `fluxa logs`, and `fluxa status`. The protocol is a fixed-size binary struct (not JSON) — see `src/fluxa_ipc.h` for the wire format.
+
+### 11.3 fluxa dis — Static Disassembler
+
+`fluxa dis` is a static analysis tool. It parses and resolves a `.flx` file without executing it, then writes a `.dis` report covering seven sections. It is available both as a subcommand of the main binary and as a standalone binary (`fluxa_dis`).
+
+```bash
+fluxa dis examples/problems/07_dijkstra.flx         # writes dijkstra.dis
+fluxa dis examples/problems/07_dijkstra.flx -o out.txt  # explicit path
+
+# Standalone binary (same output)
+fluxa_dis examples/problems/07_dijkstra.flx
+```
+
+**Seven sections in the .dis report:**
+
+| Section | Content |
+|---|---|
+| **1. AST** | Every node: type, source line, `warm_local` flag, `resolved_offset`. Shows the full parse tree. |
+| **2. Warm Forecast** | Per-function: PROMOTABLE or COLD-LOCKED, cold bytes/read vs warm bytes/read, savings estimate based on actual prst var count. |
+| **3. Hot Path — Bytecode VM** | Real VM instructions for `while`/`if` bodies: opcodes, registers, constants, jumps. Only shows functions with compilable loops. |
+| **4. Call Order** | Call graph per function: direct calls, recursive calls, mutual recursion (DFS cycle detection), topological order for DAG programs. |
+| **5. prst Fork** | All `prst` vars with owner and line. Shows what state dies atomically if each var is removed. |
+| **6. Execution Paths** | Per-function tier summary: Tier 0/1/2 eligibility, bytes/read, TCO flag. |
+| **7. Statistics** | Total AST nodes, functions (promotable / cold-locked / beyond cap), WarmProfile budget used vs max, VM eligibility, TCO presence. |
+
+**Build:**
+
+```bash
+make build-dis    # produces ./fluxa_dis
+```
+
+`fluxa dis` (subcommand) is compiled into the main `./fluxa` binary — no separate build needed. `fluxa_dis` is a standalone binary that doesn't link the runtime, IPC, or stdlib — useful for CI pipelines where you only want static analysis.
+
+### 11.4 Builds
+
+Fluxa has three build targets with different capabilities:
+
+| Target | Command | Binary | Use case |
+|---|---|---|---|
+| Standard | `make build` | `./fluxa` | Development, testing, general use. All stdlib + FFI. |
+| Secure | `make build-secure` | `./fluxa_secure` | Production deployments requiring IPC hardening. |
+| Disassembler | `make build-dis` | `./fluxa_dis` | Static analysis only. No runtime, no IPC, no stdlib. |
+
+#### Standard build — `./fluxa`
+
+The default binary. Includes all stdlib, FFI, IPC server, and hot reload. Zero security overhead — IPC accepts connections from the owner UID with a 100ms timeout and no rate limiting.
+
+```bash
+make build
+./fluxa run main.flx -dev
+```
+
+#### Secure build — `./fluxa_secure` (`FLUXA_SECURE=1`)
+
+Compiled with `-DFLUXA_SECURE=1`. Identical to the standard build in all functionality, but the IPC server adds:
+
+- **50ms handshake timeout** (configurable via `handshake_timeout_ms` in `[security]`)
+- **Connection cap** of 16 simultaneous connections (configurable via `ipc_max_conns`)
+- **Two-level RESCUE mode:**
+  - `RESCUE_SOFT` — activates when invalid burst threshold is exceeded. Silent drop on bad packets. Self-clears via leaky bucket decay when the attack stops.
+  - `RESCUE_HARD` — activates when burst hits threshold while already in RESCUE_SOFT. Starts an immune drain timer (`IPC_RESCUE_DRAIN_SEC = 30s`). During HARD, new attack packets **do not** increment the counter — the attacker cannot extend the drain. Auto-clears after 30s.
+- **Silent drop** — in any RESCUE level, invalid connections receive no response. The attacker sees a timeout, not a rejection. No information about detection is leaked.
+- Valid operator commands (correct magic + same UID) pass through at both RESCUE levels.
+
+```bash
+make build-secure
+./fluxa_secure keygen --dir /etc/fluxa/keys    # generate keys first
+./fluxa_secure run main.flx -prod              # hardened prod runtime
+```
+
+**Generating keys (`fluxa keygen`):**
+
+```bash
+./fluxa_secure keygen --dir /etc/fluxa/keys
+# Produces:
+#   /etc/fluxa/keys/signing.key         (Ed25519 private, 0400)
+#   /etc/fluxa/keys/signing.pub         (Ed25519 public,  0444)
+#   /etc/fluxa/keys/signing.fingerprint (hex fingerprint, 0444)
+#   /etc/fluxa/keys/ipc_hmac.key        (HMAC-SHA512 secret, 0400)
+```
+
+Keys are raw bytes — NEVER stored inline in `fluxa.toml`. The toml stores only file paths:
+
+```toml
+[security]
+signing_key          = "/etc/fluxa/keys/signing.key"
+ipc_hmac_key         = "/etc/fluxa/keys/ipc_hmac.key"
+mode                 = "strict"        # off | warn | strict
+handshake_timeout_ms = 50             # increase for slow/embedded links
+ipc_max_conns        = 16             # increase for high-traffic deployments
+```
+
+Security modes:
+
+| Mode | Behavior |
+|---|---|
+| `off` | No validation. Default for dev builds. |
+| `warn` | IPC starts, logs `security mode=warn`. Key files validated at startup. |
+| `strict` | Startup fails if `signing_key` is missing or unreadable. Enforces all checks. |
+
+`./fluxa` (standard build) ignores `[security]` entirely — the section is parsed but has no effect without `FLUXA_SECURE=1`.
+
+#### Disassembler build — `./fluxa_dis`
+
+A minimal binary for static analysis. Does not link the runtime, IPC server, or any stdlib. Safe to run in CI on arbitrary `.flx` files without executing them.
+
+```bash
+make build-dis
+./fluxa_dis src/main.flx              # writes src/main.dis
+./fluxa_dis src/main.flx -o /tmp/out  # explicit output
+```
 
 ---
 
@@ -442,15 +608,19 @@ In `-prod` mode the runtime opens a Unix socket at `~/.fluxa/<pid>.sock`. The IP
 
 Integration with C is permitted exclusively inside `danger` blocks. Implemented via dlopen/libffi — zero static linking overhead.
 
-```fluxa
-import c libm
+Libraries declared in `[ffi]` of `fluxa.toml` are loaded automatically at runtime boot. `import c` is only needed for libraries NOT declared in the toml (ad-hoc loading):
 
-float result = 0.0
+```fluxa
+// Option A: declared in fluxa.toml [ffi] — no import needed
 danger {
-    result = libm.sqrt(16.0)
+    float r = libm.sqrt(16.0)    // libm loaded automatically from toml
 }
-print(result)    // 4
-print(err)       // nil — no error
+
+// Option B: ad-hoc — not in toml, imported at runtime
+import c libpng
+danger {
+    dyn handle = libpng.open("photo.png")
+}
 ```
 
 *If an FFI call writes to a prst variable during the Handover dry_run, the write occurs in the isolated state of B and does not contaminate A.*
@@ -480,7 +650,8 @@ scanf = "(char*, int*, int*) -> int"
 ```
 
 ```fluxa
-int a = 0; int b = 0
+int a = 0
+int b = 0
 danger {
     int matched = libc.scanf("%d %d", a, b)
 }
@@ -650,7 +821,7 @@ Observation caps at `WARM_OBS_LIMIT = 4` calls. After 4 calls: either promoted (
 
 **Block methods excluded:** `current_instance != NULL` in Block method frames → warm path disabled. Block methods use `inst->scope`, not the stack-slot path, so `warm_local` would be incorrect.
 
-**Hash table (WarmProfile):** Open-addressing hash keyed by `(uintptr_t)fn_node` — the ASTNode pointer is stable across all calls to the same function. Capacity `WARM_FUNC_CAP = 32` (power of 2 for fast modulo). When full, `warm_profile_get_func` returns NULL — the function silently falls back to the warm_local direct stack read.
+**Hash table (WarmProfile):** Open-addressing hash keyed by `(uintptr_t)fn_node` — the ASTNode pointer is stable across all calls to the same function. The static array holds `WARM_FUNC_CAP_MAX = 256` slots; the runtime uses only `warm_func_cap` of them (default 32, configurable via `fluxa.toml [runtime]`). Power of 2 required for fast modulo. When the active cap is exhausted, `warm_profile_get_func` returns NULL — the function silently falls back to the warm_local direct stack read. Setting `warm_func_cap = 64` doubles the profiling budget to 17.6 KB at zero additional code cost.
 
 **Slot wrap:** Functions with more than `WARM_SLOTS_MAX = 256` local variables wrap their slot index (`slot_idx % 256`). Colliding slots with different observed types cause the QJL guard to fire, keeping the function cold-locked. The direct stack read via warm_local still works correctly in all cases.
 
@@ -686,6 +857,146 @@ Inspired by TurboQuant (Google Research, ICLR 2026): *"randomly rotating input v
 | block 1M method calls | ~765ms | 677ms | **+12%** |
 | compute 1M PROJECT (20 prst vars) | ~2600ms | 2005ms | **+23%** |
 | while 10M (VM hot path) | ~250ms | 252ms | ≈ even |
+
+---
+
+## 13.5 Garbage Collector
+
+### Philosophy
+
+Fluxa's GC is **non-aggressive by design**. It targets only one type: `dyn`
+(heterogeneous dynamic arrays). All other values — `int`, `float`, `str`,
+`bool`, `arr` — are managed by scope lifetime and freed deterministically when
+the scope that owns them is released (`scope_free`).
+
+The GC never runs speculatively. It sweeps only at explicit safe points:
+the back-edge of every `while` loop (with a fast-path guard), and on
+`free(x)` when the target is a `dyn`. This keeps execution behavior
+predictable — essential for real-time embedded control loops.
+
+`free(x)` always works and is preferred for large `dyn` allocations. The GC
+is a safety net, not the primary reclamation mechanism.
+
+### What enters the GC
+
+Only `VAL_DYN` objects are registered. When the runtime creates a new `dyn`
+literal or a stdlib function returns a `dyn` (e.g. `crypto.keygen()`,
+`csv.load()`), the `FluxaDyn*` pointer is registered via `gc_register()`.
+Every other value type is freed by the scope destructor — no GC involvement.
+
+### Data structure
+
+The GC is an open-addressing hash table keyed by `FluxaDyn*` pointer, with
+FNV-32 hashing and tombstone deletion (three slot states: `EMPTY`, `USED`,
+`DEAD`). Capacity starts at `gc_cap` (default 1024, configurable via
+`fluxa.toml`), rounded up to the next power of two. When the table reaches
+75% load, it doubles and rehashes in-place.
+
+```c
+typedef struct {
+    void  *ptr;        // FluxaDyn* — the tracked object
+    int    pin_count;  // > 0 means at least one scope holds a reference
+    size_t size_bytes; // telemetry — bytes tracked
+    int    state;      // EMPTY | USED | DEAD (tombstone)
+} GCEntry;
+```
+
+Average cost: O(1) for register, pin, unpin, unregister. O(n) for sweep,
+where n is the number of currently tracked `dyn` objects.
+
+### Pin / unpin model
+
+Every `dyn` value in a live scope is **pinned** — its `pin_count` is
+incremented when the value enters scope (`gc_pin`) and decremented when it
+leaves (`gc_unpin`). A `dyn` with `pin_count == 0` is eligible for collection.
+
+```
+dyn events = [1, "hello", true]   ← gc_register + gc_pin
+                                    pin_count = 1
+// events goes out of scope
+                                    gc_unpin → pin_count = 0
+// next while back-edge or free()
+                                    gc_sweep → fluxa_dyn_free(ptr)
+```
+
+When a `dyn` is passed into a function or assigned to another variable,
+the receiving scope also pins it, so the `pin_count` reflects the number
+of live references. This is a reference-counting model at the scope level,
+not a tracing GC.
+
+### Sweep points
+
+The GC sweeps at two explicit points:
+
+1. **`while` back-edge** — At the end of every `while` loop iteration, if
+   `rt->gc.count > 0` (fast-path guard: zero cost when nothing is tracked),
+   `gc_sweep` runs and frees all `dyn` objects with `pin_count == 0`.
+
+2. **`free(x)` on a `dyn`** — The runtime calls `gc_unregister` immediately,
+   removes the entry from the table, and frees the `FluxaDyn` in-place.
+   Does not wait for the next sweep.
+
+```fluxa
+dyn buf = [0, 0, 0, 0]    // registered, pin_count = 1
+// ... use buf ...
+free(buf)                   // gc_unregister → immediate free, no GC lag
+```
+
+### Lifecycle — full picture
+
+```
+dyn x = [1, 2, 3]
+    │
+    ├─ gc_register(ptr, size)     pin_count = 0, state = USED
+    ├─ gc_pin(ptr)                pin_count = 1  (x is in scope)
+    │
+    │  ... x used ...
+    │
+    ├─ gc_unpin(ptr)              pin_count = 0  (x leaves scope)
+    │
+    └─ gc_sweep() at while edge
+       or free(x)
+           └─ pin_count == 0 → fluxa_dyn_free(ptr) → state = DEAD
+```
+
+### Capacity and configuration
+
+```toml
+[runtime]
+gc_cap = 1024   # initial GC table capacity (default 1024)
+                # increase for programs that create many dyn objects
+                # decrease for RP2040 / memory-constrained targets
+```
+
+`gc_cap` is the **initial** capacity, not a ceiling. The table grows
+automatically via realloc when it exceeds 75% load. Setting a higher initial
+cap only reduces the number of realloc calls — it does not limit total tracked
+objects.
+
+On RP2040 (264 KB SRAM), set `gc_cap` low (e.g. 64 or 128) to reduce the
+initial table footprint. Each `GCEntry` is 24 bytes; `gc_cap = 64` costs
+1.5 KB of SRAM.
+
+### Thread safety
+
+The GC is **not thread-safe**. Each thread spawned via `std.flxthread`
+gets its own `Runtime` clone with its own independent `GCTable`. There is
+no shared GC state between threads. `prst dyn` values in the `PrstPool` are
+synchronized via the pool's own lock, not via the GC.
+
+### What the GC does NOT do
+
+- **No mark-and-sweep tracing.** It does not traverse the object graph. Only
+  the scope pin mechanism tracks liveness.
+- **No compaction.** `dyn` objects stay at their original heap address. The
+  GC only frees them.
+- **No generational collection.** All tracked objects are in a single
+  generation.
+- **No finalization.** There are no destructors. `fluxa_dyn_free` frees the
+  `items` array and the `FluxaDyn` struct — nothing else.
+- **Does not touch `int arr`.** Fixed arrays are scope-managed. When the
+  scope that owns an `int arr` is freed, `value_free_data` frees the data
+  array directly — no GC involvement.
 
 ---
 
@@ -733,7 +1044,13 @@ Inspired by TurboQuant (Google Research, ICLR 2026): *"randomly rotating input v
 | 9.c | ✅ | FFI pointer type mapping: int\*, double\*, bool\* → &var writeback; char\* → writable buffer; uint8_t\* → arr byte scatter; dyn → opaque void\* round-trip. str_buf_size configurable via [ffi] (default 1024). Improved error messages for json/csv. All source strings in English. |
 | 10 | ✅ | std.math, std.csv, std.json, std.strings, std.time, std.flxthread (native concurrency). All opt-in via fluxa.toml [libs]. |
 | 11 | ✅ | Warm Path execution tier: warm_local resolver flag; WarmProfile (8.7 KB) with WHT path signature + QJL 1-bit guard per slot; O(1) hash keyed by fn_node\*; observation capped at 4 calls; promoted reads touch 9B vs 418B+ cold. fib +21%, block calls +12%, PROJECT mode +23%. Zero regression on VM. First use of TurboQuant-inspired quantization in a language runtime. |
-| 12 | 🔲 | Stdlib: std.sqlite, std.http, std.mqtt, std.serial, std.i2c, std.pid, std.flxgraph, std.infer, std.mcp. All opt-in via fluxa.toml [libs]. |
+| 12.a | ✅ | std.crypto (libsodium 1.0.18+): BLAKE2b-256, XSalsa20-Poly1305, Ed25519, Curve25519. `fluxa keygen` CLI. `[security]` toml. FLUXA\_SECURE=1: two-level RESCUE (SOFT/HARD). Silent drop. Configurable `handshake_timeout_ms`, `ipc_max_conns`. Bug fixes: arr return UAF, resolver stack overflow. |
+| 12.b | ✅ | **Libs 1** — std.pid (PID controller, pure C99, anti-windup), std.sqlite (libsqlite3), std.serial (libserialport, UART), std.i2c (Linux i2c-dev, register read/write/scan). All embedded-friendly. |
+| 12.c | 🔲 | **Huge Pages** — `FLUXA_HUGEPAGES=1` via `madvise(MADV_HUGEPAGE)`. Benchmark-gated: only ship if `perf dTLB-load-misses` confirms TLB pressure. |
+| 12.d | 🔲 | **Libs 2** — std.http (mongoose), std.mqtt (libmosquitto), std.mcp (depends on std.http). Network/protocol stack. |
+| 12.e | 🔲 | **std.libv** — N-dimensional vectors, matrices, tensors. GLM-inspired API. Col-major. In-place ops. Pure C99 ~800L, zero deps. |
+| 12.f | 🔲 | **std.libdsp** — FFT (Cooley-Tukey, in-place), STFT, windowing, FIR/IIR, range-Doppler, CFAR, matched filter. Radar/DSP math. Requires std.libv. |
+| 12.g | 🔲 | **Libs 3** — std.flxgraph (Raylib), std.infer (llama.cpp). Heavy deps, desktop-only. |
 
 ---
 
@@ -750,10 +1067,36 @@ entry = "main.flx"
 gc_cap         = 1024   # GC table hard cap (static array, default 1024)
 prst_cap       = 64     # PrstPool initial capacity (dynamic, default 64)
 prst_graph_cap = 256    # PrstGraph initial capacity (dynamic, default 256)
+warm_func_cap  = 32     # WarmProfile hash table size: number of functions
+                        # the runtime can profile simultaneously.
+                        # Must be power of 2, range 4..256.
+                        # 32 = 8.8 KB, 64 = 17.6 KB, 256 = 70 KB.
+                        # Increase for programs with >32 functions that
+                        # benefit from warm path promotion.
+                        # The static array is always 256 slots (WARM_FUNC_CAP_MAX);
+                        # warm_func_cap controls how many are used at runtime.
 # When to increase:
 # prst_cap > 64        → programs with many prst variables (e.g. 500+)
 # prst_graph_cap > 256 → many functions reading many prst vars
 # gc_cap < 1024        → memory-constrained environments (e.g. simulated RP2040)
+# warm_func_cap > 32   → programs with >32 hot functions (embedded controllers,
+#                        large IoT state machines)
+
+# ── [security] (FLUXA_SECURE builds only) ─────────────────────────────────
+# Key file paths only — NEVER put key material inline in the toml.
+# Generate keys with: fluxa_secure keygen --dir /etc/fluxa/keys
+[security]
+signing_key  = "/etc/fluxa/keys/signing.key"  # Ed25519 private key, 0400
+ipc_hmac_key = "/etc/fluxa/keys/ipc_hmac.key" # HMAC-SHA512 secret, 0400
+mode         = "strict"   # off | warn | strict
+                          # off    — no validation (default, dev builds)
+                          # warn   — accept but log unsigned commands
+                          # strict — reject apply/update without valid sig
+handshake_timeout_ms = 50   # IPC recv timeout in ms (default 50, range 10..5000)
+                             # Increase for slow/embedded links
+ipc_max_conns = 16           # Max simultaneous IPC connections (default 16, range 1..256)
+                             # Increase for high-traffic deployments
+
 
 [ffi]
 libm = "auto"           # auto-resolves via platform candidates (libm.so.6, libm.dylib, ...)
@@ -784,6 +1127,7 @@ std.json      = "1.0"
 std.strings   = "1.0"
 std.time      = "1.0"
 std.flxthread = "1.0"
+std.crypto    = "1.0"
 
 [libs.csv]
 max_line_bytes = 1024   # max bytes per CSV line (default 1024)
@@ -834,15 +1178,18 @@ std.csv  = "1.0"    # Data
 | std.strings | Text | own | **✅ implemented** | split, join, concat, trim, find, replace, upper, lower, from_int, to_int, ... |
 | std.time | Time | POSIX | **✅ implemented** | sleep, sleep_us, now_ms, now_us, ticks, elapsed_ms, timeout, format |
 | std.flxthread | Concurrency | pthread | **✅ implemented** | ft.new, ft.message, ft.await, ft.stop, ft.kill, ft.lock, ft.resolve_all |
+| std.crypto | Security | libsodium | **✅ implemented** | hash (BLAKE2b-256), keygen, nonce, encrypt/decrypt (XSalsa20-Poly1305), sign\_keygen, sign, sign\_open (Ed25519), kx\_keygen, kx\_client, kx\_server (Curve25519), compare, wipe, to\_hex, from\_hex, version |
 | std.mqtt | IoT | libmosquitto | 🔲 planned | MQTT protocol. prst: broker config, auto-reconnect, active subscriptions. |
-| std.serial | IoT | libserialport | 🔲 planned | UART/serial. Fundamental for RP2040. Stable since 2013. |
-| std.i2c | Robotics | libgpiod | 🔲 planned | I2C protocol. IMU reading, encoders. prst state: accumulated calibration. |
-| std.pid | Robotics | own ~300L | 🔲 planned | Pure C PID controller. State (integral, prev_error) is prst by nature. |
-| std.sqlite | Database | SQLite 3 | 🔲 planned | Embedded database. Zero external deps. Works on RP2040. Sensor logging. |
+| std.serial | IoT | libserialport | **✅ implemented** | UART/serial. list, open/close, write, read, readline, flush, bytes_available. |
+| std.i2c | Robotics | Linux i2c-dev | **✅ implemented** | I2C protocol. open/close, write, read, write_reg, read_reg, read_reg16, scan. Linux only (no-op stub on macOS). |
+| std.pid | Robotics | own ~300L C99 | **✅ implemented** | PID controller. new, compute, reset, set_limits (anti-windup), set_deadband, state. |
+| std.sqlite | Database | SQLite 3 | **✅ implemented** | Embedded SQL. open/close, exec, query, last_insert_id, changes, version. |
 | std.http | Network | mongoose | 🔲 planned | HTTP + WebSocket in single-file C. Embedded-friendly. Stable for years. |
 | std.flxgraph | Visual | Raylib | 🔲 planned | Graphics window, 2D/3D, input. C99, zero deps, Raspberry Pi-compatible. |
 | std.infer | AI | llama.cpp/ggml | 🔲 planned | Local inference of quantized models. prst context survives reloads. |
 | std.mcp | Protocol | mongoose HTTP | 🔲 planned | Fluxa as MCP server. Exposes observe/set/apply/handover as MCP tools. |
+| std.libv | Math / Graphics | own ~800L C99 | 🔲 planned | N-dimensional vectors, matrices, tensors. GLM-inspired API. col-major. In-place ops. |
+| std.libdsp | DSP / Radar | own + FFTW optional | 🔲 planned | FFT, STFT, windowing, filters, range-Doppler. Uses std.libv as base. |
 
 ### 17.4 Library Memory Model
 
@@ -858,16 +1205,211 @@ float total = csv.sum(data, "revenue") * 1.1
 
 ### 17.5 std.mcp — Fluxa as MCP Server
 
-Primary use case: operator modifies a running agent without taking it down. The agent processes messages continuously. Via MCP, the operator triggers `fluxa/apply` with new code. Atomic Handover guarantees zero downtime.
+**Status: 🔲 planned** — not yet implemented. Depends on `std.http` (mongoose).
 
-| MCP Tool | Description |
-|---|---|
-| fluxa/observe | Reads current value of a prst var in real time |
-| fluxa/set | Mutates a prst var without stopping execution (applied at next safe point) |
-| fluxa/apply | Hot reload — prst state preserved via runtime_apply |
-| fluxa/handover | Full Atomic Handover (5 steps, Dry Run included) |
-| fluxa/status | Snapshot: cycle count, prst count, errors, mode |
-| fluxa/logs | Last entries in err_stack |
+MCP (Model Context Protocol) is an open standard that allows AI agents and tools to interact with services via a structured protocol. `std.mcp` exposes the Fluxa runtime as an MCP server, making it directly controllable by AI agents (Claude, GPT, Gemini, local models via llama.cpp) without any custom integration code.
+
+**What it is NOT:** `std.mcp` is not the IPC socket (`/tmp/fluxa-<pid>.sock`) that `fluxa observe`, `fluxa set`, and `fluxa status` use. The IPC socket is a Unix-local binary protocol for CLI tools. `std.mcp` is an HTTP-based MCP server that external agents can reach over a network.
+
+**Primary use case:** An AI agent running on a remote machine modifies a Fluxa program running on an embedded device — adjusting control parameters, triggering reloads, reading sensor state — without any human operator in the loop.
+
+```toml
+[libs]
+std.http = "1.0"   # required — std.mcp depends on it
+std.mcp  = "1.0"
+```
+
+```fluxa
+import std mcp
+
+// Start MCP server on port 7777
+// Fluxa runtime becomes controllable by any MCP-compatible agent
+mcp.serve(7777)
+```
+
+**MCP tools exposed:**
+
+| MCP Tool | Maps to | Description |
+|---|---|---|
+| `fluxa/observe` | `fluxa observe <var>` | Read current value of a prst var |
+| `fluxa/set` | `fluxa set <var> <val>` | Mutate a prst var at next safe point |
+| `fluxa/apply` | `fluxa apply <file>` | Hot reload preserving prst state |
+| `fluxa/handover` | `fluxa handover <old> <new>` | Full Atomic Handover (5 steps) |
+| `fluxa/status` | `fluxa status` | cycle count, prst count, errors, mode |
+| `fluxa/logs` | `fluxa logs` | Last entries in err_stack |
+
+**Why this matters for IoT:** A Fluxa program running on an RP2040 (via `std.http` over Wi-Fi) can be tuned, reloaded, and inspected by an AI agent that observes sensor readings and decides to adjust PID parameters — all without stopping the control loop. The Atomic Handover guarantees the adjustment is zero-downtime.
+
+---
+
+### 17.6 std.libv — N-Dimensional Vectors, Matrices, Tensors
+
+**Status: 🔲 planned** — design finalized, not yet implemented.
+
+`std.libv` brings GLM-style vector and matrix math to Fluxa. The mental model is deliberately identical to GLSL/GLM — anyone who has written a shader or used OpenGL already knows the API. No new types are introduced: all storage is backed by `float arr` or `int arr` (always flat, col-major). The lib adds shape semantics and algebraic operations on top of existing Fluxa arrays.
+
+**Design principles:**
+- **No new types** — `float arr` is the storage. libv adds operations, not a parallel type system.
+- **Col-major storage** — same as GLSL/OpenGL. No silent transposes when sending data to the GPU.
+- **In-place by default** — all operations that can be in-place are. Essential for RP2040 where heap allocation is scarce.
+- **Caller allocates for output** — functions that produce a new vector/matrix take the output arr as first argument.
+- **Runtime shape validation** — mismatched shapes produce a runtime error with line number, consistent with Fluxa fail-fast semantics.
+
+#### Initializers
+
+```fluxa
+import std libv as v
+
+// Named initializers — GLSL-compatible
+float arr pos[2]  = v.vec2      // 2D vector  — [0, 0]
+float arr pos[3]  = v.vec3      // 3D vector  — [0, 0, 0]
+float arr pos[4]  = v.vec4      // 4D / RGBA  — [0, 0, 0, 0]
+float arr m[4]    = v.mat2      // 2×2 matrix — identity
+float arr m[9]    = v.mat3      // 3×3 matrix — identity
+float arr m[16]   = v.mat4      // 4×4 matrix — identity (shader standard)
+int arr  px[2]    = v.ivec2     // integer vec2
+int arr  px[3]    = v.ivec3     // integer vec3
+
+// Generic initializers — arbitrary shapes
+float arr a[8]    = v.vec(8)    // N-vector, all zeros
+float arr b[12]   = v.mat(3,4)  // 3×4 matrix, all zeros
+float arr t[27]   = v.tens(3,3,3) // 3×3×3 tensor, all zeros
+```
+
+Identities: `v.mat2`, `v.mat3`, `v.mat4` initialize to the identity matrix. All other initializers produce zeros.
+
+#### Vector operations
+
+All modify the first argument in-place unless the operation is inherently scalar-returning:
+
+```fluxa
+v.add(a, b)           // a = a + b
+v.sub(a, b)           // a = a - b
+v.scale(a, 2.0)       // a = a * scalar
+v.normalize(a)        // a = a / norm(a)
+v.negate(a)           // a = -a
+v.lerp(a, b, 0.5)     // a = mix(a, b, t)
+
+float d = v.dot(a, b)   // scalar — dot product
+float n = v.norm(a)     // scalar — Euclidean length
+float angle = v.angle(a, b) // scalar — angle between vectors
+
+// vec3 only
+float arr c[3] = v.vec3
+v.cross(c, a, b)      // c = a × b  (caller allocates output)
+
+// Shape mismatch → runtime error
+v.add(vec3_arr, vec4_arr)
+// [fluxa] Runtime error (line N): libv: shape mismatch (3 != 4)
+```
+
+#### Matrix operations
+
+```fluxa
+// Multiply — caller allocates result
+float arr r[16] = v.mat4
+v.matmul(r, m1, m2)       // r = m1 × m2
+
+v.transpose(m)            // in-place for square matrices
+v.identity(m)             // reset to identity
+
+float arr inv[16] = v.mat4
+v.inverse(inv, m)         // inv = m⁻¹ (caller allocates)
+
+float det = v.det(m)      // scalar — determinant
+```
+
+#### 3D transform helpers (shader / raylib workflow)
+
+```fluxa
+// Build transform matrices — all modify m in-place
+v.translate(m, tx, ty, tz)
+v.rotate(m, angle, ax, ay, az)
+v.scale_mat(m, sx, sy, sz)
+
+// Projection and view — result written into m
+v.perspective(m, fov, aspect, near, far)
+v.ortho(m, left, right, bottom, top, near, far)
+v.lookat(m, eye_arr, center_arr, up_arr)
+```
+
+#### Tensor operations
+
+```fluxa
+float arr t[27] = v.tens(3,3,3)
+v.tens_add(t, t2)          // element-wise add
+v.tens_scale(t, 0.5)       // scalar multiply
+float arr s[9] = v.mat3
+v.tens_slice(s, t, 0)      // extract slice 0 along first axis
+```
+
+#### prst compatibility
+
+```fluxa
+prst float arr weights[16] = v.mat4   // survives hot reloads
+```
+
+`prst float arr` works exactly like any other `prst arr` — the flat storage serializes normally. Shape is implicit in the declared size.
+
+#### toml declaration
+
+```toml
+[libs]
+std.libv = "1.0"
+```
+
+No C dependencies — pure C99 ~800 lines. Works on RP2040 and ESP32.
+
+---
+
+### 17.7 std.libdsp — DSP and Radar Math
+
+**Status: 🔲 planned** — requires std.libv.
+
+`std.libdsp` provides frequency-domain operations for signal processing and radar applications. It uses `std.libv` arrays as its native storage format. FFT operates in-place on `float arr` — no separate complex type, interleaved real/imag layout.
+
+```toml
+[libs]
+std.libv   = "1.0"   # required
+std.libdsp = "1.0"
+```
+
+**Core operations:**
+
+```fluxa
+import std libv   as v
+import std libdsp as dsp
+
+// FFT — in-place, power-of-2 sizes
+// Interleaved layout: [re0, im0, re1, im1, ...]
+float arr signal[2048] = v.vec(2048)   // 1024-point complex FFT
+dsp.fft(signal)           // forward FFT in-place
+dsp.ifft(signal)          // inverse FFT in-place
+
+// Windowing — applied before FFT
+dsp.window(signal, "hann")     // Hann window
+dsp.window(signal, "hamming")  // Hamming
+dsp.window(signal, "blackman") // Blackman
+dsp.window(signal, "rect")     // Rectangular (no window)
+
+// Power spectrum
+float arr psd[1024] = v.vec(1024)
+dsp.power(psd, signal)    // psd[i] = re[i]² + im[i]²
+
+// Filters
+float arr h[64] = v.vec(64)
+dsp.fir(signal, h)        // FIR filter, h = coefficients
+dsp.iir(signal, b, a)     // IIR filter, b/a = coefficients
+
+// Radar-specific
+float arr rd[512] = v.vec(512)
+dsp.range_doppler(rd, signal, prf, fs)  // range-Doppler map
+dsp.cfar(rd, guard, ref, threshold)     // CFAR detector
+dsp.matched_filter(signal, template)    // matched filter correlation
+dsp.stft(output, signal, win_size, hop) // Short-time Fourier transform
+```
+
+**Implementation note:** FFT is a pure C99 Cooley-Tukey implementation (~300L), zero external deps — embedded-friendly. FFTW can be optionally linked for larger workloads via `[libs.libdsp] backend = "fftw"` in fluxa.toml.
 
 ---
 
@@ -1000,7 +1542,9 @@ print(height)    // second integer typed
 ```fluxa
 // After 2+ stable calls, compute() is promoted to warm tier.
 // Reads touch 9 bytes instead of 418+ bytes (with 20 prst vars).
-prst int p0 = 0; prst int p1 = 1    // ... 20 prst vars total
+prst int p0 = 0
+prst int p1 = 1
+// ... 20 prst vars total
 
 fn compute(int n) int {
     int a = n
@@ -1105,3 +1649,46 @@ Write a PROJECT-mode program with several `prst` variables and functions that ar
 **Stage 10 — Embedded targets**
 
 Reduce `gc_cap`, `prst_cap`, and `str_buf_size` in `fluxa.toml` to fit target memory budgets. Cross-compile with `make build-rp2040` or `make build-esp32`. The warm path is especially valuable on RP2040 — 9 bytes touched per warm read vs 418+ bytes cold reduces SRAM bus pressure proportionally to the number of `prst` variables.
+
+---
+
+## D. Future Proposals
+
+### D.1 Huge Pages — `FLUXA_HUGEPAGES=1`
+
+**Status: 📋 proposal — not scheduled**
+
+On Linux x86-64 and ARM64, the runtime's working set (PrstPool, GCTable, Value stack) can span enough virtual pages to pressure the TLB (Translation Lookaside Buffer). With 4KB pages and 500+ prst variables, the PrstPool alone crosses multiple pages. Each TLB miss costs ~100 cycles for a page walk.
+
+Huge pages (2MB) reduce the TLB footprint of the same working set from hundreds of entries to single digits. The mechanism is `madvise(MADV_HUGEPAGE)` — Transparent Huge Pages (THP). Zero system configuration required. The kernel promotes pages automatically when it decides it is beneficial.
+
+**Candidate allocations:**
+
+| Allocation | Size (typical) | Benefit |
+|---|---|---|
+| PrstPool buffer | grows with prst var count | High — accessed every hot loop iteration |
+| GCTable (GCEntry array) | 24B × gc_cap | Medium — accessed at while back-edge |
+| Value stack | 512 × 32B = 16KB | Low — already fits in L1 cache |
+| WarmProfile | 8.7KB max | None — already in L1 |
+
+**Implementation sketch:**
+
+```c
+#ifdef FLUXA_HUGEPAGES
+#include <sys/mman.h>
+#define fluxa_hint_huge(ptr, size) \
+    madvise((void*)(ptr), (size), MADV_HUGEPAGE)
+#else
+#define fluxa_hint_huge(ptr, size) ((void)0)
+#endif
+// Applied after prst_pool_init() and gc_init()
+```
+
+**Build flag:** `make build HUGEPAGES=1` → `-DFLUXA_HUGEPAGES=1`
+
+**Not the default** — THP has overhead on small short-lived programs. Only beneficial for long-running PROJECT-mode programs with large PrstPools (500+ prst vars).
+
+**Platform:** Linux only (x86-64, ARM64). No-op on RP2040/ESP32 (no virtual memory). macOS uses a different mechanism (`VM_FLAGS_SUPERPAGE_SIZE_2MB`) — not planned.
+
+**Before implementing:** Profile with `perf stat -e dTLB-load-misses` on a realistic workload. If TLB misses are not in the top 5 bottlenecks, the change is not worth the complexity.
+

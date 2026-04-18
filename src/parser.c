@@ -642,10 +642,15 @@ static ASTNode *parse_statement(Parser *p) {
                 strcmp(lib_name, "vec")  != 0 &&
                 strcmp(lib_name, "strings") != 0 &&
                 strcmp(lib_name, "time")      != 0 &&
-                strcmp(lib_name, "flxthread") != 0) {
+                strcmp(lib_name, "flxthread") != 0 &&
+                strcmp(lib_name, "crypto")    != 0 &&
+                strcmp(lib_name, "pid")       != 0 &&
+                strcmp(lib_name, "sqlite")    != 0 &&
+                strcmp(lib_name, "serial")    != 0 &&
+                strcmp(lib_name, "i2c")       != 0) {
                 char errbuf[200];
                 snprintf(errbuf, sizeof(errbuf),
-                    "unknown std library '%s' — available: math, csv, json, str, vec",
+                    "unknown std library '%s' — available: math, csv, json, strings, time, flxthread, crypto, pid, sqlite, serial, i2c",
                     lib_name);
                 parse_error(p, errbuf);
                 return NULL;

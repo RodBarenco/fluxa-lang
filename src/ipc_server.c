@@ -130,14 +130,56 @@ static void dispatch(IpcServer *srv, int client_fd) {
     IpcResponse resp;
     memset(&resp, 0, sizeof resp);
 
-    if (ipc_recv_timed(client_fd, &req, sizeof req) < 0) return;
+    if (ipc_recv_timed(client_fd, &req, sizeof req) < 0) {
+#ifdef FLUXA_SECURE
+        /* Short packet — primary flood vector. Don't increment during HARD
+         * drain (immune period) to prevent attacker extending the timer. */
+        if (srv->rescue_mode != RESCUE_HARD) {
+            srv->invalid_burst++;
+            if (srv->invalid_burst >= IPC_BURST_THRESHOLD &&
+                srv->rescue_mode == RESCUE_NONE) {
+                srv->rescue_mode = RESCUE_SOFT;
+                srv->window_start = time(NULL);
+                fprintf(stderr,
+                    "[fluxa] ipc: RESCUE_SOFT activated — %d malformed "
+                    "packets (flood detected)\n",
+                    srv->invalid_burst);
+            }
+        }
+#endif
+        return;
+    }
 
     if (!ipc_request_valid(&req)) {
+#ifdef FLUXA_SECURE
+        if (srv->rescue_mode != RESCUE_HARD) {
+            srv->invalid_burst++;
+            if (srv->invalid_burst >= IPC_BURST_THRESHOLD &&
+                srv->rescue_mode == RESCUE_NONE) {
+                srv->rescue_mode = RESCUE_SOFT;
+                srv->window_start = time(NULL);
+                fprintf(stderr,
+                    "[fluxa] ipc: RESCUE_SOFT activated — %d invalid magic "
+                    "packets (insider flood detected)\n",
+                    srv->invalid_burst);
+            }
+        }
+        if (srv->rescue_mode != RESCUE_NONE) {
+            /* Silent drop */
+        } else {
+            resp.magic  = IPC_MAGIC;
+            resp.version = IPC_VERSION;
+            resp.seq    = req.seq;
+            resp.status = IPC_STATUS_ERR_MAGIC;
+            ipc_send_all(client_fd, &resp, sizeof resp);
+        }
+#else
         resp.magic   = IPC_MAGIC;
         resp.version = IPC_VERSION;
         resp.seq     = req.seq;
         resp.status  = IPC_STATUS_ERR_MAGIC;
         ipc_send_all(client_fd, &resp, sizeof resp);
+#endif
         return;
     }
 
@@ -518,22 +560,134 @@ static void *ipc_server_thread(void *arg) {
     /* Block SIGPIPE so broken client connections don't kill the process */
     signal(SIGPIPE, SIG_IGN);
 
+#ifdef FLUXA_SECURE
+    /* ── Hardened server loop (FLUXA_SECURE=1) ───────────────────────────
+     * Two-level RESCUE system prevents attacker from keeping system in
+     * permanent degraded state:
+     *   RESCUE_SOFT: first burst → silent drop on bad pkts, decays naturally
+     *   RESCUE_HARD: second burst while in SOFT → immune drain timer,
+     *                attacker cannot extend or reset it                    */
+    srv->window_start        = time(NULL);
+    srv->drain_start         = 0;
+    srv->invalid_burst       = 0;
+    srv->rescue_mode         = RESCUE_NONE;
+    srv->active_conns        = 0;
+    int max_conns  = (srv->ipc_max_conns > 0)
+                     ? srv->ipc_max_conns : IPC_MAX_CONNS_DEFAULT;
+    int timeout_ms = (srv->handshake_timeout_ms > 0)
+                     ? srv->handshake_timeout_ms : IPC_TIMEOUT_MS;
+
     while (srv->running) {
-        /* Non-blocking accept with 200ms poll interval */
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(srv->server_fd, &fds);
+        time_t now = time(NULL);
+
+        /* RESCUE_HARD: immune drain — attacker cannot extend this timer */
+        if (srv->rescue_mode == RESCUE_HARD &&
+            (now - srv->drain_start) >= IPC_RESCUE_DRAIN_SEC) {
+            srv->rescue_mode   = RESCUE_NONE;
+            srv->invalid_burst = 0;
+            srv->window_start  = now;
+            fprintf(stderr,
+                "[fluxa] ipc: RESCUE_HARD cleared after %ds immune drain\n",
+                IPC_RESCUE_DRAIN_SEC);
+        }
+
+        /* RESCUE_SOFT → RESCUE_HARD: escalate on sustained attack */
+        if (srv->rescue_mode == RESCUE_SOFT &&
+            srv->invalid_burst >= IPC_BURST_THRESHOLD * 2) {
+            srv->rescue_mode = RESCUE_HARD;
+            srv->drain_start = now;
+            fprintf(stderr,
+                "[fluxa] ipc: RESCUE_HARD activated — sustained flood, "
+                "immune drain for %ds\n", IPC_RESCUE_DRAIN_SEC);
+        }
+
+        /* Leaky bucket: decay by half each window.
+         * RESCUE_SOFT self-clears when burst drains to zero. */
+        if ((now - srv->window_start) >= IPC_RATE_WINDOW_SEC) {
+            srv->invalid_burst = srv->invalid_burst / 2;
+            srv->window_start  = now;
+            if (srv->rescue_mode == RESCUE_SOFT && srv->invalid_burst == 0)
+                srv->rescue_mode = RESCUE_NONE;
+        }
+
+        fd_set fds; FD_ZERO(&fds); FD_SET(srv->server_fd, &fds);
         struct timeval tv = { 0, 200000 };
-        int n = select(srv->server_fd + 1, &fds, NULL, NULL, &tv);
-        if (n <= 0) continue;
+        if (select(srv->server_fd + 1, &fds, NULL, NULL, &tv) <= 0) continue;
 
         int client_fd = accept(srv->server_fd, NULL, NULL);
         if (client_fd < 0) continue;
 
-        /* UID check — reject connections from other users */
+        /* Apply runtime timeout from config */
+        struct timeval rcv_tv = { 0, (suseconds_t)(timeout_ms * 1000) };
+        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof rcv_tv);
+
+        /* AC 4.1: Connection cap (runtime value from config) */
+        if (srv->active_conns >= max_conns) {
+            srv->invalid_burst++;
+            close(client_fd);
+            continue;
+        }
+
+        /* AC 1.2 + UID check */
         if (!check_peer_uid(client_fd)) {
-            IpcResponse resp;
-            memset(&resp, 0, sizeof resp);
+            /* RESCUE_HARD: don't increment burst — drain timer immune */
+            if (srv->rescue_mode != RESCUE_HARD) {
+                srv->invalid_burst++;
+                if (srv->invalid_burst >= IPC_BURST_THRESHOLD &&
+                    srv->rescue_mode == RESCUE_NONE) {
+                    srv->rescue_mode = RESCUE_SOFT;
+                    fprintf(stderr,
+                        "[fluxa] ipc: RESCUE_SOFT activated — %d invalid "
+                        "connections (flood detected)\n",
+                        srv->invalid_burst);
+                }
+            }
+            /* Silent drop in any RESCUE level; ERR_AUTH only when clean */
+            if (srv->rescue_mode != RESCUE_NONE) {
+                close(client_fd);
+            } else {
+                IpcResponse resp; memset(&resp, 0, sizeof resp);
+                resp.magic  = IPC_MAGIC;
+                resp.status = IPC_STATUS_ERR_AUTH;
+                ipc_send_all(client_fd, &resp, sizeof resp);
+                close(client_fd);
+            }
+            continue;
+        }
+
+        /* AC 4.2: Track active connections */
+        srv->active_conns++;
+
+        /* Any RESCUE level: peek magic — silent drop bad packets.
+         * Valid magic always dispatched so operator commands work. */
+        if (srv->rescue_mode != RESCUE_NONE) {
+            uint16_t peek_magic = 0;
+            ssize_t peeked = recv(client_fd, &peek_magic, sizeof(peek_magic),
+                                  MSG_PEEK | MSG_DONTWAIT);
+            if (peeked == sizeof(peek_magic) && peek_magic != IPC_MAGIC) {
+                close(client_fd);
+                srv->active_conns--;
+                continue;
+            }
+        }
+
+        dispatch(srv, client_fd);
+        srv->active_conns--;
+        close(client_fd);
+    }
+
+#else  /* !FLUXA_SECURE — standard dev/default server loop */
+
+    while (srv->running) {
+        fd_set fds; FD_ZERO(&fds); FD_SET(srv->server_fd, &fds);
+        struct timeval tv = { 0, 200000 };
+        if (select(srv->server_fd + 1, &fds, NULL, NULL, &tv) <= 0) continue;
+
+        int client_fd = accept(srv->server_fd, NULL, NULL);
+        if (client_fd < 0) continue;
+
+        if (!check_peer_uid(client_fd)) {
+            IpcResponse resp; memset(&resp, 0, sizeof resp);
             resp.magic  = IPC_MAGIC;
             resp.status = IPC_STATUS_ERR_AUTH;
             ipc_send_all(client_fd, &resp, sizeof resp);
@@ -544,6 +698,9 @@ static void *ipc_server_thread(void *arg) {
         dispatch(srv, client_fd);
         close(client_fd);
     }
+
+#endif /* FLUXA_SECURE */
+
     return NULL;
 }
 

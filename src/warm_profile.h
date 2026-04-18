@@ -75,13 +75,18 @@ typedef struct {
 } WarmFunc;                 /* total: 16 + 256 = 272 bytes per function     */
 
 /* ── WarmProfile — top-level structure ───────────────────────────────────── */
-#define WARM_FUNC_CAP 32    /* max functions profiled — 32 × 272 = 8.5 KB
-                             * covers all realistic Fluxa programs           */
+/* Compile-time maximum for WarmProfile static array.
+ * Must be a power of 2. Runtime cap is configurable via
+ * fluxa.toml [runtime] warm_func_cap (default 32, range 4..256).
+ * Memory used = cap × sizeof(WarmFunc) bytes, not the full max.  */
+#define WARM_FUNC_CAP_MAX     256
+#define WARM_FUNC_CAP_DEFAULT  32
 
 typedef struct {
-    WarmFunc funcs[WARM_FUNC_CAP];
-    int      count;          /* number of WarmFunc entries in use            */
-    int      enabled;        /* 1 after first cold pass completes            */
+    WarmFunc funcs[WARM_FUNC_CAP_MAX]; /* static array — max 256 slots  */
+    int      count;          /* number of WarmFunc entries in use         */
+    int      cap;            /* runtime cap from config (default 32)       */
+    int      enabled;        /* 1 after first cold pass completes          */
 } WarmProfile;               /* total max: 32 × 272 + 8 = 8.7 KB           */
 
 /* ── ValType → warm type tag conversion ─────────────────────────────────── */
@@ -130,19 +135,27 @@ static inline uint64_t warm_build_type_vec(const WarmSlot *slots, int count) {
 }
 
 /* ── WarmProfile lifecycle ───────────────────────────────────────────────── */
-static inline void warm_profile_init(WarmProfile *wp) {
+static inline void warm_profile_init(WarmProfile *wp, int cap) {
     memset(wp, 0, sizeof(*wp));
+    /* cap must be power of 2 in range [4, WARM_FUNC_CAP_MAX] */
+    if (cap < 4)                     cap = 4;
+    if (cap > WARM_FUNC_CAP_MAX)      cap = WARM_FUNC_CAP_MAX;
+    /* Round down to nearest power of 2 */
+    int p = 1;
+    while (p * 2 <= cap) p *= 2;
+    wp->cap = p;
 }
 
 /* Find or create a WarmFunc entry keyed by fn_id (ASTNode* cast to uintptr_t).
  * Uses open-addressing with linear probe — O(1) average, no linear scan.
  * fn_id must be a stable identifier across calls: use (uintptr_t)fn_node.  */
 static inline WarmFunc *warm_profile_get_func(WarmProfile *wp, uintptr_t fn_id) {
+    if (!wp || wp->cap < 1) return NULL;
     /* Map fn_id to a slot via FNV-inspired mix, then linear probe */
     uint32_t h = (uint32_t)((fn_id ^ (fn_id >> 16)) * 0x45d9f3bU);
-    int start = (int)(h & (WARM_FUNC_CAP - 1));  /* WARM_FUNC_CAP must be power of 2 */
-    for (int i = 0; i < WARM_FUNC_CAP; i++) {
-        int idx = (start + i) & (WARM_FUNC_CAP - 1);
+    int start = (int)(h & (uint32_t)(wp->cap - 1));  /* cap is power of 2 */
+    for (int i = 0; i < wp->cap; i++) {
+        int idx = (start + i) & (wp->cap - 1);
         WarmFunc *wf = &wp->funcs[idx];
         if (wf->fn_id == fn_id) return wf;  /* found */
         if (wf->fn_id == 0) {               /* empty slot — claim it */
@@ -152,7 +165,7 @@ static inline WarmFunc *warm_profile_get_func(WarmProfile *wp, uintptr_t fn_id) 
             return wf;
         }
     }
-    return NULL;  /* table full */
+    return NULL;  /* table full — function uses warm_local direct stack read */
 }
 
 /* ── Cold pass: record observed type for a resolved node ─────────────────── */
