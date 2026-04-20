@@ -208,11 +208,16 @@ static inline JsonCursor *json_cursor_from_val(const Value *v,
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
+/* FluxaConfig is defined in toml_config.h, included before this header
+ * by lib_registry_gen.h. No direct include needed here. */
 static inline Value fluxa_std_json_call(const char *fn_name,
                                          const Value *args, int argc,
                                          ErrStack *err, int *had_error,
-                                         int line, int max_str) {
+                                         int line,
+                                         const FluxaConfig *cfg) {
     char errbuf[1024];
+    int max_str = (cfg && cfg->json_max_str > 0)
+                  ? cfg->json_max_str : FLUXA_JSON_MAX_STR;
     if (max_str <= 0) max_str = FLUXA_JSON_MAX_STR;
 
 #define JSON_ERR(msg) do { \
@@ -705,5 +710,16 @@ static inline Value fluxa_std_json_call(const char *fn_name,
     *had_error = 1;
     return json_nil();
 }
+
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── */
+FLUXA_LIB_EXPORT(
+    name      = "json",
+    toml_key  = "std.json",
+    owner     = "json",
+    call      = fluxa_std_json_call,
+    rt_aware  = 0,
+    cfg_aware = 1
+)
 
 #endif /* FLUXA_STD_JSON_H */

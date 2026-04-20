@@ -1045,12 +1045,13 @@ synchronized via the pool's own lock, not via the GC.
 | 10 | ✅ | std.math, std.csv, std.json, std.strings, std.time, std.flxthread (native concurrency). All opt-in via fluxa.toml [libs]. |
 | 11 | ✅ | Warm Path execution tier: warm_local resolver flag; WarmProfile (8.7 KB) with WHT path signature + QJL 1-bit guard per slot; O(1) hash keyed by fn_node\*; observation capped at 4 calls; promoted reads touch 9B vs 418B+ cold. fib +21%, block calls +12%, PROJECT mode +23%. Zero regression on VM. First use of TurboQuant-inspired quantization in a language runtime. |
 | 12.a | ✅ | std.crypto (libsodium 1.0.18+): BLAKE2b-256, XSalsa20-Poly1305, Ed25519, Curve25519. `fluxa keygen` CLI. `[security]` toml. FLUXA\_SECURE=1: two-level RESCUE (SOFT/HARD). Silent drop. Configurable `handshake_timeout_ms`, `ipc_max_conns`. Bug fixes: arr return UAF, resolver stack overflow. |
-| 12.b | ✅ | **Libs 1** — std.pid (PID controller, pure C99, anti-windup), std.sqlite (libsqlite3), std.serial (libserialport, UART), std.i2c (Linux i2c-dev, register read/write/scan). All embedded-friendly. |
+| 12.b | ✅ | **Libs 1** — std.pid, std.sqlite, std.serial, std.i2c. **Lib Linker** — FLUXA_LIB_EXPORT macro + gen_lib_registry.py + lib.mk: new libs need zero runtime.c/parser.c/toml edits. **fluxa.libs** — build-time binary control. **fluxa init** — generates full project structure (main.flx, fluxa.toml, fluxa.libs, live/, static/, tests/). |
 | 12.c | 🔲 | **Huge Pages** — `FLUXA_HUGEPAGES=1` via `madvise(MADV_HUGEPAGE)`. Benchmark-gated: only ship if `perf dTLB-load-misses` confirms TLB pressure. |
 | 12.d | 🔲 | **Libs 2** — std.http (mongoose), std.mqtt (libmosquitto), std.mcp (depends on std.http). Network/protocol stack. |
 | 12.e | 🔲 | **std.libv** — N-dimensional vectors, matrices, tensors. GLM-inspired API. Col-major. In-place ops. Pure C99 ~800L, zero deps. |
 | 12.f | 🔲 | **std.libdsp** — FFT (Cooley-Tukey, in-place), STFT, windowing, FIR/IIR, range-Doppler, CFAR, matched filter. Radar/DSP math. Requires std.libv. |
 | 12.g | 🔲 | **Libs 3** — std.flxgraph (Raylib), std.infer (llama.cpp). Heavy deps, desktop-only. |
+| 13   | 🔲 | **Runtime Update Protocol** — swap the `./fluxa` binary itself with zero downtime. Uses the existing 5-step handover mechanism adapted for cross-process transport via the IPC socket. New binary starts as standby process, receives prst snapshot, dry-runs, switchover at safe point. Old process terminates. Equivalent to HANDOVER_MODE_FLASH for RP2040. |
 
 ---
 
@@ -1138,6 +1139,42 @@ max_str_bytes  = 4096   # max JSON string size (default 4096)
 ```
 
 *`prst_cap` and `prst_graph_cap` are INITIAL caps, not ceilings. Structures grow via realloc automatically. Setting the correct initial cap only improves allocation performance — it does not limit usage.*
+
+---
+
+## 16b. fluxa.libs — Build-Time Library Configuration
+
+`fluxa.libs` lives at the project root alongside `fluxa.toml`. It controls which libraries are compiled into the Fluxa runtime binary. Libraries set to `false` are completely excluded — zero code size, zero link time, zero overhead. Essential for embedded targets (RP2040, ESP32) where binary size matters.
+
+Generated automatically by `fluxa init <n>`. Read by `make build` via `scripts/gen_lib_registry.py`.
+
+```toml
+# fluxa.libs — build-time library configuration
+
+[libs.build]
+std.math      = true    # no external deps
+std.csv       = true    # no external deps
+std.json      = true    # no external deps
+std.strings   = true    # no external deps
+std.time      = true    # POSIX
+std.flxthread = true    # pthreads
+std.pid       = true    # no external deps
+std.crypto    = false   # requires: libsodium-dev
+std.sqlite    = false   # requires: libsqlite3-dev
+std.serial    = false   # requires: libserialport-dev
+std.i2c       = true    # Linux kernel header (no external lib)
+```
+
+**Two levels of control:**
+
+| Level | File | Controls |
+|---|---|---|
+| Build-time | `fluxa.libs` | What enters the binary (code size) |
+| Run-time | `fluxa.toml [libs]` | What the program imports |
+
+A lib must be `true` in `fluxa.libs` AND declared in `fluxa.toml [libs]` to be usable. If declared in `fluxa.toml` but `false` in `fluxa.libs`, the runtime emits a clear error at import time.
+
+After changing `fluxa.libs`: run `make build` to rebuild with the new set of libs.
 
 ---
 

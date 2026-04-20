@@ -274,4 +274,16 @@ static inline Value fluxa_std_i2c_call(const char *fn_name,
     return i2c_nil();
 }
 
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── *
+ * This block is the only integration point needed for the lib linker.    *
+ * Do NOT edit lib_registry_gen.h manually — run 'make build' instead.   */
+FLUXA_LIB_EXPORT(
+    name     = "i2c",
+    toml_key = "std.i2c",
+    owner    = "i2c",
+    call     = fluxa_std_i2c_call,
+    rt_aware = 0
+)
+
 #endif /* FLUXA_STD_I2C_H */

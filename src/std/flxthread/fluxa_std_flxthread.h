@@ -243,4 +243,16 @@ static inline Value flxt_int(long n){ Value v; v.type = VAL_INT; v.as.integer=n;
 extern int flx_mailbox_drain(FlxThread *t, void *rt_ptr, void *instance_ptr);
 
 #endif /* FLUXA_EMBEDDED */
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── *
+ * This block is the only integration point needed for the lib linker.    *
+ * Do NOT edit lib_registry_gen.h manually — run 'make build' instead.   */
+FLUXA_LIB_EXPORT(
+    name     = "flxthread",
+    toml_key = "std.flxthread",
+    owner    = "ft",
+    call     = fluxa_std_flxthread_call,
+    rt_aware = 1
+)
+
 #endif /* FLUXA_STD_FLXTHREAD_H */

@@ -466,4 +466,16 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
     return csv_nil();
 }
 
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── *
+ * This block is the only integration point needed for the lib linker.    *
+ * Do NOT edit lib_registry_gen.h manually — run 'make build' instead.   */
+FLUXA_LIB_EXPORT(
+    name     = "csv",
+    toml_key = "std.csv",
+    owner    = "csv",
+    call     = fluxa_std_csv_call,
+    rt_aware = 0
+)
+
 #endif /* FLUXA_STD_CSV_H */

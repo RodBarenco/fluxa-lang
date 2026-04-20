@@ -34,6 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/resource.h>
 
 #include "lexer.h"
@@ -87,7 +88,8 @@ static void usage(void) {
         "  fluxa set <var> <val>                    mutate prst value without stopping\n"
         "  fluxa logs                               tail runtime error/event log\n"
         "  fluxa status                             runtime health snapshot\n"
-        "  fluxa init [dir]                         create project with fluxa.toml\n"
+        "  fluxa init <name>                        Create project: main.flx, fluxa.toml,\n"\
+        "                                             fluxa.libs, live/, static/, tests/\n"
         "  fluxa update                             reload fluxa.toml [ffi]/[libs] live\n"
         "  fluxa ffi list                           list shared libs available on system\n"
         "  fluxa ffi inspect <lib>                  generate toml signatures from lib\n"
@@ -575,62 +577,167 @@ static int run_status(void) {
 
 /* fluxa init [dir]
  * Scaffold a new Fluxa project: creates dir/main.flx + dir/fluxa.toml */
-static int run_init(const char *dir) {
-    /* Default to current directory */
-    const char *target = (dir && *dir) ? dir : ".";
+/* ── fluxa init helpers ─────────────────────────────────────────────────── */
+static int fluxa_mkdir(const char *path) {
+    if (mkdir(path, 0755) != 0) {
+        fprintf(stderr, "[fluxa] init: cannot create directory: %s\n", path);
+        return 1;
+    }
+    return 0;
+}
 
-    /* Create directory if it doesn't exist */
-    char cmd[512];
-    snprintf(cmd, sizeof cmd, "mkdir -p %s", target);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "[fluxa] init: cannot create directory: %s\n", target);
+static int fluxa_write_file(const char *path, const char *content) {
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        fprintf(stderr, "[fluxa] init: cannot create %s\n", path);
+        return 1;
+    }
+    fputs(content, f);
+    fclose(f);
+    return 0;
+}
+
+static int run_init(const char *name) {
+    if (!name || !*name) {
+        fprintf(stderr,
+            "[fluxa] init: project name required.\n"
+            "  Usage: fluxa init <project_name>\n");
+        return 1;
+    }
+    /* Allow full paths: "path/to/myproject" — use last component as name */
+    const char *proj_name = name;
+    const char *last_slash = strrchr(name, '/');
+    if (last_slash) proj_name = last_slash + 1;
+    if (!proj_name || !*proj_name) {
+        fprintf(stderr, "[fluxa] init: invalid path '%s'\n", name);
         return 1;
     }
 
-    /* Write fluxa.toml */
-    char toml_path[512];
-    snprintf(toml_path, sizeof toml_path, "%s/fluxa.toml", target);
-    FILE *tf = fopen(toml_path, "wx");  /* O_EXCL equivalent — won't overwrite */
-    if (tf) {
-        fprintf(tf,
-            "# fluxa.toml — project configuration\n"
-            "\n"
-            "[runtime]\n"
-            "gc_cap          = 1024   # GC table ceiling (static array)\n"
-            "prst_cap        = 64     # initial PrstPool capacity (grows via realloc)\n"
-            "prst_graph_cap  = 256    # initial PrstGraph capacity (grows via realloc)\n"
-        );
-        fclose(tf);
-        fprintf(stderr, "[fluxa] init: created %s\n", toml_path);
-    } else {
-        fprintf(stderr, "[fluxa] init: %s already exists, skipping\n", toml_path);
+    struct stat st;
+    if (stat(name, &st) == 0) {
+        fprintf(stderr,
+            "[fluxa] init: directory '%s' already exists.\n"
+            "  Remove it or choose a different name.\n", name);
+        return 1;
     }
 
-    /* Write main.flx */
-    char main_path[512];
-    snprintf(main_path, sizeof main_path, "%s/main.flx", target);
-    FILE *mf = fopen(main_path, "wx");
-    if (mf) {
-        fprintf(mf,
-            "// main.flx — entry point\n"
+    char path[512];
+
+    /* Directory structure */
+    if (fluxa_mkdir(name)) return 1;
+    snprintf(path, sizeof path, "%s/live",   name); if (fluxa_mkdir(path)) return 1;
+    snprintf(path, sizeof path, "%s/static", name); if (fluxa_mkdir(path)) return 1;
+    snprintf(path, sizeof path, "%s/tests",  name); if (fluxa_mkdir(path)) return 1;
+
+    /* main.flx */
+    {
+        char content[512];
+        snprintf(content, sizeof content,
+            "// %s — entry point\n"
             "//\n"
-            "// Run:  fluxa run main.flx\n"
-            "// Dev:  fluxa run main.flx -dev   (hot reload on save)\n"
-            "// Prod: fluxa run main.flx -prod\n"
+            "// Run:         fluxa run main.flx\n"
+            "// Dev reload:  fluxa run main.flx -dev\n"
+            "// Production:  fluxa run main.flx -prod\n"
             "\n"
             "prst int counter = 0\n"
             "\n"
             "counter = counter + 1\n"
-            "print(counter)\n"
-        );
-        fclose(mf);
-        fprintf(stderr, "[fluxa] init: created %s\n", main_path);
-    } else {
-        fprintf(stderr, "[fluxa] init: %s already exists, skipping\n", main_path);
+            "print(counter)\n", proj_name);
+        snprintf(path, sizeof path, "%s/main.flx", name);
+        if (fluxa_write_file(path, content)) return 1;
     }
 
-    fprintf(stderr, "[fluxa] init: project ready in %s/\n", target);
-    fprintf(stderr, "        run: fluxa run %s/main.flx\n", target);
+    /* fluxa.toml */
+    {
+        char content[2048];
+        snprintf(content, sizeof content,
+            "# fluxa.toml — project configuration\n"
+            "# Generated by: fluxa init %s\n"
+            "\n"
+            "[project]\n"
+            "name  = \"%s\"\n"
+            "entry = \"main.flx\"\n"
+            "\n"
+            "[runtime]\n"
+            "gc_cap         = 1024   # GC table initial capacity\n"
+            "prst_cap       = 64     # PrstPool initial capacity (grows via realloc)\n"
+            "prst_graph_cap = 256    # PrstGraph initial capacity (grows via realloc)\n"
+            "warm_func_cap  = 32     # WarmProfile hash table size (power of 2, max 256)\n"
+            "\n"
+            "[libs]\n"
+            "# Declare libs your program uses. Uncomment to enable.\n"
+            "# Libs must also be set to true in fluxa.libs to enter the binary.\n"
+            "#\n"
+            "# std.math      = \"1.0\"\n"
+            "# std.csv       = \"1.0\"\n"
+            "# std.json      = \"1.0\"\n"
+            "# std.strings   = \"1.0\"\n"
+            "# std.time      = \"1.0\"\n"
+            "# std.flxthread = \"1.0\"\n"
+            "# std.pid       = \"1.0\"\n"
+            "# std.crypto    = \"1.0\"\n"
+            "# std.sqlite    = \"1.0\"\n"
+            "# std.serial    = \"1.0\"\n"
+            "# std.i2c       = \"1.0\"\n"
+            "# std.http      = \"1.0\"\n"
+            "# std.mqtt      = \"1.0\"\n"
+            "# std.mcp       = \"1.0\"\n", name, proj_name);
+        snprintf(path, sizeof path, "%s/fluxa.toml", name);
+        if (fluxa_write_file(path, content)) return 1;
+    }
+
+    /* fluxa.libs */
+    {
+        char content[1536];
+        snprintf(content, sizeof content,
+            "# fluxa.libs — build-time library configuration\n"
+            "# Generated by: fluxa init %s\n"
+            "#\n"
+            "# Controls which libs are compiled into the Fluxa binary.\n"
+            "# false = excluded from binary (zero size, zero overhead).\n"
+            "# After changing this file run: make build\n"
+            "\n"
+            "[libs.build]\n"
+            "std.math      = true    # no external deps\n"
+            "std.csv       = true    # no external deps\n"
+            "std.json      = true    # no external deps\n"
+            "std.strings   = true    # no external deps\n"
+            "std.time      = true    # POSIX\n"
+            "std.flxthread = true    # pthreads\n"
+            "std.pid       = true    # no external deps\n"
+            "std.crypto    = false   # requires: libsodium-dev\n"
+            "std.sqlite    = false   # requires: libsqlite3-dev\n"
+            "std.serial    = false   # requires: libserialport-dev\n"
+            "std.i2c       = true    # Linux kernel header (no external lib)\n"
+            "std.http      = false   # requires: libcurl\n"
+            "std.mqtt      = false   # requires: libmosquitto\n"
+            "std.mcp       = false   # requires: libcurl (via std.http)\n", proj_name);
+        snprintf(path, sizeof path, "%s/fluxa.libs", name);
+        if (fluxa_write_file(path, content)) return 1;
+    }
+
+    /* .gitkeep files */
+    snprintf(path, sizeof path, "%s/live/.gitkeep",   name);
+    fluxa_write_file(path, "");
+    snprintf(path, sizeof path, "%s/static/.gitkeep", name);
+    fluxa_write_file(path, "");
+    snprintf(path, sizeof path, "%s/tests/.gitkeep",  name);
+    fluxa_write_file(path, "");
+
+    fprintf(stdout,
+        "[fluxa] init: project '%s' created\n"
+        "\n"
+        "  %s/\n"
+        "  ├── main.flx          entry point\n"
+        "  ├── fluxa.toml        project config\n"
+        "  ├── fluxa.libs        build-time lib selection\n"
+        "  ├── live/             reloadable modules (good place for prst state)\n"
+        "  ├── static/           stable modules\n"
+        "  └── tests/            project tests\n"
+        "\n"
+        "  cd %s && fluxa run main.flx\n",
+        name, name, name);
+
     return 0;
 }
 
@@ -1208,8 +1315,8 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "init") == 0) {
-        const char *dir = (argc >= 3) ? argv[2] : ".";
-        return run_init(dir);
+        const char *name = (argc >= 3) ? argv[2] : NULL;
+        return run_init(name);
     }
 
     if (strcmp(cmd, "observe") == 0) {

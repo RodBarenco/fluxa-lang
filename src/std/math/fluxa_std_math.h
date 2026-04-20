@@ -292,4 +292,16 @@ static inline Value fluxa_std_math_call(const char *fn_name,
     return std_math_nil();
 }
 
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── *
+ * This block is the only integration point needed for the lib linker.    *
+ * Do NOT edit lib_registry_gen.h manually — run 'make build' instead.   */
+FLUXA_LIB_EXPORT(
+    name     = "math",
+    toml_key = "std.math",
+    owner    = "math",
+    call     = fluxa_std_math_call,
+    rt_aware = 0
+)
+
 #endif /* FLUXA_STD_MATH_H */

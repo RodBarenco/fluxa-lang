@@ -187,4 +187,9 @@ static inline void scope_table_free(ScopeEntry **table) {
     *table = NULL;
 }
 
+/* ── Lib linker macro — no-op when compiled, read by gen_lib_registry.py ── */
+#ifndef FLUXA_LIB_EXPORT
+#define FLUXA_LIB_EXPORT(...) /* scanner-only: ignored by the C compiler */
+#endif
+
 #endif /* FLUXA_SCOPE_H */

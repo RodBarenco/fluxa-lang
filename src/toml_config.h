@@ -55,23 +55,23 @@ typedef struct {
 } TomlFfiEntry;
 
 /* ── Stdlib lib flags — one per opt-in lib ───────────────────────────────── */
-/* Set to 1 when the lib is declared in [libs] of fluxa.toml.
- * The runtime uses these flags to register lib functions as builtins.
- * Each lib is only compiled into the binary when its FLUXA_STD_* macro
- * is defined at build time (set by the Makefile reading fluxa.toml). */
+/* Libs declared in [libs] of fluxa.toml are stored by name.
+ * The runtime checks against this list via fluxa_std_lib_enabled().
+ * Adding a new lib requires NO changes here — just create the lib
+ * header with FLUXA_LIB_EXPORT and a lib.mk file. */
+#define FLUXA_STD_LIBS_MAX 32
+
 typedef struct {
-    int has_math;     /* std.math   — math functions (sqrt, pow, sin, ...)   */
-    int has_csv;      /* std.csv    — CSV parser, returns dyn                */
-    int has_json;   /* std.json — JSON stringify/extract, uses str      */
-    int has_strings; /* std.strings — split, join, trim, replace, ...     */
-    int has_time;      /* std.time      — sleep, now_ms, elapsed, timeout   */
-    int has_flxthread; /* std.flxthread — ft.new, ft.message, ft.await, ...   */
-    int has_crypto;    /* std.crypto    — BLAKE2b, XSalsa20-Poly1305, Ed25519, Curve25519 */
-    int has_pid;       /* std.pid       — PID controller, pure C99, zero deps             */
-    int has_sqlite;    /* std.sqlite    — embedded SQL via libsqlite3                      */
-    int has_serial;    /* std.serial    — UART/serial via libserialport                    */
-    int has_i2c;       /* std.i2c       — I2C protocol via libgpiod                        */
+    char names[FLUXA_STD_LIBS_MAX][32]; /* e.g. "pid", "sqlite", "math" */
+    int  count;
 } FluxaStdLibs;
+
+static inline int fluxa_std_lib_enabled(const FluxaStdLibs *libs,
+                                         const char *name) {
+    for (int i = 0; i < libs->count; i++)
+        if (strcmp(libs->names[i], name) == 0) return 1;
+    return 0;
+}
 
 /* ── Main config ──────────────────────────────────────────────────────────── */
 /* ── Security configuration ([security] section) ─────────────────────────── *
@@ -422,17 +422,30 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
             continue;
         }
         if (in_libs) {
-            if (strncmp(p, "std.math", 8) == 0) cfg->std_libs.has_math = 1;
-            if (strncmp(p, "std.csv",  7) == 0) cfg->std_libs.has_csv  = 1;
-            if (strncmp(p, "std.json", 8) == 0) cfg->std_libs.has_json = 1;
-            if (strncmp(p, "std.strings", 11) == 0) cfg->std_libs.has_strings = 1;
-            if (strncmp(p, "std.time",      8)  == 0) cfg->std_libs.has_time      = 1;
-            if (strncmp(p, "std.flxthread", 13) == 0) cfg->std_libs.has_flxthread = 1;
-            if (strncmp(p, "std.crypto",   10) == 0) cfg->std_libs.has_crypto    = 1;
-            if (strncmp(p, "std.pid",       7) == 0) cfg->std_libs.has_pid       = 1;
-            if (strncmp(p, "std.sqlite",   10) == 0) cfg->std_libs.has_sqlite    = 1;
-            if (strncmp(p, "std.serial",   10) == 0) cfg->std_libs.has_serial    = 1;
-            if (strncmp(p, "std.i2c",       7) == 0) cfg->std_libs.has_i2c       = 1;
+            /* Generic: any "std.<name> = ..." line registers the lib name.
+             * The registry (lib_registry_gen.h) validates at runtime whether
+             * the lib is actually compiled in. No hardcoded names here. */
+            if (strncmp(p, "std.", 4) == 0) {
+                /* Extract lib name: "std.pid = ..." → "pid" */
+                char lib_name[32] = "";
+                const char *start = p + 4;
+                int len = 0;
+                while (start[len] && start[len] != ' ' &&
+                       start[len] != '=' && start[len] != '\n' &&
+                       len < 31) len++;
+                if (len > 0 && cfg->std_libs.count < FLUXA_STD_LIBS_MAX) {
+                    memcpy(lib_name, start, (size_t)len);
+                    lib_name[len] = '\0';
+                    /* Deduplicate */
+                    int found = 0;
+                    for (int i = 0; i < cfg->std_libs.count; i++)
+                        if (strcmp(cfg->std_libs.names[i], lib_name) == 0)
+                            { found = 1; break; }
+                    if (!found)
+                        snprintf(cfg->std_libs.names[cfg->std_libs.count++],
+                                 32, "%s", lib_name);
+                }
+            }
         }
         if (in_libs_json) {
             if (strncmp(p, "max_str_bytes", 13) == 0) {

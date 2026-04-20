@@ -229,4 +229,16 @@ static inline Value fluxa_std_serial_call(const char *fn_name,
     return serial_nil();
 }
 
+
+/* ── Fluxa lib descriptor — read by scripts/gen_lib_registry.py ───────── *
+ * This block is the only integration point needed for the lib linker.    *
+ * Do NOT edit lib_registry_gen.h manually — run 'make build' instead.   */
+FLUXA_LIB_EXPORT(
+    name     = "serial",
+    toml_key = "std.serial",
+    owner    = "serial",
+    call     = fluxa_std_serial_call,
+    rt_aware = 0
+)
+
 #endif /* FLUXA_STD_SERIAL_H */

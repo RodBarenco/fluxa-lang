@@ -113,43 +113,10 @@ static int rt_type_check(Runtime *rt, ASTNode *node,
 }
 
 /* ── Variable access ─────────────────────────────────────────────────────── */
-#ifdef FLUXA_STD_MATH
-#include "std/math/fluxa_std_math.h"
-#endif
-#ifdef FLUXA_STD_CSV
-#include "std/csv/fluxa_std_csv.h"
-#endif
-#ifdef FLUXA_STD_JSON
-#include "std/json/fluxa_std_json.h"
-#endif
-#ifdef FLUXA_STD_STRINGS
-#include "std/str/fluxa_std_strings.h"
-#endif
-#ifdef FLUXA_STD_TIME
-#include "std/time/fluxa_std_time.h"
-#endif
-#ifdef FLUXA_STD_FLXTHREAD
-#include "std/flxthread/fluxa_std_flxthread.h"
-extern Value fluxa_std_flxthread_call(const char *fn_name,
-                                       const Value *args, int argc,
-                                       ErrStack *err, int *had_error,
-                                       int line, void *rt_ptr);
-#endif
-#ifdef FLUXA_STD_CRYPTO
-#include "std/crypto/fluxa_std_crypto.h"
-#endif
-#ifdef FLUXA_STD_PID
-#include "std/pid/fluxa_std_pid.h"
-#endif
-#ifdef FLUXA_STD_SQLITE
-#include "std/sqlite/fluxa_std_sqlite.h"
-#endif
-#ifdef FLUXA_STD_SERIAL
-#include "std/serial/fluxa_std_serial.h"
-#endif
-#ifdef FLUXA_STD_I2C
-#include "std/i2c/fluxa_std_i2c.h"
-#endif
+/* All stdlib includes are centralized in lib_registry_gen.h.
+ * To add a new lib: create the header + FLUXA_LIB_EXPORT + lib.mk.
+ * No changes needed here. */
+#include "lib_registry_gen.h"
 
 /* ── Block clone free callback ───────────────────────────────────────────── */
 /* Called by value_free_data for VAL_BLOCK_INST inside dyn items.
@@ -1892,21 +1859,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_IMPORT_STD: {
             const char *lib = node->as.import_std.lib_name;
             /* Check that the lib was declared in [libs] of fluxa.toml.
-             * If not declared, reject with a clear error — do not silently
-             * allow access to libs that add binary weight without consent. */
-            int declared = 0;
-            if (strcmp(lib, "math") == 0 && rt->config.std_libs.has_math) declared = 1;
-            if (strcmp(lib, "csv")  == 0 && rt->config.std_libs.has_csv)  declared = 1;
-            if (strcmp(lib, "json") == 0 && rt->config.std_libs.has_json) declared = 1;
-            if (strcmp(lib, "strings") == 0 && rt->config.std_libs.has_strings) declared = 1;
-            if (strcmp(lib, "time")      == 0 && rt->config.std_libs.has_time)      declared = 1;
-            if (strcmp(lib, "flxthread") == 0 && rt->config.std_libs.has_flxthread) declared = 1;
-            if (strcmp(lib, "ft")         == 0 && rt->config.std_libs.has_flxthread) declared = 1;
-            if (strcmp(lib, "crypto")     == 0 && rt->config.std_libs.has_crypto)    declared = 1;
-            if (strcmp(lib, "pid")        == 0 && rt->config.std_libs.has_pid)       declared = 1;
-            if (strcmp(lib, "sqlite")     == 0 && rt->config.std_libs.has_sqlite)    declared = 1;
-            if (strcmp(lib, "serial")     == 0 && rt->config.std_libs.has_serial)    declared = 1;
-            if (strcmp(lib, "i2c")        == 0 && rt->config.std_libs.has_i2c)       declared = 1;
+             * Uses the registry (lib_registry_gen.h) to validate names.
+             * No hardcoded lib names here — new libs register automatically. */
+            int declared = fluxa_std_lib_enabled(&rt->config.std_libs, lib);
+            /* "ft" is the flxthread alias */
+            if (!declared && strcmp(lib, "ft") == 0)
+                declared = fluxa_std_lib_enabled(&rt->config.std_libs, "flxthread");
             if (!declared) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
@@ -2083,177 +2041,46 @@ static Value eval(Runtime *rt, ASTNode *node) {
             const char *owner  = node->as.member_call.owner;
             const char *method = node->as.member_call.method;
 
-            /* ── std library dispatch — math.fn(), csv.fn(), etc. ─────────── */
-            /* std libs are usable outside danger (unlike import c).           */
-#ifdef FLUXA_STD_MATH
-            if (rt->config.std_libs.has_math && strcmp(owner, "math") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16]; /* max 16 args — more than enough for math */
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
+            /* ── std library dispatch — driven by lib_registry_gen.h ────────── *
+             * No lib names hardcoded here. New libs register via              *
+             * FLUXA_LIB_EXPORT in their header + lib.mk. Zero changes here.  */
+            {
+                /* Evaluate arguments once (shared by all libs) */
+                int _argc = node->as.member_call.arg_count;
+                if (_argc > 16) _argc = 16;
+                Value _args[16];
+                for (int _i = 0; _i < _argc; _i++) {
+                    _args[_i] = eval(rt, node->as.member_call.args[_i]);
                     if (rt->had_error) return val_nil();
                 }
-                return fluxa_std_math_call(method, args, argc,
+
+                /* Walk registry — find the lib whose owner matches */
+                for (int _ri = 0; _ri < FLUXA_LIB_COUNT; _ri++) {
+                    const FluxaLibEntry *_e = &fluxa_lib_registry[_ri];
+                    if (!_e->enabled) continue;
+                    if (!fluxa_std_lib_enabled(&rt->config.std_libs, _e->name))
+                        continue;
+                    if (strcmp(owner, _e->owner) != 0) continue;
+
+                    /* cfg_aware: lib receives FluxaConfig* for toml settings */
+                    if (_e->cfg_aware && _e->call_cfg)
+                        return _e->call_cfg(method, _args, _argc,
+                                            &rt->err_stack, &rt->had_error,
+                                            rt->current_line, &rt->config);
+
+                    /* rt_aware: lib receives Runtime* for thread spawning */
+                    if (_e->rt_aware && _e->call_rt)
+                        return _e->call_rt(method, _args, _argc,
                                            &rt->err_stack, &rt->had_error,
-                                           rt->current_line);
-            }
-#endif /* FLUXA_STD_MATH */
+                                           rt->current_line, rt);
 
-#ifdef FLUXA_STD_CSV
-            if (rt->config.std_libs.has_csv && strcmp(owner, "csv") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
+                    /* Standard dispatch */
+                    if (_e->call)
+                        return _e->call(method, _args, _argc,
+                                        &rt->err_stack, &rt->had_error,
+                                        rt->current_line);
                 }
-                return fluxa_std_csv_call(method, args, argc,
-                                          &rt->err_stack, &rt->had_error,
-                                          rt->current_line);
             }
-#endif /* FLUXA_STD_CSV */
-
-#ifdef FLUXA_STD_JSON
-            if (rt->config.std_libs.has_json && strcmp(owner, "json") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                Value _json_result = fluxa_std_json_call(method, args, argc,
-                                           &rt->err_stack, &rt->had_error,
-                                           rt->current_line,
-                                           rt->config.json_max_str);
-                if (rt->had_error && rt->danger_depth == 0) {
-                    const ErrEntry *_e = errstack_get(&rt->err_stack, 0);
-                    if (_e)
-                        fprintf(stderr, "[fluxa] Runtime error (line %d): %s\n",
-                                _e->line > 0 ? _e->line : rt->current_line,
-                                _e->message);
-                }
-                return _json_result;
-            }
-#endif /* FLUXA_STD_JSON */
-
-#ifdef FLUXA_STD_STRINGS
-            if (rt->config.std_libs.has_strings && strcmp(owner, "strings") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_strings_call(method, args, argc,
-                                          &rt->err_stack, &rt->had_error,
-                                          rt->current_line);
-            }
-#endif /* FLUXA_STD_STRINGS */
-
-#ifdef FLUXA_STD_TIME
-            if (rt->config.std_libs.has_time && strcmp(owner, "time") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_time_call(method, args, argc,
-                                           &rt->err_stack, &rt->had_error,
-                                           rt->current_line);
-            }
-#endif /* FLUXA_STD_TIME */
-
-#ifdef FLUXA_STD_FLXTHREAD
-            if (rt->config.std_libs.has_flxthread && strcmp(owner, "ft") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_flxthread_call(method, args, argc,
-                                                &rt->err_stack, &rt->had_error,
-                                                rt->current_line, rt);
-            }
-#endif /* FLUXA_STD_FLXTHREAD */
-
-#ifdef FLUXA_STD_CRYPTO
-            if (rt->config.std_libs.has_crypto && strcmp(owner, "crypto") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_crypto_call(method, args, argc,
-                                             &rt->err_stack, &rt->had_error,
-                                             rt->current_line);
-            }
-#endif /* FLUXA_STD_CRYPTO */
-#ifdef FLUXA_STD_PID
-            if (rt->config.std_libs.has_pid && strcmp(owner, "pid") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_pid_call(method, args, argc,
-                                          &rt->err_stack, &rt->had_error,
-                                          rt->current_line);
-            }
-#endif /* FLUXA_STD_PID */
-#ifdef FLUXA_STD_SQLITE
-            if (rt->config.std_libs.has_sqlite && strcmp(owner, "sqlite") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_sqlite_call(method, args, argc,
-                                             &rt->err_stack, &rt->had_error,
-                                             rt->current_line);
-            }
-#endif /* FLUXA_STD_SQLITE */
-#ifdef FLUXA_STD_SERIAL
-            if (rt->config.std_libs.has_serial && strcmp(owner, "serial") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_serial_call(method, args, argc,
-                                             &rt->err_stack, &rt->had_error,
-                                             rt->current_line);
-            }
-#endif /* FLUXA_STD_SERIAL */
-#ifdef FLUXA_STD_I2C
-            if (rt->config.std_libs.has_i2c && strcmp(owner, "i2c") == 0) {
-                int argc = node->as.member_call.arg_count;
-                Value args[16];
-                if (argc > 16) argc = 16;
-                for (int i = 0; i < argc; i++) {
-                    args[i] = eval(rt, node->as.member_call.args[i]);
-                    if (rt->had_error) return val_nil();
-                }
-                return fluxa_std_i2c_call(method, args, argc,
-                                          &rt->err_stack, &rt->had_error,
-                                          rt->current_line);
-            }
-#endif /* FLUXA_STD_I2C */
 
             BlockInstance *inst = resolve_instance(rt, owner);
             if (!inst) {
@@ -2447,7 +2274,7 @@ int runtime_exec(ASTNode *program) {
     rt.current_wf   = NULL;
     /* Sprint 9.c-2: pre-load [ffi] libs from fluxa.toml */
     ffi_load_from_config(&rt.ffi, &rt.err_stack, &config);
-    /* std libs: propagate config flags to runtime (has_math, has_csv, etc.) */
+    /* std libs: config (including enabled_libs array) propagated to runtime */
     rt.config = config;
 
     if (mode == FLUXA_MODE_PROJECT) {

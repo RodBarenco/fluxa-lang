@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "lib_registry_gen.h"
 
 /* ── Pool wrappers ───────────────────────────────────────────────────────── */
 #define P_NODE()   pool_alloc_node(p->pool)
@@ -635,23 +636,23 @@ static ASTNode *parse_statement(Parser *p) {
                 parser_advance(p); /* skip "as" */
                 if (check(p, TOK_IDENT)) parser_advance(p); /* skip alias */
             }
-            /* Validate known libs at parse time */
-            if (strcmp(lib_name, "math") != 0 &&
-                strcmp(lib_name, "csv")  != 0 &&
-                strcmp(lib_name, "json") != 0 &&
-                strcmp(lib_name, "vec")  != 0 &&
-                strcmp(lib_name, "strings") != 0 &&
-                strcmp(lib_name, "time")      != 0 &&
-                strcmp(lib_name, "flxthread") != 0 &&
-                strcmp(lib_name, "crypto")    != 0 &&
-                strcmp(lib_name, "pid")       != 0 &&
-                strcmp(lib_name, "sqlite")    != 0 &&
-                strcmp(lib_name, "serial")    != 0 &&
-                strcmp(lib_name, "i2c")       != 0) {
-                char errbuf[200];
+            /* Validate known libs at parse time using the registry.
+             * New libs register themselves via FLUXA_LIB_EXPORT —
+             * no changes needed here when adding a lib. */
+            int lib_known = (fluxa_lib_find_by_name(lib_name) != NULL);
+            /* "vec" is a planned lib not yet in registry — keep accepted */
+            if (!lib_known && strcmp(lib_name, "vec") != 0) {
+                char errbuf[256];
+                /* Build list of known lib names from registry */
+                char known[200] = "";
+                for (int _i = 0; _i < FLUXA_LIB_COUNT; _i++) {
+                    if (_i > 0) strncat(known, ", ", sizeof(known)-strlen(known)-1);
+                    strncat(known, fluxa_lib_registry[_i].name,
+                            sizeof(known)-strlen(known)-1);
+                }
                 snprintf(errbuf, sizeof(errbuf),
-                    "unknown std library '%s' — available: math, csv, json, strings, time, flxthread, crypto, pid, sqlite, serial, i2c",
-                    lib_name);
+                    "unknown std library '%s' — available: %s",
+                    lib_name, known);
                 parse_error(p, errbuf);
                 return NULL;
             }

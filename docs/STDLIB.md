@@ -1229,3 +1229,259 @@ danger {
     print(voltage)
 }
 ```
+
+---
+
+## std.http — HTTP Client
+
+HTTP client via libcurl. Requires `libcurl-dev`. Works on Linux/macOS; embedded targets need network stack support.
+
+**Declaration:**
+```toml
+[libs]
+std.http = "1.0"
+```
+
+All requests must be inside `danger {}` — network I/O can fail for external reasons.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `http.get(url)` | `dyn` | HTTP GET. Returns response dyn. |
+| `http.post(url, body)` | `dyn` | HTTP POST with form-encoded body. |
+| `http.post_json(url, json)` | `dyn` | HTTP POST with `Content-Type: application/json`. |
+| `http.put(url, body)` | `dyn` | HTTP PUT. |
+| `http.delete(url)` | `dyn` | HTTP DELETE. |
+| `http.status(resp)` | `int` | HTTP status code (200, 404, ...). |
+| `http.body(resp)` | `str` | Response body as string. |
+| `http.ok(resp)` | `bool` | True if status 200–299. |
+
+Response dyn layout: `[status:int, body:str, ok:bool]`.
+
+### Example
+
+```fluxa
+import std http
+
+danger {
+    dyn r = http.get("https://api.example.com/data")
+    if http.ok(r) {
+        str data = http.body(r)
+        print(data)
+    }
+}
+```
+
+---
+
+## std.mqtt — MQTT Client
+
+MQTT publish/subscribe via libmosquitto. Requires `libmosquitto-dev`. Fundamental for IoT sensor telemetry and device control.
+
+**Declaration:**
+```toml
+[libs]
+std.mqtt = "1.0"
+```
+
+**State:** Connection cursor wraps a `mosquitto*`. Use `prst dyn client` to keep the connection alive across hot reloads.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `mqtt.connect(host, port, client_id)` | `dyn` | Connect to broker. |
+| `mqtt.connect_auth(host, port, id, user, pass)` | `dyn` | Connect with credentials. |
+| `mqtt.disconnect(cursor)` | `nil` | Disconnect and free. Double-disconnect is a no-op. |
+| `mqtt.publish(cursor, topic, payload)` | `nil` | Publish QoS 0. |
+| `mqtt.publish_qos(cursor, topic, payload, qos)` | `nil` | Publish with QoS 0/1/2. |
+| `mqtt.subscribe(cursor, topic)` | `nil` | Subscribe QoS 0. |
+| `mqtt.subscribe_qos(cursor, topic, qos)` | `nil` | Subscribe with QoS 0/1/2. |
+| `mqtt.loop(cursor, timeout_ms)` | `nil` | Process one event (call in sensor loop). |
+| `mqtt.connected(cursor)` | `bool` | True if connection is active. |
+
+### Example
+
+```fluxa
+import std mqtt
+
+prst dyn broker = mqtt.connect("mqtt.example.com", 1883, "sensor-01")
+
+danger {
+    if mqtt.connected(broker) {
+        mqtt.publish(broker, "sensors/temp", "23.5")
+        mqtt.loop(broker, 10)
+    }
+}
+```
+
+---
+
+## std.mcp — Model Context Protocol Client
+
+MCP client for calling AI tool servers (Claude, filesystem, databases). Uses JSON-RPC 2.0 over HTTP POST. Requires `libcurl-dev`.
+
+**Declaration:**
+```toml
+[libs]
+std.mcp = "1.0"
+```
+
+**State:** Server cursor is lazy — `connect` doesn't open a TCP connection, it just stores the URL. Use `prst dyn server` to keep the cursor across hot reloads.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `mcp.connect(url)` | `dyn` | Create cursor for MCP server at url. |
+| `mcp.connect_auth(url, token)` | `dyn` | Create cursor with Bearer token auth. |
+| `mcp.list_tools(cursor)` | `dyn` | List tool names as `dyn` of `str`. |
+| `mcp.call(cursor, tool, args_json)` | `str` | Call tool, return full JSON result. |
+| `mcp.call_text(cursor, tool, args_json)` | `str` | Call tool, return text content only. |
+| `mcp.disconnect(cursor)` | `nil` | Free cursor resources. |
+
+### Example
+
+```fluxa
+import std mcp
+
+prst dyn claude = mcp.connect("http://localhost:3000")
+
+danger {
+    dyn tools = mcp.list_tools(claude)
+    int i = 0
+    while i < len(tools) {
+        print(tools[i])
+        i = i + 1
+    }
+    str result = mcp.call_text(claude, "read_file", "{\"path\":\"/etc/hostname\"}")
+    print(result)
+}
+```
+
+---
+
+## std.libv — Vectors, Matrices, Tensors
+
+Pure C99, zero external dependencies. GLM-inspired API. Works on RP2040 and ESP32.
+
+All storage is backed by `float arr` or `int arr` — no new types introduced. Operations add shape semantics on top of existing Fluxa arrays. Col-major storage (same as GLSL/OpenGL). In-place operations by default.
+
+**Declaration:**
+```toml
+[libs]
+std.libv = "1.0"
+```
+
+### Initializers
+
+| Expression | Size | Description |
+|---|---|---|
+| `libv.vec2` | 2 | 2D float vector, zeros |
+| `libv.vec3` | 3 | 3D float vector, zeros |
+| `libv.vec4` | 4 | 4D / RGBA float vector, zeros |
+| `libv.ivec2` | 2 | 2D int vector, zeros |
+| `libv.ivec3` | 3 | 3D int vector, zeros |
+| `libv.mat2` | 4 | 2×2 identity matrix |
+| `libv.mat3` | 9 | 3×3 identity matrix |
+| `libv.mat4` | 16 | 4×4 identity matrix (shader standard) |
+| `libv.vec(n)` | n | N-vector, zeros |
+| `libv.mat(r, c)` | r×c | r×c matrix, zeros |
+| `libv.tens(d0, d1, ...)` | d0×d1×... | N-dimensional tensor, zeros |
+
+### Vector operations
+
+All modify the first argument **in-place** unless the operation inherently returns a scalar.
+
+| Function | Returns | Description |
+|---|---|---|
+| `libv.add(a, b)` | `nil` | a = a + b |
+| `libv.sub(a, b)` | `nil` | a = a − b |
+| `libv.scale(a, s)` | `nil` | a = a × scalar |
+| `libv.negate(a)` | `nil` | a = −a |
+| `libv.normalize(a)` | `nil` | a = a / ‖a‖ |
+| `libv.lerp(a, b, t)` | `nil` | a = mix(a, b, t) |
+| `libv.cross(out, a, b)` | `nil` | out = a × b (vec3 only, caller allocates out) |
+| `libv.dot(a, b)` | `float` | dot product |
+| `libv.norm(a)` | `float` | Euclidean length |
+| `libv.angle(a, b)` | `float` | angle in radians |
+| `libv.eq(a, b)` | `bool` | element-wise equality (ε = 1e-6) |
+| `libv.shape(a)` | `int` | element count |
+| `libv.fill(a, v)` | `nil` | set all elements to scalar v |
+| `libv.copy(dst, src)` | `nil` | copy src into dst |
+
+Shape mismatch produces a runtime error:
+```
+libv.add (line 5): shape mismatch (3 != 4)
+```
+
+### Matrix operations
+
+| Function | Returns | Description |
+|---|---|---|
+| `libv.identity(m)` | `nil` | reset to identity in-place |
+| `libv.transpose(m)` | `nil` | in-place (square matrices) |
+| `libv.matmul(out, a, b)` | `nil` | out = a × b (caller allocates out) |
+| `libv.det(m)` | `float` | determinant (2×2, 3×3, 4×4) |
+| `libv.inverse(out, m)` | `nil` | out = m⁻¹ (2×2 only; higher dims in std.libdsp) |
+
+### 3D transform helpers (shader / Raylib workflow)
+
+All write into the matrix `m` in-place (mat4 required).
+
+| Function | Description |
+|---|---|
+| `libv.translate(m, tx, ty, tz)` | apply translation |
+| `libv.rotate(m, angle_rad, ax, ay, az)` | rotate around axis |
+| `libv.scale_mat(m, sx, sy, sz)` | apply scale |
+| `libv.perspective(m, fov_rad, aspect, near, far)` | perspective projection |
+| `libv.ortho(m, left, right, bottom, top, near, far)` | orthographic projection |
+| `libv.lookat(m, eye, center, up)` | view matrix (eye/center/up are vec3) |
+
+### Tensor operations
+
+| Function | Returns | Description |
+|---|---|---|
+| `libv.tens_add(t, t2)` | `nil` | element-wise add in-place |
+| `libv.tens_scale(t, s)` | `nil` | scalar multiply in-place |
+| `libv.tens_slice(out, t, idx)` | `nil` | extract slice along first axis |
+
+### Example
+
+```fluxa
+import std libv
+
+// 3D transform pipeline
+float arr model[16] = libv.mat4
+float arr view[16]  = libv.mat4
+float arr proj[16]  = libv.mat4
+
+libv.translate(model, 1.0, 0.0, 0.0)
+libv.rotate(model, 0.785, 0.0, 1.0, 0.0)   // 45 degrees around Y
+
+float arr eye[3]    = libv.vec3
+float arr center[3] = libv.vec3
+float arr up[3]     = libv.vec3
+libv.fill(eye, 0.0)
+eye[2] = 5.0          // camera at z=5
+libv.lookat(view, eye, center, up)
+
+libv.perspective(proj, 1.047, 1.777, 0.1, 100.0)  // 60 deg FOV, 16:9
+
+// Dot product
+float arr a[3] = libv.vec3
+float arr b[3] = libv.vec3
+a[0] = 1.0; b[0] = 0.5; b[1] = 0.5
+float d = libv.dot(a, b)
+
+// PID weights as prst tensor (survives hot reloads)
+prst float arr weights[27] = libv.tens(3, 3, 3)
+```
+
+### Notes
+
+- `mat2/mat3/mat4` initialize to the **identity matrix**. All other initializers produce zeros.
+- Storage is flat col-major: `mat4[col*4 + row]`.
+- `prst float arr` works exactly like any other `prst arr` — flat storage serializes through handover.
+- `libv.inverse` supports only 2×2 currently. Full 3×3/4×4 inverse (LU decomposition) will be in `std.libdsp`.
