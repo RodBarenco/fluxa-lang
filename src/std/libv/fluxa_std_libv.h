@@ -23,6 +23,10 @@
 #include "../../scope.h"
 #include "../../err.h"
 
+#ifdef FLUXA_LIBV_BLAS
+#  include <cblas.h>
+#endif
+
 /* ── Value helpers ───────────────────────────────────────────────── */
 static inline Value lv_nil(void)       { Value v; v.type = VAL_NIL;   return v; }
 static inline Value lv_float(double d) { Value v; v.type = VAL_FLOAT; v.as.real    = d; return v; }
@@ -79,7 +83,15 @@ static inline Value *lv_arr(const Value *v, ErrStack *err, int *had_error,
 static inline Value fluxa_std_libv_call(const char *fn_name,
                                          const Value *args, int argc,
                                          ErrStack *err, int *had_error,
-                                         int line) {
+                                         int line,
+                                         const FluxaConfig *cfg) {
+    int use_blas = 0;
+    (void)use_blas;
+#ifdef FLUXA_LIBV_BLAS
+    if (cfg && strncmp(cfg->libv_backend, "blas", 4) == 0) use_blas = 1;
+#else
+    (void)cfg;
+#endif
     char errbuf[280];
 
 #define LV_ERR(msg) do { \
@@ -159,12 +171,14 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
     }
     if (!strcmp(fn_name,"fill")) {
         NEED(2); GET_ARR(0,d,n); GET_FLOAT(1,val);
-        for (int i=0;i<n;i++) lv_setf(d,i,val); return lv_nil();
+        { for (int i=0;i<n;i++) lv_setf(d,i,val); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"copy")) {
         NEED(2); GET_ARR(0,dst,nd); GET_ARR(1,src,ns);
         SHAPE_EQ(nd,ns);
-        for (int i=0;i<nd;i++) lv_setf(dst,i,lv_get(src,i)); return lv_nil();
+        { for (int i=0;i<nd;i++) lv_setf(dst,i,lv_get(src,i)); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"eq")) {
         NEED(2); GET_ARR(0,a,na); GET_ARR(1,b,nb);
@@ -179,19 +193,23 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
     /* ── Vector operations ───────────────────────────────── */
     if (!strcmp(fn_name,"add")) {
         NEED(2); GET_ARR(0,a,na); GET_ARR(1,b,nb); SHAPE_EQ(na,nb);
-        for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)+lv_get(b,i)); return lv_nil();
+        { for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)+lv_get(b,i)); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"sub")) {
         NEED(2); GET_ARR(0,a,na); GET_ARR(1,b,nb); SHAPE_EQ(na,nb);
-        for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)-lv_get(b,i)); return lv_nil();
+        { for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)-lv_get(b,i)); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"scale")) {
         NEED(2); GET_ARR(0,a,na); GET_FLOAT(1,s);
-        for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)*s); return lv_nil();
+        { for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)*s); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"negate")) {
         NEED(1); GET_ARR(0,a,na);
-        for (int i=0;i<na;i++) lv_setf(a,i,-lv_get(a,i)); return lv_nil();
+        { for (int i=0;i<na;i++) lv_setf(a,i,-lv_get(a,i)); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"norm")) {
         NEED(1); GET_ARR(0,a,na);
@@ -203,7 +221,8 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         double s=0.0; for (int i=0;i<na;i++) { double x=lv_get(a,i); s+=x*x; }
         double len=sqrt(s);
         if (len<1e-12) LV_ERR("normalize: zero vector");
-        for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)/len); return lv_nil();
+        { for (int i=0;i<na;i++) lv_setf(a,i,lv_get(a,i)/len); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"dot")) {
         NEED(2); GET_ARR(0,a,na); GET_ARR(1,b,nb); SHAPE_EQ(na,nb);
@@ -220,7 +239,8 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         double denom=sqrt(da)*sqrt(db);
         if (denom<1e-12) LV_ERR("angle: zero vector");
         double c=dot/denom;
-        if (c>1.0) c=1.0; if (c<-1.0) c=-1.0;
+        if (c >  1.0) c =  1.0;
+        if (c < -1.0) c = -1.0;
         return lv_float(acos(c));
     }
     if (!strcmp(fn_name,"lerp")) {
@@ -263,6 +283,20 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         if (na!=nb||na!=no) LV_ERR("matmul: all matrices must be same square size");
         int n=(int)round(sqrt((double)na));
         if (n*n!=na) LV_ERR("matmul: non-square matrix");
+#ifdef FLUXA_LIBV_BLAS
+        if (use_blas) {
+            /* BLAS dgemm: C = alpha*A*B + beta*C, col-major */
+            double *da=(double*)malloc((size_t)(n*n)*sizeof(double));
+            double *db=(double*)malloc((size_t)(n*n)*sizeof(double));
+            double *dc=(double*)calloc((size_t)(n*n),sizeof(double));
+            for (int i=0;i<n*n;i++) { da[i]=lv_get(a,i); db[i]=lv_get(b,i); }
+            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
+                        n, n, n, 1.0, da, n, db, n, 0.0, dc, n);
+            for (int i=0;i<n*n;i++) lv_setf(out,i,dc[i]);
+            free(da); free(db); free(dc);
+            return lv_nil();
+        }
+#endif
         double *tmp=(double*)calloc((size_t)(n*n),sizeof(double));
         for (int col=0;col<n;col++)
             for (int row=0;row<n;row++) {
@@ -414,7 +448,8 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
     }
     if (!strcmp(fn_name,"tens_scale")) {
         NEED(2); GET_ARR(0,t,nt); GET_FLOAT(1,s);
-        for (int i=0;i<nt;i++) lv_setf(t,i,lv_get(t,i)*s); return lv_nil();
+        { for (int i=0;i<nt;i++) lv_setf(t,i,lv_get(t,i)*s); }
+        return lv_nil();
     }
     if (!strcmp(fn_name,"tens_slice")) {
         NEED(3); GET_ARR(0,out,no); GET_ARR(1,t,nt); GET_INT(2,idx);
@@ -443,7 +478,7 @@ FLUXA_LIB_EXPORT(
     owner     = "libv",
     call      = fluxa_std_libv_call,
     rt_aware  = 0,
-    cfg_aware = 0
+    cfg_aware = 1
 )
 
 #endif /* FLUXA_STD_LIBV_H */

@@ -522,6 +522,84 @@ print(msg)
 
 ---
 
+## std.json2 — Full DOM JSON Parser
+
+Unlike `std.json` (streaming, no tree), `std.json2` parses the entire document into an in-memory tree and lets you navigate it with dot-path and array-index notation.
+
+Zero external dependencies — pure C99.
+
+```toml
+[libs]
+std.json2 = "1.0"
+```
+
+**Navigation paths:** `"user.address.city"`, `"items[0].name"`, `"config.items[2].value"` — combinable arbitrarily.
+
+| Function | Returns | Description |
+|---|---|---|
+| `json2.parse(str)` | `dyn` | Parse JSON string → document cursor |
+| `json2.load(path)` | `dyn` | Parse JSON file → document cursor |
+| `json2.stringify(doc)` | `str` | Serialize document back to JSON string |
+| `json2.get(doc, path)` | `str` | Get value as string |
+| `json2.get_int(doc, path)` | `int` | Get value as int |
+| `json2.get_float(doc, path)` | `float` | Get value as float |
+| `json2.get_bool(doc, path)` | `bool` | Get value as bool |
+| `json2.has(doc, path)` | `bool` | Path exists in document |
+| `json2.type(doc, path)` | `str` | Type at path: `"null"`, `"bool"`, `"int"`, `"float"`, `"str"`, `"array"`, `"object"` |
+| `json2.length(doc, path)` | `int` | Element count at path (array or object) |
+| `json2.key(doc, path, i)` | `str` | i-th key of object at path |
+| `json2.set(doc, path, val)` | `nil` | Set string value at path |
+| `json2.set_int(doc, path, n)` | `nil` | Set int value at path |
+| `json2.set_float(doc, path, f)` | `nil` | Set float value at path |
+| `json2.set_bool(doc, path, b)` | `nil` | Set bool value at path |
+| `json2.delete(doc, path)` | `nil` | Delete node at path |
+| `json2.valid(doc)` | `bool` | Document parsed without error |
+| `json2.error(doc)` | `str` | Parse error message (if `valid` is false) |
+| `json2.free(doc)` | `nil` | Release document memory |
+
+```fluxa
+import std json2
+
+// Parse and navigate
+danger {
+    dyn doc = json2.parse("{"sensor":{"temp":22.5,"unit":"C"},"readings":[1,2,3]}")
+
+    float temp = json2.get_float(doc, "sensor.temp")
+    str unit   = json2.get(doc, "sensor.unit")
+    int first  = json2.get_int(doc, "readings[0]")
+    int count  = json2.length(doc, "readings")
+
+    print(temp)    // 22.5
+    print(unit)    // C
+    print(first)   // 1
+    print(count)   // 3
+
+    // Mutate and re-serialize
+    json2.set_float(doc, "sensor.temp", 23.1)
+    str updated = json2.stringify(doc)
+    print(updated)
+
+    json2.free(doc)
+}
+
+// Load from file
+danger {
+    dyn cfg = json2.load("/mnt/sd/config.json")
+    if json2.valid(cfg) {
+        str mode = json2.get(cfg, "mode")
+        int cap  = json2.get_int(cfg, "runtime.gc_cap")
+        print(mode)
+        print(cap)
+    }
+    json2.free(cfg)
+}
+
+// prst dyn cursor survives hot reloads
+prst dyn config = json2.parse("{"ready":false}")
+```
+
+---
+
 ## std.strings
 
 String manipulation functions. No `danger` required — all operations are pure computation. No regex, no Unicode-aware indexing — all operations work on byte offsets.
@@ -1232,14 +1310,14 @@ danger {
 
 ---
 
-## std.http — HTTP Client
+## std.httpc — HTTP Client (libcurl)
 
 HTTP client via libcurl. Requires `libcurl-dev`. Works on Linux/macOS; embedded targets need network stack support.
 
 **Declaration:**
 ```toml
 [libs]
-std.http = "1.0"
+std.httpc = "1.0"
 ```
 
 All requests must be inside `danger {}` — network I/O can fail for external reasons.
@@ -1248,26 +1326,26 @@ All requests must be inside `danger {}` — network I/O can fail for external re
 
 | Function | Returns | Description |
 |---|---|---|
-| `http.get(url)` | `dyn` | HTTP GET. Returns response dyn. |
-| `http.post(url, body)` | `dyn` | HTTP POST with form-encoded body. |
-| `http.post_json(url, json)` | `dyn` | HTTP POST with `Content-Type: application/json`. |
-| `http.put(url, body)` | `dyn` | HTTP PUT. |
-| `http.delete(url)` | `dyn` | HTTP DELETE. |
-| `http.status(resp)` | `int` | HTTP status code (200, 404, ...). |
-| `http.body(resp)` | `str` | Response body as string. |
-| `http.ok(resp)` | `bool` | True if status 200–299. |
+| `httpc.get(url)` | `dyn` | HTTP GET. Returns response dyn. |
+| `httpc.post(url, body)` | `dyn` | HTTP POST with form-encoded body. |
+| `httpc.post_json(url, json)` | `dyn` | HTTP POST with `Content-Type: application/json`. |
+| `httpc.put(url, body)` | `dyn` | HTTP PUT. |
+| `httpc.delete(url)` | `dyn` | HTTP DELETE. |
+| `httpc.status(resp)` | `int` | HTTP status code (200, 404, ...). |
+| `httpc.body(resp)` | `str` | Response body as string. |
+| `httpc.ok(resp)` | `bool` | True if status 200–299. |
 
 Response dyn layout: `[status:int, body:str, ok:bool]`.
 
 ### Example
 
 ```fluxa
-import std http
+import std httpc
 
 danger {
-    dyn r = http.get("https://api.example.com/data")
-    if http.ok(r) {
-        str data = http.body(r)
+    dyn r = httpc.get("https://api.example.com/data")
+    if httpc.ok(r) {
+        str data = httpc.body(r)
         print(data)
     }
 }
@@ -1318,14 +1396,14 @@ danger {
 
 ---
 
-## std.mcp — Model Context Protocol Client
+## std.mcpc — MCP Client
 
 MCP client for calling AI tool servers (Claude, filesystem, databases). Uses JSON-RPC 2.0 over HTTP POST. Requires `libcurl-dev`.
 
 **Declaration:**
 ```toml
 [libs]
-std.mcp = "1.0"
+std.mcpc = "1.0"
 ```
 
 **State:** Server cursor is lazy — `connect` doesn't open a TCP connection, it just stores the URL. Use `prst dyn server` to keep the cursor across hot reloads.
@@ -1334,28 +1412,28 @@ std.mcp = "1.0"
 
 | Function | Returns | Description |
 |---|---|---|
-| `mcp.connect(url)` | `dyn` | Create cursor for MCP server at url. |
-| `mcp.connect_auth(url, token)` | `dyn` | Create cursor with Bearer token auth. |
-| `mcp.list_tools(cursor)` | `dyn` | List tool names as `dyn` of `str`. |
-| `mcp.call(cursor, tool, args_json)` | `str` | Call tool, return full JSON result. |
-| `mcp.call_text(cursor, tool, args_json)` | `str` | Call tool, return text content only. |
-| `mcp.disconnect(cursor)` | `nil` | Free cursor resources. |
+| `mcpc.connect(url)` | `dyn` | Create cursor for MCP server at url. |
+| `mcpc.connect_auth(url, token)` | `dyn` | Create cursor with Bearer token auth. |
+| `mcpc.list_tools(cursor)` | `dyn` | List tool names as `dyn` of `str`. |
+| `mcpc.call(cursor, tool, args_json)` | `str` | Call tool, return full JSON result. |
+| `mcpc.call_text(cursor, tool, args_json)` | `str` | Call tool, return text content only. |
+| `mcpc.disconnect(cursor)` | `nil` | Free cursor resources. |
 
 ### Example
 
 ```fluxa
-import std mcp
+import std mcpc
 
-prst dyn claude = mcp.connect("http://localhost:3000")
+prst dyn claude = mcpc.connect("http://localhost:3000")
 
 danger {
-    dyn tools = mcp.list_tools(claude)
+    dyn tools = mcpc.list_tools(claude)
     int i = 0
     while i < len(tools) {
         print(tools[i])
         i = i + 1
     }
-    str result = mcp.call_text(claude, "read_file", "{\"path\":\"/etc/hostname\"}")
+    str result = mcpc.call_text(claude, "read_file", "{\"path\":\"/etc/hostname\"}")
     print(result)
 }
 ```
@@ -1485,3 +1563,439 @@ prst float arr weights[27] = libv.tens(3, 3, 3)
 - Storage is flat col-major: `mat4[col*4 + row]`.
 - `prst float arr` works exactly like any other `prst arr` — flat storage serializes through handover.
 - `libv.inverse` supports only 2×2 currently. Full 3×3/4×4 inverse (LU decomposition) will be in `std.libdsp`.
+
+---
+
+## std.libdsp — DSP and Radar Math
+
+Pure C99, zero external deps. Requires `std.libv` (uses float arr as storage).
+FFT: Cooley-Tukey in-place, power-of-2 sizes only.
+
+**Declaration:**
+```toml
+[libs]
+std.libv   = "1.0"   # required
+std.libdsp = "1.0"
+```
+
+**Interleaved complex layout:** `[re0, im0, re1, im1, ...]` — a 1024-point FFT needs `float arr[2048]`. Use `dsp.zeros(s)` to set imaginary parts to 0 when loading real data.
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `dsp.fft(signal)` | `nil` | Forward FFT in-place. Size must be power-of-2 × 2. |
+| `dsp.ifft(signal)` | `nil` | Inverse FFT in-place (normalized by N). |
+| `dsp.zeros(signal)` | `nil` | Zero imaginary parts (load real signal into complex arr). |
+| `dsp.window(signal, type)` | `nil` | Apply window: `"hann"`, `"hamming"`, `"blackman"`, `"rect"`. |
+| `dsp.power(psd, signal)` | `nil` | Power spectrum: `psd[i] = re²+im²`. |
+| `dsp.magnitude(mag, signal)` | `nil` | Magnitude: `mag[i] = sqrt(re²+im²)`. |
+| `dsp.phase(ph, signal)` | `nil` | Phase: `ph[i] = atan2(im, re)`. |
+| `dsp.fir(signal, h)` | `nil` | FIR filter (linear convolution with coefficients h). |
+| `dsp.iir(signal, b, a)` | `nil` | IIR filter direct form II (b=numerator, a=denominator). |
+| `dsp.matched_filter(signal, tmpl)` | `nil` | Cross-correlation with template. |
+| `dsp.stft(out, signal, win_size, hop)` | `nil` | Short-time Fourier Transform. |
+| `dsp.range_doppler(rd, signal, nrng, ndop)` | `nil` | 2D FFT range-Doppler map. |
+| `dsp.cfar(det, rd, guard, ref, threshold)` | `nil` | Cell-Averaging CFAR detector. |
+| `dsp.peak(signal)` | `int` | Index of maximum magnitude bin. |
+| `dsp.snr(signal, noise_floor)` | `float` | SNR in dB: `10 × log10(peak_power / noise_floor)`. |
+| `dsp.normalize(signal)` | `nil` | Scale signal so max absolute value = 1.0. |
+
+### Example — FFT of a tone
+
+```fluxa
+import std libv
+import std libdsp
+
+int N = 1024
+float arr signal[2048] = libv.vec(2048)  // N complex samples
+
+// Load real tone at bin 16 (interleaved: re at even indices)
+int i = 0
+while i < N {
+    signal[i * 2] = math.cos(2.0 * 3.14159 * 16.0 * i / N)
+    i = i + 1
+}
+
+dsp.window(signal, "hann")
+dsp.fft(signal)
+
+float arr psd[1024] = libv.vec(1024)
+dsp.power(psd, signal)
+
+int bin = dsp.peak(psd)
+print(bin)    // → 16
+
+float snr = dsp.snr(psd, 0.01)
+print(snr)    // → ~40 dB
+```
+
+### Example — CFAR radar detection
+
+```fluxa
+import std libv
+import std libdsp
+
+// 64-range × 16-Doppler map (power values)
+float arr rd[1024] = libv.vec(1024)
+int arr  det[1024] = libv.vec(1024)
+
+// ... fill rd with radar returns ...
+// Strong target at range bin 32
+rd[32] = 500.0
+
+dsp.cfar(det, rd, 2, 4, 6.0)   // guard=2, ref=4, threshold=6×noise
+// det[32] = 1 (detected), others = 0
+```
+
+---
+
+## std.https — HTTPS Client (libcurl, TLS enforced)
+
+Identical API to `std.httpc` but enforces TLS on every request. Rejects plain `http://` URLs at runtime with a clear error. Verifies server certificate and hostname (`CURLOPT_SSL_VERIFYPEER=1`, `CURLOPT_SSL_VERIFYHOST=2`).
+
+```toml
+[libs]
+std.https = "1.0"   # requires: libcurl with TLS support
+```
+
+Functions: same as `std.httpc` — `get`, `post`, `post_json`, `put`, `delete`, `status`, `body`, `ok`.
+
+---
+
+## std.mcps — MCP Client over HTTPS
+
+Identical API to `std.mcpc` but forces TLS on all requests. Use for production MCP endpoints.
+
+```toml
+[libs]
+std.mcps = "1.0"   # requires: libcurl with TLS support
+```
+
+Functions: same as `std.mcpc` — `connect`, `connect_auth`, `list_tools`, `call`, `call_text`, `disconnect`.
+
+---
+
+## std.zlib — Compression
+
+Wrapper over zlib (the C library behind gzip, PNG, ZIP). Critical for IoT: compress sensor data before Flash writes, reduce MQTT payloads, decompress OTA chunks.
+
+Compressed output is base64-encoded for safe `str` transport over MQTT/HTTP.
+
+```toml
+[libs]
+std.zlib = "1.0"   # requires: zlib1g-dev
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `zlib.compress(data)` | `str` | Deflate + base64 encode |
+| `zlib.decompress(data)` | `str` | Base64 decode + inflate |
+| `zlib.gzip(data)` | `str` | Gzip + base64 encode |
+| `zlib.gunzip(data)` | `str` | Base64 decode + gunzip |
+| `zlib.crc32(data)` | `int` | CRC-32 checksum |
+| `zlib.adler32(data)` | `int` | Adler-32 checksum |
+| `zlib.ratio(orig, comp)` | `float` | Compression ratio |
+| `zlib.version()` | `str` | zlib version string |
+
+```fluxa
+import std zlib
+
+str data = "sensor:temp:22.5,humidity:60,pressure:1013"
+str comp = zlib.compress(data)          // deflate + base64
+str back = zlib.decompress(comp)        // back to original
+
+int crc  = zlib.crc32(data)             // integrity check
+float ratio = zlib.ratio(len(data), len(comp))
+```
+
+---
+
+## std.fs — Filesystem
+
+POSIX file and directory operations. Pure C99, zero deps. Designed for IoT: SD cards, tmpfs, embedded Linux.
+
+```toml
+[libs]
+std.fs = "1.0"
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `fs.read(path)` | `str` | Read entire file |
+| `fs.write(path, data)` | `int` | Write file, return bytes written |
+| `fs.append(path, data)` | `int` | Append to file |
+| `fs.exists(path)` | `bool` | Check existence |
+| `fs.delete(path)` | `bool` | Delete file |
+| `fs.rename(src, dst)` | `bool` | Rename/move |
+| `fs.copy(src, dst)` | `bool` | Copy file |
+| `fs.size(path)` | `int` | File size in bytes (-1 if missing) |
+| `fs.mkdir(path)` | `bool` | Create directory (including parents) |
+| `fs.rmdir(path)` | `bool` | Remove empty directory |
+| `fs.listdir(path)` | `dyn` | List filenames (no path prefix) |
+| `fs.isdir(path)` | `bool` | Is a directory? |
+| `fs.isfile(path)` | `bool` | Is a regular file? |
+| `fs.join(a, b)` | `str` | Join path components |
+| `fs.basename(path)` | `str` | Filename part |
+| `fs.dirname(path)` | `str` | Directory part |
+| `fs.ext(path)` | `str` | Extension including dot (`.txt`), empty if none |
+| `fs.tempfile()` | `str` | Create and return path to temp file |
+
+```fluxa
+import std fs
+
+// Log sensor reading to SD card
+str entry = "22.5,60,1013\n"
+fs.append("/mnt/sd/log.csv", entry)
+
+// List config files
+dyn files = fs.listdir("/mnt/sd/config")
+int i = 0
+while i < len(files) {
+    print(files[i])
+    i = i + 1
+}
+
+// Safe config read
+danger {
+    str cfg = fs.read("/mnt/sd/config.json")
+    print(cfg)
+}
+if err != nil { print("no config found, using defaults") }
+```
+
+---
+
+## std.websocket — WebSocket Client
+
+Two backends — selected at compile time. Same API regardless of backend.
+
+**Native backend** (default, zero deps): Pure C99 RFC 6455. `ws://` only. Works on Linux, macOS, RP2040, ESP32.
+
+**libwebsockets backend** (`make FLUXA_WS_LWS=1`): Full RFC 6455 + `wss://` TLS. Requires `libssl-dev + libwebsockets-dev`.
+
+```toml
+[libs]
+std.websocket = "1.0"
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `ws.connect(url)` | `dyn` | Connect to `ws://host:port/path` |
+| `ws.connect_tls(url)` | `dyn` | Force TLS (requires libwebsockets build) |
+| `ws.send(conn, msg)` | `nil` | Send text frame |
+| `ws.send_bin(conn, data)` | `nil` | Send binary frame |
+| `ws.recv(conn, timeout_ms)` | `str` | Next message, `""` on timeout |
+| `ws.poll(conn)` | `bool` | Message ready without blocking |
+| `ws.close(conn)` | `nil` | Close connection |
+| `ws.connected(conn)` | `bool` | Connection status |
+| `ws.url(conn)` | `str` | Original connection URL |
+| `ws.version()` | `str` | Backend version string |
+
+```fluxa
+import std websocket
+
+danger {
+    dyn c = websocket.connect("ws://dashboard.local:8080/sensors")
+    websocket.send(c, "subscribe:temp")
+    str msg = websocket.recv(c, 5000)
+    print(msg)
+    websocket.close(c)
+}
+```
+
+---
+
+## std.http — HTTP Server + Client (mongoose 7.21)
+
+HTTP server and client backed by mongoose 7.21 (vendored in `vendor/`). Embedded-friendly — same library runs on RP2040 Wi-Fi and ESP32.
+
+```toml
+[libs]
+std.http = "1.0"
+```
+
+**Server:**
+
+| Function | Returns | Description |
+|---|---|---|
+| `http.serve(port)` | `dyn` | Start HTTP server, return cursor |
+| `http.serve_tls(port, cert, key)` | `dyn` | HTTPS server |
+| `http.poll(server, timeout_ms)` | `dyn\|nil` | Wait for next request |
+| `http.req_method(req)` | `str` | `"GET"`, `"POST"`, etc. |
+| `http.req_path(req)` | `str` | Request URI path |
+| `http.req_body(req)` | `str` | Request body |
+| `http.req_header(req, name)` | `str` | Header value |
+| `http.reply(req, status, body)` | `nil` | Send response |
+| `http.reply_json(req, status, json)` | `nil` | Send JSON response |
+| `http.stop(server)` | `nil` | Stop server |
+
+**Client** (same API as std.httpc but mongoose-backed):
+
+| Function | Returns | Description |
+|---|---|---|
+| `http.get(url)` | `dyn` | HTTP GET |
+| `http.post(url, body)` | `dyn` | HTTP POST |
+| `http.post_json(url, json)` | `dyn` | POST with JSON content-type |
+| `http.put(url, body)` | `dyn` | HTTP PUT |
+| `http.delete(url)` | `dyn` | HTTP DELETE |
+| `http.status(resp)` | `int` | HTTP status code |
+| `http.body(resp)` | `str` | Response body |
+| `http.ok(resp)` | `bool` | Status 200–299 |
+| `http.version()` | `str` | `"mongoose/7.21"` |
+
+```fluxa
+import std http
+
+// Sensor HTTP endpoint
+danger {
+    dyn srv = http.serve(8080)
+    dyn req = http.poll(srv, 10000)
+    if req != nil {
+        str path = http.req_path(req)
+        http.reply_json(req, 200, "{\"temp\":22.5,\"path\":\"" + path + "\"}")
+    }
+    http.stop(srv)
+}
+```
+
+---
+
+## std.mcp — Fluxa as MCP Server
+
+Exposes the Fluxa runtime as a Model Context Protocol (MCP) server over HTTP. AI agents (Claude, GPT, Gemini, local llama.cpp) can discover and call Fluxa tools via JSON-RPC 2.0.
+
+```toml
+[libs]
+std.http = "1.0"   # mongoose — required by std.mcp
+std.mcp  = "1.0"
+```
+
+**MCP tools exposed:**
+
+| Tool | Description |
+|---|---|
+| `fluxa/observe` | Read current value of a `prst` variable |
+| `fluxa/set` | Mutate a `prst` variable |
+| `fluxa/status` | Cycle count, prst count, error count, mode |
+| `fluxa/logs` | Last error log entries |
+| `tools/list` | MCP tool discovery (initialize) |
+
+| Function | Returns | Description |
+|---|---|---|
+| `mcp.serve(port)` | `dyn` | Start MCP server, return cursor |
+| `mcp.poll(server, ms)` | `nil` | Process one request cycle |
+| `mcp.stop(server)` | `nil` | Stop server |
+| `mcp.version()` | `str` | Server version string |
+
+```fluxa
+import std mcp
+
+// Expose this Fluxa runtime to AI agents
+danger {
+    dyn srv = mcp.serve(3000)
+    int tick = 0
+    while tick < 1000 {
+        mcp.poll(srv, 100)
+        tick = tick + 1
+    }
+    mcp.stop(srv)
+}
+```
+
+Connects internally to the running `/tmp/fluxa-<pid>.sock` IPC socket to execute tools. Requires `fluxa run main.flx -prod` to be running alongside.
+
+---
+
+## std.graph — 2D/3D Graphics
+
+Two backends:
+
+**Stub** (default, zero deps): API-complete, no-op rendering. Tests game logic, state machines, and `prst` patterns without a display.
+
+**Raylib** (`make FLUXA_GRAPH_RAYLIB=1`): Full hardware-accelerated rendering. Vendor `vendor/raylib.h` + `vendor/libraylib.a`.
+
+```toml
+[libs]
+std.graph = "1.0"
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `graph.init(w, h, title)` | `dyn` | Open window |
+| `graph.close(win)` | `nil` | Close window |
+| `graph.should_close(win)` | `bool` | Window close requested |
+| `graph.begin_frame(win)` | `nil` | Begin draw frame |
+| `graph.end_frame(win)` | `nil` | Present frame |
+| `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
+| `graph.fps(win)` | `int` | Current FPS |
+| `graph.set_fps(win, fps)` | `nil` | Set target FPS |
+| `graph.draw_rect(win, x, y, w, h, r, g, b)` | `nil` | Filled rectangle |
+| `graph.draw_circle(win, x, y, radius, r, g, b)` | `nil` | Filled circle |
+| `graph.draw_line(win, x1, y1, x2, y2, r, g, b)` | `nil` | Line |
+| `graph.draw_text(win, text, x, y, size, r, g, b)` | `nil` | Text |
+| `graph.key_pressed(win, key)` | `bool` | Key just pressed (`"SPACE"`, `"A"`–`"Z"`, ...) |
+| `graph.key_down(win, key)` | `bool` | Key held |
+| `graph.mouse_x(win)` | `int` | Mouse X |
+| `graph.mouse_y(win)` | `int` | Mouse Y |
+| `graph.mouse_pressed(win)` | `bool` | Left mouse button |
+| `graph.dt(win)` | `float` | Delta time in seconds |
+| `graph.version()` | `str` | Backend version |
+
+```fluxa
+import std graph
+
+danger {
+    dyn win = graph.init(800, 600, "Fluxa Demo")
+    graph.set_fps(win, 60)
+    int frame = 0
+    while frame < 300 {
+        graph.begin_frame(win)
+        graph.clear(win, 20, 20, 30)
+        graph.draw_rect(win, frame, 200, 60, 60, 255, 80, 0)
+        graph.draw_text(win, "fluxa", 10, 10, 24, 255, 255, 255)
+        graph.end_frame(win)
+        frame = frame + 1
+    }
+    graph.close(win)
+}
+```
+
+---
+
+## std.infer — Local LLM Inference
+
+Two backends:
+
+**Stub** (default, zero deps): `load()` succeeds, `generate()` returns a placeholder. Tests prompt pipelines without a model.
+
+**llama.cpp** (`make FLUXA_INFER_LLAMA=1`): Runs GGUF quantized models locally. Vendor `vendor/llama.h` + `vendor/libllama.a`.
+
+```toml
+[libs]
+std.infer = "1.0"
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `infer.load(path)` | `dyn` | Load GGUF model from path |
+| `infer.generate(model, prompt)` | `str` | Generate text (256 tokens) |
+| `infer.generate_n(model, prompt, n)` | `str` | Generate max n tokens (1–4096) |
+| `infer.unload(model)` | `nil` | Free model |
+| `infer.loaded(model)` | `bool` | Model load status |
+| `infer.ctx_size(model)` | `int` | Context window size (tokens) |
+| `infer.model_name(model)` | `str` | Filename from path |
+| `infer.version()` | `str` | Backend version |
+
+`prst dyn` model cursor survives hot reloads — no reload needed when swapping scripts.
+
+```fluxa
+import std infer
+
+danger {
+    dyn model = infer.load("/models/mistral-7b-q4.gguf")
+    str out = infer.generate(model, "Sensor reads 42.5°C. Should I alert?")
+    print(out)
+    infer.unload(model)
+}
+```

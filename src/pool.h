@@ -12,6 +12,25 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef FLUXA_HUGEPAGES
+/* madvise(MADV_HUGEPAGE) hints the kernel to back large arenas with
+ * 2MB transparent huge pages, reducing dTLB pressure when the parser
+ * and runtime walk the AST node array in tight loops.
+ * Benchmark-gated: only enabled with FLUXA_HUGEPAGES=1.
+ * Linux only — no-op on other platforms. */
+#  if defined(__linux__)
+#    include <sys/mman.h>
+#    ifndef MADV_HUGEPAGE
+#      define MADV_HUGEPAGE 14  /* in case older glibc doesn't define it */
+#    endif
+#    define FLUXA_POOL_MADVISE(ptr, sz)          madvise((void*)(ptr), (sz), MADV_HUGEPAGE)
+#  else
+#    define FLUXA_POOL_MADVISE(ptr, sz) ((void)0)
+#  endif
+#else
+#  define FLUXA_POOL_MADVISE(ptr, sz) ((void)0)
+#endif /* FLUXA_HUGEPAGES */
+
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #ifndef strdup
 char *strdup(const char *s);
@@ -33,6 +52,13 @@ static inline void pool_init(ASTPool *p) {
     p->node_count = 0;
     p->str_used   = 0;
     p->overflowed = 0;
+#ifdef FLUXA_HUGEPAGES
+    /* Hint the kernel to back these arenas with huge pages.
+     * Called once per parse cycle — the overhead is negligible vs
+     * the TLB savings on programs with large ASTs. */
+    FLUXA_POOL_MADVISE(p->nodes,   sizeof(p->nodes));
+    FLUXA_POOL_MADVISE(p->str_buf, sizeof(p->str_buf));
+#endif
 }
 
 static inline ASTNode *pool_alloc_node(ASTPool *p) {

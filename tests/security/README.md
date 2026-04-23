@@ -257,6 +257,24 @@ Being explicit about the threat model boundaries:
 
 ---
 
+## IPC_OP_UPDATE — Additional Security Layer
+
+`fluxa update` (`IPC_OP_UPDATE`, opcode `0x07`) is the highest-privilege IPC operation — it executes `execve`. It has additional security checks beyond the standard IPC authorization:
+
+| Layer | Enforcement |
+|---|---|
+| UID check | `check_peer_uid()` called **always**, regardless of `FLUXA_SECURE` |
+| Path validation | Must be absolute path, `..` components rejected before any `stat()` |
+| Binary check | Must exist and be executable (`S_IXUSR`) |
+| Error messages | Generic to client — details only to stderr (prevents filesystem oracle attacks) |
+| FLUXA_SECURE | Requires `<binary>.sig` alongside new binary if `security.mode != OFF` |
+| Safe point | `call_depth == 0 && danger_depth == 0` required before snapshot |
+| Preflight `-p` | Verifies ELF/Mach-O magic before sending request |
+
+Security principle: **error messages to the client are intentionally generic** for `IPC_OP_UPDATE`. An attacker who can connect to the socket must not learn which paths exist on the filesystem, what the runtime's internal state is, or whether a given path is executable. All details go to `stderr` (local/operator-visible only).
+
+---
+
 ## Architecture Notes
 
 ```

@@ -1,8 +1,7 @@
-/* ffi.c — Fluxa FFI implementation
- *
- * _GNU_SOURCE MUST be the first line before any system header.
- */
-#define _GNU_SOURCE
+/* ffi.c — Fluxa FFI implementation */
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 
 #ifndef FLUXA_HAS_FFI
 #  define FLUXA_HAS_FFI 0

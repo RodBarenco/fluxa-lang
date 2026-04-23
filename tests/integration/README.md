@@ -1,6 +1,6 @@
 # Fluxa — Integration Tests
 
-Simulation-based validation of the **Atomic Handover Protocol** (Sprint 8).
+Simulation-based validation of the **Atomic Handover Protocol**.
 
 These tests go beyond unit tests: they simulate real deployment conditions —
 IoT containers with persistent volumes, process crashes mid-handover, corrupted
@@ -303,7 +303,7 @@ No external tools required to run locally. Docker is optional.
 - name: Build
   run: make
 
-- name: Unit tests
+- name: Unit tests (74 tests)
   run: ./tests/run_tests.sh ./fluxa
 
 - name: Integration tests

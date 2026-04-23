@@ -111,6 +111,7 @@ void runtime_set_cancel_flag(volatile int *flag);
 /* Sprint 9: register the stable IpcRtView updated at every safe point.
  * Pass NULL to disable (script mode / RP2040). */
 void runtime_set_ipc_view(void *view);
+void runtime_set_restart_snapshot(const char *path); /* Sprint 13: RUP */
 
 #endif /* FLUXA_RUNTIME_H */
 

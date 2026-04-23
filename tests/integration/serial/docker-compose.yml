@@ -1,0 +1,35 @@
+version: "3.9"
+
+# tests/integration/serial/docker-compose.yml
+#
+# Container de teste para std.serial com emulação de TTY virtual via tty0tty.
+#
+# REQUISITOS:
+#   - Docker com suporte a --privileged (para carregar módulo de kernel)
+#   - linux-headers instalados no HOST (o módulo compila contra o kernel do host)
+#
+# USO:
+#   cd tests/integration/serial
+#   docker-compose build
+#   docker-compose run --rm fluxa-serial-test
+#
+# Para ver output detalhado:
+#   docker-compose run --rm fluxa-serial-test --verbose
+#
+# Para limpar:
+#   docker-compose down --rmi local
+
+services:
+  fluxa-serial-test:
+    build:
+      context: ../../..           # raiz do projeto
+      dockerfile: tests/integration/serial/Dockerfile
+    privileged: true              # necessário para insmod tty0tty
+    volumes:
+      # Monta headers do kernel do host para compilar tty0tty
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      # Monta /dev para acesso aos tnt devices após insmod
+      - /dev:/dev
+    environment:
+      - FLUXA_SERIAL_TEST=1

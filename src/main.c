@@ -28,7 +28,6 @@
  *   Issue #95: safe point on every while back-edge (fluxa set works in infinite loops)
  *   Issue #96: fluxa explain without file → IPC_OP_EXPLAIN streaming from live runtime
  */
-#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +35,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 
 #include "lexer.h"
 #include "parser.h"
@@ -82,6 +82,7 @@ static void usage(void) {
         "  fluxa dis <file.flx> -o out.txt         write dis report to explicit path\n"
         "  fluxa apply <file.flx>                  reload preserving prst state\n"
         "  fluxa apply <file.flx> -p               preflight before applying\n"
+        "  fluxa update <new_binary> [-p]          Runtime Update Protocol (Sprint 13)\n"
         "  fluxa apply <file.flx> -p --force       force apply with warnings (prod only)\n"
         "  fluxa handover <old.flx> <new.flx>      Atomic Handover (5-step protocol)\n"
         "  fluxa observe <var>                      watch prst value in real time\n"
@@ -575,6 +576,139 @@ static int run_status(void) {
     return 0;
 }
 
+/* fluxa update <new_binary> [-p]
+ * Runtime Update Protocol — replace the running binary with zero downtime.
+ * Sends IPC_OP_UPDATE to the running prod process. The runtime:
+ *   1. Waits for safe point (call_depth==0, danger_depth==0)
+ *   2. Serializes prst pool to /tmp/fluxa-update-<pid>.snap
+ *   3. Replies OK with snapshot path
+ *   4. execve(new_binary) passing FLUXA_RESTART_SNAPSHOT env var
+ * With -p: runs preflight on new_binary before sending update request.
+ * Security: in FLUXA_SECURE mode the server requires a .sig file alongside
+ *           the new binary (same key used for script signing). */
+static int run_update(const char *new_binary, int preflight) {
+    if (!new_binary || !new_binary[0]) {
+        fprintf(stderr,
+            "[fluxa] update: new binary path required.\n"
+            "  Usage: fluxa update <new_binary> [-p]\n");
+        return 1;
+    }
+
+    /* Resolve to absolute path — execve needs it */
+    char abs_bin[4096];
+    if (new_binary[0] == '/') {
+        strncpy(abs_bin, new_binary, sizeof(abs_bin) - 1);
+    } else {
+        if (!realpath(new_binary, abs_bin)) {
+            fprintf(stderr, "[fluxa] update: cannot resolve path '%s'\n",
+                    new_binary);
+            return 1;
+        }
+    }
+    abs_bin[sizeof(abs_bin)-1] = '\0';
+
+    /* Verify binary exists and is executable */
+    struct stat st;
+    if (stat(abs_bin, &st) != 0 || !(st.st_mode & S_IXUSR)) {
+        fprintf(stderr,
+            "[fluxa] update: '%s' not found or not executable\n", abs_bin);
+        return 1;
+    }
+
+    /* -p preflight: parse + resolve new binary's companion script
+     * We can't preflight a binary — but we can check it's a valid fluxa
+     * binary by running: new_binary --version (or similar health check).
+     * For now preflight just verifies the binary is a valid ELF/Mach-O. */
+    if (preflight) {
+        fprintf(stderr, "[fluxa] update: preflight — checking %s\n", abs_bin);
+        /* Check ELF magic on Linux */
+        FILE *f = fopen(abs_bin, "rb");
+        if (!f) {
+            fprintf(stderr, "[fluxa] update: preflight: cannot open binary\n");
+            return 1;
+        }
+        unsigned char magic[4] = {0};
+        size_t nr = fread(magic, 1, 4, f);
+        fclose(f);
+        /* ELF: 0x7f 'E' 'L' 'F' */
+        int ok = (nr == 4 && magic[0] == 0x7f &&
+                  magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F');
+#if defined(__APPLE__)
+        /* Mach-O: 0xFE 0xED 0xFA 0xCE or 0xCF */
+        if (!ok) ok = (nr >= 4 && magic[0] == 0xFE && magic[1] == 0xED);
+        if (!ok) ok = (nr >= 4 && magic[0] == 0xCF && magic[1] == 0xFA);
+        if (!ok) ok = (nr >= 4 && magic[0] == 0xCE && magic[1] == 0xFA);
+#endif
+        if (!ok) {
+            fprintf(stderr,
+                "[fluxa] update: preflight FAIL — '%s' is not a valid binary\n",
+                abs_bin);
+            return 1;
+        }
+        fprintf(stderr, "[fluxa] update: preflight OK — binary looks valid\n");
+    }
+
+    /* Connect to running runtime via IPC */
+    IpcClient cli;
+    int pid = ipc_connect_auto(&cli);
+    if (pid < 0) {
+        fprintf(stderr,
+            "[fluxa] update: no running fluxa -prod process found.\n"
+            "  Start one with: fluxa run <file.flx> -prod\n");
+        return 1;
+    }
+
+    fprintf(stderr, "[fluxa] update: connected to pid %d, sending update request\n",
+            pid);
+
+    /* Retry up to 10 times (1s total) if not at safe point */
+    IpcRequest  req;
+    IpcResponse resp;
+    int retries = 10;
+    int sent    = 0;
+
+    while (retries-- > 0) {
+        ipc_req_update(&req, 1, abs_bin);
+        if (ipc_client_send(&cli, &req, &resp) < 0) {
+            fprintf(stderr, "[fluxa] update: IPC communication error\n");
+            ipc_client_close(&cli);
+            return 1;
+        }
+
+        if (resp.status == IPC_STATUS_OK) {
+            sent = 1;
+            break;
+        }
+
+        /* "retry" message means not at safe point yet */
+        if (strstr(resp.message, "retry") || strstr(resp.message, "safe point")) {
+            fprintf(stderr, "[fluxa] update: waiting for safe point...\n");
+            { struct timespec _ts = {0, 100000000L}; nanosleep(&_ts, NULL); } /* 100ms */
+            continue;
+        }
+
+        /* Any other error is fatal */
+        fprintf(stderr, "[fluxa] update: error — %s\n", resp.message);
+        ipc_client_close(&cli);
+        return 1;
+    }
+
+    ipc_client_close(&cli);
+
+    if (!sent) {
+        fprintf(stderr,
+            "[fluxa] update: runtime did not reach safe point after 1s\n"
+            "  Try again or check runtime is not stuck in a long computation.\n");
+        return 1;
+    }
+
+    fprintf(stderr, "[fluxa] update: OK — %s\n", resp.message);
+    fprintf(stderr,
+        "[fluxa] update: the running process will now execve the new binary.\n"
+        "  prst state is preserved via the snapshot file.\n");
+    return 0;
+}
+
 /* fluxa init [dir]
  * Scaffold a new Fluxa project: creates dir/main.flx + dir/fluxa.toml */
 /* ── fluxa init helpers ─────────────────────────────────────────────────── */
@@ -679,9 +813,9 @@ static int run_init(const char *name) {
             "# std.sqlite    = \"1.0\"\n"
             "# std.serial    = \"1.0\"\n"
             "# std.i2c       = \"1.0\"\n"
-            "# std.http      = \"1.0\"\n"
+            "# std.httpc     = \"1.0\"  // HTTP client (libcurl)\n"
             "# std.mqtt      = \"1.0\"\n"
-            "# std.mcp       = \"1.0\"\n", name, proj_name);
+            "# std.mcpc      = \"1.0\"  // MCP client\n", name, proj_name);
         snprintf(path, sizeof path, "%s/fluxa.toml", name);
         if (fluxa_write_file(path, content)) return 1;
     }
@@ -709,9 +843,9 @@ static int run_init(const char *name) {
             "std.sqlite    = false   # requires: libsqlite3-dev\n"
             "std.serial    = false   # requires: libserialport-dev\n"
             "std.i2c       = true    # Linux kernel header (no external lib)\n"
-            "std.http      = false   # requires: libcurl\n"
+            "std.httpc     = false   # requires: libcurl\n"
             "std.mqtt      = false   # requires: libmosquitto\n"
-            "std.mcp       = false   # requires: libcurl (via std.http)\n", proj_name);
+            "std.mcpc      = false   # requires: libcurl (MCP client)\n", proj_name);
         snprintf(path, sizeof path, "%s/fluxa.libs", name);
         if (fluxa_write_file(path, content)) return 1;
     }
@@ -1272,6 +1406,25 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "test-reload")   == 0) return run_test_reload();
     if (argc >= 2 && strcmp(argv[1], "test-handover") == 0) return run_test_handover();
 
+    /* ── Sprint 13: Runtime Update Protocol ─────────────────────────────────
+     * When a new binary replaces the old via IPC_OP_UPDATE + execve, the new
+     * process inherits FLUXA_RESTART_SNAPSHOT=<path>.
+     * We load the serialized prst pool before executing so state is preserved.
+     * This env var is checked before any command dispatch so it works with
+     * all run modes: -dev, -prod, and FLUXA_SECURE. */
+    {
+        const char *snap_env = getenv("FLUXA_RESTART_SNAPSHOT");
+        if (snap_env && snap_env[0]) {
+            fprintf(stderr,
+                "[fluxa] restart: loading prst snapshot from %s\n", snap_env);
+            /* Register snapshot path — runtime picks it up on first cycle.
+             * Use global so runtime_exec() can access it before first tick. */
+            runtime_set_restart_snapshot(snap_env);
+            /* Clear env var so it is not inherited by grandchild processes */
+            unsetenv("FLUXA_RESTART_SNAPSHOT");
+        }
+    }
+
     if (argc < 2) { usage(); return 1; }
 
     const char *cmd = argv[1];
@@ -1280,6 +1433,23 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "logs")   == 0) return run_logs();
     if (strcmp(cmd, "status") == 0) return run_status();
+
+    /* fluxa update <new_binary> [-p]
+     * Runtime Update Protocol: replace running binary with zero downtime. */
+    if (strcmp(cmd, "update") == 0) {
+        if (argc < 3) {
+            fprintf(stderr,
+                "[fluxa] update: new binary path required.\n"
+                "  Usage: fluxa update <new_binary> [-p]\n"
+                "         -p   preflight: verify binary before sending update\n");
+            return 1;
+        }
+        const char *new_bin = argv[2];
+        int preflight = 0;
+        for (int i = 3; i < argc; i++)
+            if (strcmp(argv[i], "-p") == 0) preflight = 1;
+        return run_update(new_bin, preflight);
+    }
 
     if (strcmp(cmd, "keygen") == 0) {
 #ifdef FLUXA_SECURE

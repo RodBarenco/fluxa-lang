@@ -18,6 +18,8 @@
 /* ipc_server.h pulls in fluxa_ipc.h, runtime.h, pthread.h, stdlib.h */
 #include "ipc_server.h"
 #include "scope.h"
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/select.h>
 #include <sys/time.h>
 #include <string.h>
@@ -543,6 +545,199 @@ static void dispatch(IpcServer *srv, int client_fd) {
         pthread_mutex_unlock(&view->mu);
         ipc_send_all(client_fd, &done, sizeof done);
         return;
+    }
+
+    /* ── UPDATE — Runtime Update Protocol (Sprint 13) ── */
+    case IPC_OP_UPDATE: {
+        /* SECURITY: IPC_OP_UPDATE triggers execve — highest-privilege operation.
+         * Enforces UID check unconditionally (even in non-SECURE builds).
+         * Error messages to client are intentionally generic to prevent
+         * filesystem oracle attacks and state probing.
+         * Details are logged to stderr (local, operator-visible only). */
+
+        /* 0. UID check — ALWAYS, regardless of FLUXA_SECURE mode.
+         * IPC socket is 0600 so only the owner can connect, but we
+         * double-check at the opcode level for defense in depth. */
+        if (!check_peer_uid(client_fd)) {
+            fprintf(stderr,
+                "[fluxa] update: REJECTED — UID mismatch (privilege escalation attempt)\n");
+            resp.status = IPC_STATUS_ERR_AUTH;
+            snprintf(resp.message, sizeof resp.message, "update: permission denied");
+            break;
+        }
+
+        /* Extract new binary path */
+        char new_bin[IPC_VAR_NAME_MAX];
+        strncpy(new_bin, req.name, IPC_VAR_NAME_MAX - 1);
+        new_bin[IPC_VAR_NAME_MAX - 1] = '\0';
+
+        if (new_bin[0] == '\0') {
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message, "update: invalid request");
+            break;
+        }
+
+        /* Path traversal guard — must be absolute and no ".." components */
+        if (new_bin[0] != '/' || strstr(new_bin, "..")) {
+            fprintf(stderr,
+                "[fluxa] update: REJECTED — path traversal or relative path: %s\n",
+                new_bin);
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message, "update: invalid binary path");
+            break;
+        }
+
+        /* 1. Verify binary — details to stderr only, generic error to client */
+        struct stat st;
+        if (stat(new_bin, &st) != 0 || !(st.st_mode & S_IXUSR)) {
+            fprintf(stderr,
+                "[fluxa] update: binary check failed: %s\n", new_bin);
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message, "update: binary validation failed");
+            break;
+        }
+
+        /* 2. Get live runtime */
+        pthread_mutex_lock(&view->mu);
+        Runtime *lrt = (Runtime *)view->live_rt;
+        if (!lrt) {
+            pthread_mutex_unlock(&view->mu);
+            fprintf(stderr, "[fluxa] update: no active runtime\n");
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message, "update: runtime not ready");
+            break;
+        }
+
+        /* 3. Safe point check — NOT at safe point means caller should retry.
+         * Use a distinct message the CLI can detect without leaking depth values. */
+        if (lrt->call_depth != 0 || lrt->danger_depth != 0) {
+            pthread_mutex_unlock(&view->mu);
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            /* "retry" keyword is what run_update() in main.c detects */
+            snprintf(resp.message, sizeof resp.message,
+                     "update: not at safe point — retry");
+            break;
+        }
+
+#ifdef FLUXA_SECURE
+        /* 4. FLUXA_SECURE: require detached .sig file alongside new binary.
+         * Generic error to client — no path or filename leaked. */
+        if (lrt->config.security.mode != FLUXA_SEC_MODE_OFF) {
+            char sig_file[600];
+            snprintf(sig_file, sizeof sig_file, "%s.sig", new_bin);
+            struct stat sig_st;
+            if (stat(sig_file, &sig_st) != 0) {
+                pthread_mutex_unlock(&view->mu);
+                fprintf(stderr,
+                    "[fluxa] update: FLUXA_SECURE — signature file missing: %s.sig\n",
+                    new_bin);
+                resp.status = IPC_STATUS_ERR_UNKNOWN;
+                snprintf(resp.message, sizeof resp.message,
+                         "update: signature verification failed");
+                break;
+            }
+            fprintf(stderr,
+                "[fluxa] update: FLUXA_SECURE — signature file present\n");
+        }
+#endif
+
+        /* 5. Serialize prst pool to temp snapshot file */
+        char snap_path[256];
+        snprintf(snap_path, sizeof snap_path,
+                 "/tmp/fluxa-update-%d.snap", (int)getpid());
+
+        void  *pool_buf = NULL;
+        size_t pool_sz  = 0;
+        if (!prst_pool_serialize(&lrt->prst_pool, &pool_buf, &pool_sz)) {
+            pthread_mutex_unlock(&view->mu);
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message,
+                     "update: prst pool serialization failed");
+            break;
+        }
+
+        FILE *snap_f = fopen(snap_path, "wb");
+        if (!snap_f) {
+            free(pool_buf);
+            pthread_mutex_unlock(&view->mu);
+            resp.status = IPC_STATUS_ERR_UNKNOWN;
+            snprintf(resp.message, sizeof resp.message,
+                     "update: snapshot write failed");  /* path logged to stderr */
+            break;
+        }
+        fwrite(pool_buf, 1, pool_sz, snap_f);
+        fclose(snap_f);
+        free(pool_buf);
+
+        fprintf(stderr,
+                "[fluxa] update: snapshot written (%zu bytes) → %s\n",
+                pool_sz, snap_path);
+
+        /* 6. Reply to client with snapshot path BEFORE execve */
+        resp.status = IPC_STATUS_OK;
+        snprintf(resp.message, sizeof resp.message,
+                 "update: executing new binary, snapshot written");
+        ipc_send_all(client_fd, &resp, sizeof resp);
+
+        /* 7. Preserve original argv so new binary gets same arguments.
+         * We pass the runtime script path via environment instead. */
+
+        /* 8. Build env for new process: inherit everything + snapshot path */
+        /* Count existing env vars */
+        extern char **environ;
+        int envc = 0;
+        if (environ) while (environ[envc]) envc++;
+
+        char **new_env = (char **)malloc((size_t)(envc + 3) * sizeof(char *));
+        for (int ei = 0; ei < envc; ei++) new_env[ei] = environ[ei];
+
+        /* FLUXA_RESTART_SNAPSHOT: prst state for the new binary */
+        char snap_env[300];
+        snprintf(snap_env, sizeof snap_env,
+                 "FLUXA_RESTART_SNAPSHOT=%s", snap_path);
+        new_env[envc]   = snap_env;
+        new_env[envc+1] = NULL;
+
+        pthread_mutex_unlock(&view->mu);
+
+        /* 9. Reconstruct argv — new binary replaces argv[0], rest is same.
+         * We derive the current args from /proc/self/cmdline on Linux. */
+        char  cmdline_buf[4096];
+        char *argv_ptrs[64];
+        int   argc_new = 0;
+        int   cmdline_fd = open("/proc/self/cmdline", O_RDONLY);
+        if (cmdline_fd >= 0) {
+            ssize_t nr = read(cmdline_fd, cmdline_buf, sizeof cmdline_buf - 1);
+            close(cmdline_fd);
+            if (nr > 0) {
+                cmdline_buf[nr] = '\0';
+                /* Split on null bytes */
+                char *p = cmdline_buf;
+                argv_ptrs[argc_new++] = new_bin; /* argv[0] = new binary */
+                p += strlen(p) + 1;              /* skip old argv[0] */
+                while (p < cmdline_buf + nr && argc_new < 63) {
+                    if (*p) argv_ptrs[argc_new++] = p;
+                    p += strlen(p) + 1;
+                }
+            }
+        }
+        if (argc_new == 0) {
+            /* Fallback: minimal argv */
+            argv_ptrs[argc_new++] = new_bin;
+        }
+        argv_ptrs[argc_new] = NULL;
+
+        fprintf(stderr,
+                "[fluxa] update: execve(%s) with FLUXA_RESTART_SNAPSHOT=%s\n",
+                new_bin, snap_path);
+
+        /* 10. execve — this process is replaced by the new binary */
+        execve(new_bin, argv_ptrs, new_env);
+
+        /* execve only returns on error */
+        free(new_env);
+        fprintf(stderr, "[fluxa] update: execve failed: %s\n", strerror(errno));
+        return; /* client already got the OK reply — nothing more to send */
     }
 
     default:

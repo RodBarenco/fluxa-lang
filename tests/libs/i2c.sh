@@ -131,8 +131,8 @@ FLX
 )
 echo "$out" | grep -q "pattern ok" && pass "prst_cursor_pattern_compiles" || fail "prst_cursor_pattern_compiles" "pattern ok" "$out"
 
-# 10. physical device test — only if /dev/i2c-1 exists
-if [ -e /dev/i2c-1 ]; then
+# 10. physical device test — only if FLUXA_TEST_I2C=1 and /dev/i2c-1 exists
+if [ "${FLUXA_TEST_I2C:-0}" = "1" ] && [ -e /dev/i2c-1 ]; then
     out=$(run << 'FLX'
 import std i2c
 danger {
@@ -143,7 +143,7 @@ FLX
 )
     echo "$out" | grep -qE "^[0-9]+$" && pass "scan_real_bus_returns_list" || fail "scan_real_bus_returns_list" "integer" "$out"
 else
-    skip "scan_real_bus_returns_list" "no /dev/i2c-1 on this system"
+    skip "scan_real_bus_returns_list" "set FLUXA_TEST_I2C=1 with /dev/i2c-1 to enable"
 fi
 
 echo "────────────────────────────────────────────────────────────────"

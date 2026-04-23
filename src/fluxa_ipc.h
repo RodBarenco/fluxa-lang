@@ -88,6 +88,9 @@ typedef enum {
     IPC_OP_LOGS        = 0x04,  /* get N most recent log entries            */
     IPC_OP_STATUS      = 0x05,  /* get runtime status snapshot              */
     IPC_OP_EXPLAIN     = 0x06,  /* streaming explain: N var packets + DONE  */
+    IPC_OP_UPDATE      = 0x07,  /* Runtime Update Protocol — swap binary    *
+                                 * payload: path to new fluxa binary (str)   *
+                                 * response: OK + snapshot path on success   */
 } IpcOpcode;
 
 /* ── Value type tags (mirrors FluxaType, self-contained for wire format) ── */
@@ -188,7 +191,7 @@ static inline void ipc_req_observe(IpcRequest *r, uint32_t seq,
     r->version = IPC_VERSION;
     r->opcode  = IPC_OP_OBSERVE;
     r->seq     = seq;
-    strncpy(r->name, name, IPC_VAR_NAME_MAX - 1);
+    { int _nl=(int)strlen(name); if(_nl>=IPC_VAR_NAME_MAX) _nl=IPC_VAR_NAME_MAX-1; memcpy(r->name,name,(size_t)_nl); r->name[_nl]='\0'; }
 }
 
 static inline void ipc_req_set_int(IpcRequest *r, uint32_t seq,
@@ -200,7 +203,7 @@ static inline void ipc_req_set_int(IpcRequest *r, uint32_t seq,
     r->seq      = seq;
     r->type_tag = IPC_TYPE_INT;
     r->i_val    = val;
-    strncpy(r->name, name, IPC_VAR_NAME_MAX - 1);
+    { int _nl=(int)strlen(name); if(_nl>=IPC_VAR_NAME_MAX) _nl=IPC_VAR_NAME_MAX-1; memcpy(r->name,name,(size_t)_nl); r->name[_nl]='\0'; }
 }
 
 static inline void ipc_req_set_float(IpcRequest *r, uint32_t seq,
@@ -212,7 +215,7 @@ static inline void ipc_req_set_float(IpcRequest *r, uint32_t seq,
     r->seq      = seq;
     r->type_tag = IPC_TYPE_FLOAT;
     r->f_val    = val;
-    strncpy(r->name, name, IPC_VAR_NAME_MAX - 1);
+    { int _nl=(int)strlen(name); if(_nl>=IPC_VAR_NAME_MAX) _nl=IPC_VAR_NAME_MAX-1; memcpy(r->name,name,(size_t)_nl); r->name[_nl]='\0'; }
 }
 
 static inline void ipc_req_set_bool(IpcRequest *r, uint32_t seq,
@@ -224,7 +227,7 @@ static inline void ipc_req_set_bool(IpcRequest *r, uint32_t seq,
     r->seq      = seq;
     r->type_tag = IPC_TYPE_BOOL;
     r->b_val    = (uint8_t)(val ? 1 : 0);
-    strncpy(r->name, name, IPC_VAR_NAME_MAX - 1);
+    { int _nl=(int)strlen(name); if(_nl>=IPC_VAR_NAME_MAX) _nl=IPC_VAR_NAME_MAX-1; memcpy(r->name,name,(size_t)_nl); r->name[_nl]='\0'; }
 }
 
 static inline void ipc_req_logs(IpcRequest *r, uint32_t seq) {
@@ -249,6 +252,55 @@ static inline void ipc_req_explain(IpcRequest *r, uint32_t seq) {
     r->version = IPC_VERSION;
     r->opcode  = IPC_OP_EXPLAIN;
     r->seq     = seq;
+}
+
+/* IPC_OP_UPDATE — Runtime Update Protocol (Sprint 13)
+ * new_binary_path: path to the replacement fluxa binary
+ * The running runtime will:
+ *   1. Wait for safe point (call_depth==0 && danger_depth==0)
+ *   2. Serialize prst pool to a temp snapshot file
+ *   3. Reply with snapshot path in message field
+ *   4. execve(new_binary_path) passing FLUXA_RESTART_SNAPSHOT=<path>
+ * On error: resp.status = IPC_STATUS_ERR_UNKNOWN, message has reason. */
+/* ipc_req_set_str — SET a prst var to a string value.
+ * The string value is stored in req.name after the var name (NUL-separated).
+ * Layout: name[0..len(varname)] = varname NUL, name[len+1..] = value NUL. */
+static inline void ipc_req_set_str(IpcRequest *r, uint32_t seq,
+                                    const char *name, const char *val) {
+    memset(r, 0, sizeof *r);
+    r->magic    = IPC_MAGIC;
+    r->version  = IPC_VERSION;
+    r->opcode   = IPC_OP_SET;
+    r->seq      = seq;
+    r->type_tag = IPC_TYPE_STR;
+    int nlen = (int)strlen(name);
+    if (nlen >= IPC_VAR_NAME_MAX - 2) nlen = IPC_VAR_NAME_MAX - 2;
+    memcpy(r->name, name, (size_t)nlen);
+    r->name[nlen] = '\0';
+    /* Pack string value after the name — explicit truncate, always NUL-terminates */
+    int remaining = IPC_VAR_NAME_MAX - nlen - 1;
+    if (val && remaining > 1) {
+        int vlen = (int)strlen(val);
+        if (vlen >= remaining) vlen = remaining - 1;
+        memcpy(r->name + nlen + 1, val, (size_t)vlen);
+        r->name[nlen + 1 + vlen] = '\0';
+    }
+}
+
+static inline void ipc_req_update(IpcRequest *r, uint32_t seq,
+                                   const char *new_binary_path) {
+    memset(r, 0, sizeof *r);
+    r->magic   = IPC_MAGIC;
+    r->version = IPC_VERSION;
+    r->opcode  = IPC_OP_UPDATE;
+    r->seq     = seq;
+    if (new_binary_path) {
+        /* Path truncated to IPC_VAR_NAME_MAX — server validates absolute path */
+        int _nplen = (int)strlen(new_binary_path);
+        if (_nplen >= IPC_VAR_NAME_MAX) _nplen = IPC_VAR_NAME_MAX - 1;
+        memcpy(r->name, new_binary_path, (size_t)_nplen);
+        r->name[_nplen] = '\0';
+    }
 }
 
 /* ── Validation ──────────────────────────────────────────────────────────── */

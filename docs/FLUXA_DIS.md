@@ -1,18 +1,18 @@
 # fluxa dis — Fluxa Program Disassembler
 
-**Sprint 12.a**
+**v0.13.x — stable**
 
 `fluxa dis` is a standalone static analysis command. It parses and resolves
 a Fluxa program without executing it, then writes a human-readable report
-file (`<program>.dis`) covering four layers:
+file (`<program>.dis`) covering seven sections:
 
-1. **AST structure** — every function, Block, and top-level statement with
-   node types, source lines, `warm_local` flags, and resolved stack offsets.
-2. **Warm path forecast** — which functions are candidates for Tier 1 promotion
-   based on type stability of their parameters and locals (static inference,
-   not runtime observation).
-3. **prst fork** — persistent variables, their declared types, and the
-   dependency graph: what dies together if a variable is removed.
+1. **AST structure** — every node: type, source line, `warm_local` flag, `resolved_offset`.
+2. **Warm path forecast** — PROMOTABLE or COLD-LOCKED per function, cold bytes/read vs warm bytes/read.
+3. **Hot path bytecode** — VM instructions for `while`/`if` bodies in warm functions.
+4. **Call order** — call graph, recursive calls, mutual recursion (DFS), topological order.
+5. **prst fork** — persistent variables, declared types, dependency graph.
+6. **Execution paths** — per-function tier summary: Tier 0/1/2 eligibility, bytes/read, TCO.
+7. **Statistics** — AST nodes, functions, WarmProfile budget, VM eligibility.
 4. **Execution path summary** — per function: which tier it is likely to reach,
    memory touched per read (bytes), and the bytecode VM eligibility for hot paths.
 

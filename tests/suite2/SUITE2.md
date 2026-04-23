@@ -1,7 +1,7 @@
 # Fluxa Test Suite 2 — Edge Cases & Integration
-**v0.10 | 7 sections | 70 cases**
+**v0.13.3 | 7 sections | 70 cases**
 
-Suite 2 tests the limits of the language under conditions that matter for real IoT and embedded deployments. Where Suite 1 validates that features work, Suite 2 validates that they *hold* under pressure — type collisions across handovers, GC under tight memory, hundreds of Block instances, deeply nested ownership chains, and realistic sensor loop patterns.
+**Status: All 7 sections passing (70/70).** Suite 2 tests the limits of the language under conditions that matter for real IoT and embedded deployments. Where Suite 1 validates that features work, Suite 2 validates that they *hold* under pressure — type collisions across handovers, GC under tight memory, hundreds of Block instances, deeply nested ownership chains, and realistic sensor loop patterns.
 
 ---
 

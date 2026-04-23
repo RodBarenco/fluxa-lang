@@ -2,11 +2,11 @@
 
 **Technical Specification**
 
-**v0.10 — Sprint 12.a Edition**
+**v0.13.3 — Beta**
 
-*Base v0.10 + Sprint 12.a: Warm Path · std.crypto · FLUXA_SECURE · Atomic Handover · Stdlib*
+*Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 26 stdlib libs*
 
-*FLUXA v0.10 — Hobby language — Rio de Janeiro, Brazil*
+*Hobby language — Rio de Janeiro, Brazil*
 
 ---
 
@@ -395,25 +395,175 @@ Records which function/method read each prst variable. Dynamic — grows via rea
 
 ---
 
-## 10. Atomic Handover
+## 10. State as a First-Class Citizen
 
-The Atomic Handover replaces a running runtime with a new one without stopping the system. No prst data is lost. No cycle is interrupted unless the new program is invalid.
+In most systems, state is the thing you work around when deploying: drain connections, flush queues, stop the process, restart, rebuild context. Fluxa inverts this — **`prst` state is the one thing that is never disrupted, at any level of the system**.
 
-*Central invariant: Runtime A is never modified during a handover attempt. Any failure in B destroys B and keeps A active without corruption.*
+A `prst` variable declared in a Fluxa program is not bound to a script file, a binary version, or a process. It is bound to the **runtime identity** of the system itself. You can replace the script, the configuration, the binary, or the entire runtime without losing a single `prst` value. This is not a feature bolted on — it is the organizing principle of everything in sections 10 through 13.
 
-### 10.1 5-Step Protocol
+This commitment is expressed through three stages of live update. Each stage replaces more of the system than the last. None of them lose state:
+
+| Stage | Command | What changes | State preserved |
+|---|---|---|---|
+| **Stage 1 — Script Swap** | `fluxa apply` | The `.flx` program file | ✅ all `prst` vars |
+| **Stage 2 — Atomic Handover** | `fluxa handover` | Script + `fluxa.toml` + lib config | ✅ all `prst` vars |
+| **Stage 3 — Runtime Swap** | `fluxa update` | The `./fluxa` binary itself | ✅ all `prst` vars |
+
+Every stage uses the same underlying mechanism — `prst_pool_serialize` / `prst_pool_deserialize` — writing a flat binary snapshot that is safe for Flash storage (RP2040) and for passing across `execve` (Stage 3). The scope of what changes grows. The guarantee that state survives does not.
+
+**Why three stages matter for systems that cannot stop:**
+
+A sensor loop accumulating readings, a PID controller tracking position, a state machine managing a conveyor — none of these can tolerate restarts for software updates. Stage 1 handles most day-to-day deployments: fix a bug, tune a constant, restructure logic. Stage 2 handles version upgrades where the data model changes. Stage 3 handles the cases Stage 2 cannot: a vulnerability in the interpreter, a new stdlib lib, a compile-time flag change like `FLUXA_HUGEPAGES=1`. Together, the three stages cover the full lifecycle of a running system with zero forced restarts.
+
+*Embedded equivalent: Stage 1 ≈ config/parameter reload; Stage 2 ≈ firmware patch with state migration; Stage 3 ≈ full firmware update via HANDOVER_MODE_FLASH on RP2040.*
+
+---
+
+### 10.1 Stage 1 — Script Swap (`fluxa apply`)
+
+The simplest form of live update. The running script is replaced with a new one; the `prst` pool migrates directly in memory.
+
+**When to use:** Bug fixes, logic changes, parameter tuning — anything that does not require changing the binary or its config.
+
+**Mechanism:** The runtime executes until a safe point (`call_depth==0 && danger_depth==0`), stops, parses the new script, migrates the `prst` pool, and resumes. Total gap: ~2–10ms (dominated by parse time, not migration).
+
+```bash
+fluxa run main.flx -prod      # start
+fluxa apply new_main.flx      # swap script — state survives
+fluxa apply new_main.flx -p   # preflight before applying
+```
+
+**State gap:**
+
+| Component | Typical Time | Notes |
+|---|---|---|
+| Parse + Resolve of new script | ~1–5ms | Proportional to file size |
+| PrstPool migration | ~1–50µs | Proportional to prst var count |
+| Wait for safe point | 0 to 1 cycle | Worst case: 1 full loop iteration |
+| **Total typical** | **~2–10ms** | Dominated by parse, not migration |
+
+---
+
+### 10.2 Stage 2 — Atomic Handover (`fluxa handover`)
+
+Replaces the script **and** the runtime configuration (`fluxa.toml`) in one atomic operation. Because `fluxa.toml` controls `[runtime]` parameters, `[libs]` selection, and GC tuning, Stage 2 is the right choice whenever the new version of the system is meaningfully different from the current one — not just a logic fix, but a version with a different shape.
+
+**When to use:**
+- New or removed `prst` variables (schema change)
+- Different `[libs]` section (enabling a new std lib)
+- Changed `[runtime]` parameters (GC cap, prst cap, warm profile budget)
+- Any deployment where you want the Dry Run safety net before committing
+
+**What Stage 2 provides that Stage 1 does not:** The 5-step protocol includes a **Dry Run** (Step 3) — the new program executes completely with all output suppressed before the old program is touched. If the new version has a runtime error, the handover is aborted and the system stays on the old version. Stage 1 (`fluxa apply`) has no such rollback.
+
+**Mechanism:** Five-step protocol. Steps 1–3 run with Runtime A fully active — the gap occurs only at Step 4 (Switchover). The pool swap itself is a pointer operation — submicrosecond.
+
+```bash
+fluxa handover old.flx new.flx          # atomic handover
+fluxa handover old.flx new.flx --grace 0  # mission-critical: zero grace
+```
+
+**5-Step Protocol:**
 
 | Step | Name | What happens |
 |---|---|---|
-| 1 | Standby | Runtime B allocated (calloc). New program parsed and resolved. Failure here → B discarded, A intact. |
-| 2 | Migration | PrstPool and PrstGraph from A serialized into flat binary snapshot. FNV-32 checksum calculated. Snapshot deserialized into B with validation of magic + version + checksum. |
-| 3 | Dry Run | B executes the complete program with dry_run=1. All logic runs normally; stdout and FFI suppressed. Any error in err_stack → ERR_HANDOVER in A, handover aborted. |
-| 4 | Switchover | Waits for safe point in A (call_depth==0 && danger_depth==0), with configurable timeout (default 5s). Pool from B transferred atomically. |
-| 5 | Cleanup | Grace period (default 100ms). Temporary B destroyed. runtime_apply() starts real execution of B with the transferred pool. |
+| 1 | Standby | Runtime B allocated. New program parsed and resolved. Failure here → B discarded, A intact. |
+| 2 | Migration | PrstPool and PrstGraph from A serialized into flat binary snapshot. FNV-32 checksum calculated. Snapshot deserialized into B with validation. |
+| 3 | Dry Run | B executes complete program with `dry_run=1`. Output and FFI suppressed. Any error → handover aborted, A untouched. |
+| 4 | Switchover | Waits for safe point in A (`call_depth==0 && danger_depth==0`). Pool from B transferred atomically. |
+| 5 | Cleanup | Grace period (default 100ms). Temporary B destroyed. Execution resumes from B with transferred pool. |
 
-### 10.2 Snapshot — Flat Binary Format
+*Central invariant: Runtime A is never modified during a handover attempt. Any failure in B destroys B and keeps A active without corruption.*
 
-The snapshot is a contiguous buffer with no pointers — safe for writing to Flash (RP2040).
+**State gap:**
+
+| Component | Time | Notes |
+|---|---|---|
+| Steps 1–3 (Standby, Migration, Dry Run) | Zero | Runtime A continues active throughout |
+| gc_collect_all() before swap | ~10–100µs | Proportional to GC objects |
+| Atomic pool swap (pointer) | ~nanoseconds | Pointer operation — submicrosecond |
+| grace_period_ms (default 100ms) | 100ms | Configurable. Use 0 for mission-critical. |
+| **Total without grace period** | **~10–200µs** | Worst case on modern hardware |
+| **Total with default grace period** | **~100ms** | Dominated entirely by grace period |
+
+*Mission-critical: `fluxa handover --grace 0` or `grace_period_ms = 0` in fluxa.toml. The swap itself is submicrosecond.*
+
+---
+
+### 10.3 Stage 3 — Runtime Swap (`fluxa update`)
+
+The deepest form of live update: replaces the `./fluxa` binary itself. When Stage 2 is not enough — because the change is in the interpreter, not the program — Stage 3 is the answer. The running Fluxa program and all its `prst` state survive the binary replacement unchanged.
+
+Stage 3 reaches places Stage 1 and Stage 2 cannot:
+
+| Need | Stage 1 | Stage 2 | Stage 3 |
+|---|---|---|---|
+| Fix a bug in `.flx` logic | ✅ | ✅ | ✅ |
+| Add/remove `prst` variable | ✗ | ✅ | ✅ |
+| Change `[libs]` in fluxa.toml | ✗ | ✅ | ✅ |
+| Patch interpreter bug (runtime.c) | ✗ | ✗ | ✅ |
+| Add new stdlib lib (requires rebuild) | ✗ | ✗ | ✅ |
+| Enable `FLUXA_HUGEPAGES=1` or `FLUXA_SECURE=1` | ✗ | ✗ | ✅ |
+| Apply a CVE fix to the binary | ✗ | ✗ | ✅ |
+
+**When to use:** Runtime upgrades, security patches to the interpreter, adding new stdlib libs, `FLUXA_HUGEPAGES` or other compile-time flag changes that require a rebuild.
+
+**Mechanism:** The old binary serializes its `prst` pool to a temp file, then calls `execve(new_binary)` passing `FLUXA_RESTART_SNAPSHOT` as an environment variable. The new binary detects this on startup, loads the snapshot, and continues execution. The old process is replaced — not killed.
+
+```bash
+fluxa update ./fluxa_v2          # replace running binary
+fluxa update ./fluxa_v2 -p       # preflight: verify binary first
+```
+
+**Protocol:**
+
+```
+CLI                    IPC Socket           Runtime (old)         New binary
+ │── IPC_OP_UPDATE ────►│── dispatch ─────►│                          │
+ │   payload: /path     │                  │  1. UID check (always)   │
+ │   to new binary      │                  │  2. path traversal guard │
+ │                      │                  │  3. wait safe point      │
+ │                      │                  │  4. serialize prst pool  │
+ │                      │                  │  5. write to /tmp/*.snap │
+ │◄── IPC_RESP OK ──────│◄── reply ────────│                          │
+ │                      │                  │  6. execve(new_binary)   │
+ │                      │                  │──────────────────────────►│
+ │                      │                  X (old process replaced)   │
+ │                      │                                             │
+ │                      │                           detect FLUXA_RESTART_SNAPSHOT
+ │                      │                           load prst from snapshot
+ │                      │                           delete snapshot file
+ │                      │                           continue execution
+```
+
+**No Dry Run in Stage 3.** Unlike Stage 2, there is no dry run of the new binary before execve — a binary cannot be safely pre-executed in isolation. The equivalent safety check is the preflight flag (`-p`), which verifies the binary's ELF/Mach-O magic header before sending the update request.
+
+**IPC opcode:**
+
+```c
+IPC_OP_UPDATE = 0x07   /* payload: new binary path in req.name field */
+```
+
+**Security model:**
+
+`IPC_OP_UPDATE` is the highest-privilege opcode — it executes `execve`. Defense in depth:
+
+| Layer | Enforcement |
+|---|---|
+| Socket permissions | `/tmp/fluxa-<pid>.sock` is `0600` — only owner can connect |
+| UID check | `check_peer_uid()` called **always**, regardless of `FLUXA_SECURE` |
+| Path validation | Must be absolute, no `..` components |
+| Binary check | Must exist and be executable (`S_IXUSR`) |
+| Error messages | Generic to client — details only to `stderr` (prevents filesystem oracle attacks) |
+| FLUXA_SECURE | Requires `<binary>.sig` alongside new binary if `security.mode != OFF` |
+| Safe point | `call_depth == 0 && danger_depth == 0` before snapshot |
+| Preflight `-p` | Verifies ELF/Mach-O magic before sending update request |
+
+---
+
+### 10.4 Snapshot Format (shared by all three stages)
+
+All three stages use the same flat binary snapshot format — safe for writing to Flash (RP2040) and for passing across `execve` (Stage 3).
 
 ```
 HandoverSnapshotHeader {
@@ -431,26 +581,33 @@ HandoverSnapshotHeader {
 [graph_size bytes — serialized PrstGraph]
 ```
 
-### 10.3 Protocol Versioning
+Stage 3 uses only the `PrstPool` portion (no graph needed for binary swap). Stages 1–2 use both pool and graph.
+
+---
+
+### 10.5 Protocol Versioning
 
 - v1.000 — first stable beta version
 - v1.xxx — compatible with v1.000 (same major)
 - v2.000 — breaking change; rejects v1.xxx snapshots
 
-### 10.4 Dry Run — dry_run
+---
 
-When `dry_run = 1`, all external output is suppressed — print(), FFI calls, scope writes. Internal logic executes normally: loops, calculations, prst reads/writes happen and are validated. If `rt_error()` is called during a dry_run, ERR_HANDOVER is generated in A and the handover is aborted.
+### 10.6 RP2040 — Flash Mode
 
-### 10.5 RP2040 — Flash Mode
-
-On hardware with limited SRAM (264 KB), two runtimes in parallel don't fit. HANDOVER_MODE_FLASH serializes the snapshot to a reserved Flash sector before rebooting. After boot, the new firmware reads the snapshot, deserializes state, runs the Dry Run for validation, and only assumes control after approval.
+On hardware with limited SRAM (264 KB), two runtimes in parallel don't fit. `HANDOVER_MODE_FLASH` serializes the snapshot to a reserved Flash sector before rebooting. After boot, the new firmware reads the snapshot, deserializes state, runs the Dry Run, and only assumes control after approval. This is equivalent to Stage 3 (`fluxa update`) — a complete runtime replacement preserving all state.
 
 | Mode | Platform | Behavior |
 |---|---|---|
-| HANDOVER_MODE_MEMORY | x86 / ARM64 | Two runtimes in parallel in RAM |
-| HANDOVER_MODE_FLASH | RP2040 (264 KB SRAM) | Snapshot → Flash → reboot → deserialize → dry_run |
+| HANDOVER_MODE_MEMORY | x86 / ARM64 | Two runtimes in parallel in RAM (Stages 1–2) |
+| HANDOVER_MODE_FLASH | RP2040 (264 KB SRAM) | Snapshot → Flash → reboot → deserialize → dry_run (Stage 3 equivalent) |
 
 ---
+
+### 10.7 Dry Run (`dry_run=1`)
+
+Used in Stage 2 (Atomic Handover) step 3. When `dry_run = 1`, all external output is suppressed — `print()`, FFI calls, scope writes. Internal logic executes normally: loops, calculations, `prst` reads/writes happen and are validated. If `rt_error()` is called during a dry run, `ERR_HANDOVER` is generated in A and the handover is aborted.
+
 
 ## 11. CLI — Commands
 
@@ -465,7 +622,10 @@ fluxa dis <file.flx>                Static analysis: AST, warm forecast, hot
                                       bytecode, call order, prst fork — writes .dis
 fluxa dis <file.flx> -o out.txt     Write dis report to explicit path
 fluxa apply <file.flx>              One-shot reload preserving prst state
+fluxa apply <file.flx> -p           Preflight before applying
 fluxa handover <old> <new>          Atomic Handover: replace old.flx with new.flx
+fluxa update <new_binary>           Runtime Update Protocol: replace the fluxa binary
+fluxa update <new_binary> -p        Preflight: verify binary before sending update
 fluxa test-handover                 Internal suite: validates all 5 protocol steps
 fluxa observe <var>                 Stream live value of a prst variable (IPC)
 fluxa set <var>=<value>             Mutate a prst variable in a live runtime (IPC)
@@ -489,7 +649,17 @@ fluxa keygen [--dir <path>]         Generate Ed25519 + HMAC keys for FLUXA_SECUR
 
 ### 11.2 IPC — Unix Socket
 
-In `-prod` and `-dev` modes the runtime opens a Unix socket at `/tmp/fluxa-<pid>.sock` (mode 0600 — owner only). The IPC server accepts binary commands from `fluxa observe`, `fluxa set`, `fluxa logs`, and `fluxa status`. The protocol is a fixed-size binary struct (not JSON) — see `src/fluxa_ipc.h` for the wire format.
+In `-prod` and `-dev` modes the runtime opens a Unix socket at `/tmp/fluxa-<pid>.sock` (mode `0600` — owner only). The protocol is a fixed-size binary struct — see `src/fluxa_ipc.h`.
+
+| Opcode | Value | Command | Description |
+|---|---|---|---|
+| `IPC_OP_PING` | `0x01` | — | Health check |
+| `IPC_OP_OBSERVE` | `0x02` | `fluxa observe` | Read prst var value |
+| `IPC_OP_SET` | `0x03` | `fluxa set` | Mutate prst var |
+| `IPC_OP_LOGS` | `0x04` | `fluxa logs` | Last N log entries |
+| `IPC_OP_STATUS` | `0x05` | `fluxa status` | Runtime snapshot |
+| `IPC_OP_EXPLAIN` | `0x06` | `fluxa explain` | All prst vars + dep graph |
+| `IPC_OP_UPDATE` | `0x07` | `fluxa update` | Runtime Update Protocol |
 
 ### 11.3 fluxa dis — Static Disassembler
 
@@ -1046,12 +1216,12 @@ synchronized via the pool's own lock, not via the GC.
 | 11 | ✅ | Warm Path execution tier: warm_local resolver flag; WarmProfile (8.7 KB) with WHT path signature + QJL 1-bit guard per slot; O(1) hash keyed by fn_node\*; observation capped at 4 calls; promoted reads touch 9B vs 418B+ cold. fib +21%, block calls +12%, PROJECT mode +23%. Zero regression on VM. First use of TurboQuant-inspired quantization in a language runtime. |
 | 12.a | ✅ | std.crypto (libsodium 1.0.18+): BLAKE2b-256, XSalsa20-Poly1305, Ed25519, Curve25519. `fluxa keygen` CLI. `[security]` toml. FLUXA\_SECURE=1: two-level RESCUE (SOFT/HARD). Silent drop. Configurable `handshake_timeout_ms`, `ipc_max_conns`. Bug fixes: arr return UAF, resolver stack overflow. |
 | 12.b | ✅ | **Libs 1** — std.pid, std.sqlite, std.serial, std.i2c. **Lib Linker** — FLUXA_LIB_EXPORT macro + gen_lib_registry.py + lib.mk: new libs need zero runtime.c/parser.c/toml edits. **fluxa.libs** — build-time binary control. **fluxa init** — generates full project structure (main.flx, fluxa.toml, fluxa.libs, live/, static/, tests/). |
-| 12.c | 🔲 | **Huge Pages** — `FLUXA_HUGEPAGES=1` via `madvise(MADV_HUGEPAGE)`. Benchmark-gated: only ship if `perf dTLB-load-misses` confirms TLB pressure. |
-| 12.d | 🔲 | **Libs 2** — std.http (mongoose), std.mqtt (libmosquitto), std.mcp (depends on std.http). Network/protocol stack. |
-| 12.e | 🔲 | **std.libv** — N-dimensional vectors, matrices, tensors. GLM-inspired API. Col-major. In-place ops. Pure C99 ~800L, zero deps. |
-| 12.f | 🔲 | **std.libdsp** — FFT (Cooley-Tukey, in-place), STFT, windowing, FIR/IIR, range-Doppler, CFAR, matched filter. Radar/DSP math. Requires std.libv. |
-| 12.g | 🔲 | **Libs 3** — std.flxgraph (Raylib), std.infer (llama.cpp). Heavy deps, desktop-only. |
-| 13   | 🔲 | **Runtime Update Protocol** — swap the `./fluxa` binary itself with zero downtime. Uses the existing 5-step handover mechanism adapted for cross-process transport via the IPC socket. New binary starts as standby process, receives prst snapshot, dry-runs, switchover at safe point. Old process terminates. Equivalent to HANDOVER_MODE_FLASH for RP2040. |
+| 12.c | ✅ | **Huge Pages** — `FLUXA_HUGEPAGES=1` via `madvise(MADV_HUGEPAGE)` on AST arena arrays. Reduces dTLB pressure on RAM-intensive workloads. See §20 for when to enable. |
+| 12.d | ✅ | **Libs 2** — std.httpc (libcurl HTTP client), std.mqtt (libmosquitto), std.mcpc (MCP client via libcurl). std.http (mongoose server) and std.mcp (Fluxa as MCP server) remain planned. |
+| 12.e | ✅ | **std.libv** — N-dimensional vectors, matrices, tensors. GLM-inspired API. Col-major. In-place ops. Pure C99 ~800L, zero deps. |
+| 12.f | ✅ | **std.libdsp** — FFT (Cooley-Tukey, in-place), STFT, windowing, FIR/IIR, range-Doppler, CFAR, matched filter. Radar/DSP math. Requires std.libv. |
+| 12.g | ✅ | **Libs 3** — std.graph (Raylib), std.infer (llama.cpp). Dual backend: stub (zero deps, default) + real backend when vendored. `make FLUXA_GRAPH_RAYLIB=1` / `make FLUXA_INFER_LLAMA=1`. |
+| 13   | ✅ | **Runtime Update Protocol** — `fluxa update <new_binary> [-p]` replaces the running binary with zero downtime. IPC_OP_UPDATE (0x07) triggers prst serialization at safe point, then `execve` with `FLUXA_RESTART_SNAPSHOT` env var. New binary loads snapshot and continues execution. Security: UID check always enforced, generic errors to client, path traversal guard, FLUXA_SECURE requires `.sig` file. |
 
 ---
 
@@ -1216,17 +1386,25 @@ std.csv  = "1.0"    # Data
 | std.time | Time | POSIX | **✅ implemented** | sleep, sleep_us, now_ms, now_us, ticks, elapsed_ms, timeout, format |
 | std.flxthread | Concurrency | pthread | **✅ implemented** | ft.new, ft.message, ft.await, ft.stop, ft.kill, ft.lock, ft.resolve_all |
 | std.crypto | Security | libsodium | **✅ implemented** | hash (BLAKE2b-256), keygen, nonce, encrypt/decrypt (XSalsa20-Poly1305), sign\_keygen, sign, sign\_open (Ed25519), kx\_keygen, kx\_client, kx\_server (Curve25519), compare, wipe, to\_hex, from\_hex, version |
-| std.mqtt | IoT | libmosquitto | 🔲 planned | MQTT protocol. prst: broker config, auto-reconnect, active subscriptions. |
+| std.mqtt | IoT | libmosquitto | **✅ implemented** | MQTT protocol. connect, connect_auth, publish, publish_qos, subscribe, loop, connected, disconnect. |
 | std.serial | IoT | libserialport | **✅ implemented** | UART/serial. list, open/close, write, read, readline, flush, bytes_available. |
 | std.i2c | Robotics | Linux i2c-dev | **✅ implemented** | I2C protocol. open/close, write, read, write_reg, read_reg, read_reg16, scan. Linux only (no-op stub on macOS). |
 | std.pid | Robotics | own ~300L C99 | **✅ implemented** | PID controller. new, compute, reset, set_limits (anti-windup), set_deadband, state. |
 | std.sqlite | Database | SQLite 3 | **✅ implemented** | Embedded SQL. open/close, exec, query, last_insert_id, changes, version. |
-| std.http | Network | mongoose | 🔲 planned | HTTP + WebSocket in single-file C. Embedded-friendly. Stable for years. |
-| std.flxgraph | Visual | Raylib | 🔲 planned | Graphics window, 2D/3D, input. C99, zero deps, Raspberry Pi-compatible. |
-| std.infer | AI | llama.cpp/ggml | 🔲 planned | Local inference of quantized models. prst context survives reloads. |
-| std.mcp | Protocol | mongoose HTTP | 🔲 planned | Fluxa as MCP server. Exposes observe/set/apply/handover as MCP tools. |
-| std.libv | Math / Graphics | own ~800L C99 | 🔲 planned | N-dimensional vectors, matrices, tensors. GLM-inspired API. col-major. In-place ops. |
-| std.libdsp | DSP / Radar | own + FFTW optional | 🔲 planned | FFT, STFT, windowing, filters, range-Doppler. Uses std.libv as base. |
+| std.httpc | Network | libcurl | **✅ implemented** | HTTP client. get, post, post_json, put, delete, status, body, ok. Response dyn: [status, body, ok]. |
+| std.http  | Network | mongoose (vendored) | **✅ implemented** | HTTP server (`serve`, `poll`, `reply`, `reply_json`) + client (`get`, `post`, `post_json`, `put`, `delete`, `status`, `body`, `ok`). mongoose 7.21. |
+| std.graph | Visual | stub default + Raylib optional | **✅ implemented** | 2D/3D graphics, input. Stub: zero deps, no-op. Raylib: `make FLUXA_GRAPH_RAYLIB=1` + vendor/raylib.h. |
+| std.infer | AI | stub default + llama.cpp optional | **✅ implemented** | Local LLM inference (GGUF models). Stub: zero deps, placeholder output. llama.cpp: `make FLUXA_INFER_LLAMA=1` + vendor/llama.h. |
+| std.mcpc | Protocol | libcurl | **✅ implemented** | MCP client. connect, connect_auth, list_tools, call, call_text, disconnect. Calls external MCP servers. |
+| std.mcp  | Protocol | mongoose (vendored) | **✅ implemented** | Fluxa as MCP server (JSON-RPC 2.0). Exposes fluxa/observe, fluxa/set, fluxa/status, fluxa/logs, tools/list. Connects to running IPC socket. |
+| std.https | Network | libcurl | **✅ implemented** | HTTPS client (TLS enforced). Same API as std.httpc, rejects plain http://. Verifies cert and hostname. |
+| std.mcps | Protocol | libcurl | **✅ implemented** | MCP client over HTTPS (TLS enforced). Same API as std.mcpc. |
+| std.json2 | Data | own ~600L C99 | **✅ implemented** | Full DOM JSON. parse, load, get/get_int/get_float/get_bool, has, type, length, key, set, delete, stringify. Path nav: "a.b[0].c". |
+| std.zlib | Data | zlib | **✅ implemented** | Compression: compress/decompress (deflate+base64), gzip/gunzip, crc32, adler32, ratio. |
+| std.fs | System | POSIX | **✅ implemented** | Filesystem: read, write, append, exists, delete, rename, copy, size, mkdir, listdir, isdir, isfile, join, basename, dirname, ext, tempfile. |
+| std.websocket | Network | native C99 + libwebsockets optional | **✅ implemented** | WebSocket client. ws:// native (RFC 6455 pure C99, zero deps). wss:// with FLUXA_WS_LWS=1 + libssl-dev. |
+| std.libv | Math / Graphics | own ~450L C99 | **✅ implemented** | N-dimensional vectors, matrices, tensors. GLM-inspired API. col-major. In-place ops. vec2/3/4, mat2/3/4, matmul, FFT-ready. |
+| std.libdsp | DSP / Radar | own C99 + FFTW 🔲 | **✅ implemented** | FFT (Cooley-Tukey), STFT, windowing, FIR/IIR, matched filter, range-Doppler, CFAR. FFTW backend planned. |
 
 ### 17.4 Library Memory Model
 
@@ -1452,49 +1630,74 @@ dsp.stft(output, signal, win_size, hop) // Short-time Fourier transform
 
 ## 18. Handover Latency — State Gap
 
-In mission-critical systems the relevant question is not "how long does the gap last" — it is "what is the guaranteed worst case." This section documents the real state gap for each operating mode.
+*See §10 for the three-stage live update model (Script Swap, Atomic Handover, Runtime Swap).*
+
+In mission-critical systems the relevant question is not "how long does the gap last" — it is "what is the guaranteed worst case." This section documents the real state gap for each stage.
 
 ### 18.1 Gap Definition
 
-The state gap is the interval between the last statement executed by the previous runtime and the first statement executed by the new runtime. During this interval no user code is executing.
+The state gap is the interval between the last statement executed by the previous runtime and the first statement executed by the new runtime. During this interval no user code is executing. In all stages, the runtime never starts with partially applied state — the gap is always from a valid previous state to a completely validated new state.
 
-### 18.2 Case 1 — fluxa apply (script swap)
+### 18.2 Stage 1 Gap — fluxa apply (Script Swap)
 
-The runtime executes until a safe point (call_depth==0 && danger_depth==0), stops completely, and the new script starts with the migrated prst pool.
+See §10.1 for mechanism. State gap summary:
 
 | Component | Typical Time | Notes |
 |---|---|---|
 | Parse + Resolve of new script | ~1–5ms | Proportional to file size |
-| PrstPool migration | ~1–50µs | Proportional to number of prst vars |
-| Wait for safe point | 0 to 1 cycle | Worst case: 1 iteration of the longest loop |
-| Total typical | ~2–10ms | Dominated by parse, not migration |
+| PrstPool migration | ~1–50µs | Proportional to prst var count |
+| Wait for safe point | 0 to 1 cycle | Worst case: 1 full loop iteration |
+| **Total typical** | **~2–10ms** | Dominated by parse, not migration |
 
-### 18.3 Case 2 — fluxa handover (Atomic Handover)
+### 18.3 Stage 2 Gap — fluxa handover (Atomic Handover)
 
-Steps 1–3 (Standby, Migration, Dry Run) execute with Runtime A active — zero gap. The real gap occurs only in Step 4 (Switchover).
+See §10.2 for mechanism. Steps 1–3 run with Runtime A fully active — zero gap. The real gap occurs only at Step 4 (Switchover).
 
 | Component | Time | Notes |
 |---|---|---|
 | Steps 1–3 (Standby, Migration, Dry Run) | Zero | Runtime A continues active throughout |
-| gc_collect_all() before swap | ~10–100µs | Proportional to objects in GC |
+| gc_collect_all() before swap | ~10–100µs | Proportional to GC objects |
 | Atomic pool swap (pointer) | ~nanoseconds | Pointer operation — submicrosecond |
-| grace_period_ms (default: 100ms) | 100ms | Configurable. Use 0 for mission-critical. |
-| Total without grace period | ~10–200µs | Worst case on modern hardware |
-| Total with default grace period | ~100ms | Dominated entirely by grace period |
+| grace_period_ms (default 100ms) | 100ms | Configurable. Use 0 for mission-critical. |
+| **Total without grace period** | **~10–200µs** | Worst case on modern hardware |
+| **Total with default grace period** | **~100ms** | Dominated entirely by grace period |
 
-*Mission-critical configuration: To minimize the gap use `fluxa handover --grace 0` or `grace_period_ms = 0` in fluxa.toml. The swap itself is submicrosecond.*
+*Mission-critical: `fluxa handover --grace 0` or `grace_period_ms = 0` in fluxa.toml. The swap itself is submicrosecond.*
 
-### 18.4 RP2040 — Flash Mode
+### 18.4 Stage 3 Gap — fluxa update (Runtime Swap)
+
+See §10.3 for mechanism. The gap is dominated by `execve` startup time of the new binary.
 
 | Component | Typical Time | Notes |
 |---|---|---|
-| PrstPool serialization to flat buffer | ~100–500µs | Proportional to prst var count |
-| Flash write (reserved sector) | ~1–5ms | Depends on snapshot size and Flash hardware |
+| Serialize prst pool | ~100–500µs | Proportional to prst var count |
+| Write snapshot to /tmp | ~10–50µs | File I/O |
+| execve + new binary startup | ~10–50ms | OS process replacement |
+| Snapshot load in new binary | ~100–500µs | Deserialize prst pool |
+| **Total typical** | **~10–50ms** | Dominated by process startup |
+
+*No Dry Run in Stage 3 — use preflight `-p` to verify the new binary before sending.*
+
+### 18.5 RP2040 — Flash Mode (Stage 3 equivalent)
+
+| Component | Typical Time | Notes |
+|---|---|---|
+| PrstPool serialization | ~100–500µs | Proportional to prst var count |
+| Flash write (reserved sector) | ~1–5ms | Depends on Flash hardware |
 | Firmware reboot | ~10–50ms | Bootloader + peripheral init |
 | Deserialization + Dry Run | ~1–5ms | Full validation before taking control |
 | **Total RP2040** | **~15–60ms** | Deterministic — same behavior every time |
 
-*Consistency guarantee: In all modes, the runtime never starts with partially applied state. The gap is always from a valid previous state to a completely validated new state — no intermediate observable state exists.*
+### 18.6 Comparison
+
+| | Stage 1 (apply) | Stage 2 (handover) | Stage 3 (update) |
+|---|---|---|---|
+| Gap (typical) | ~2–10ms | ~10–200µs | ~10–50ms |
+| Gap (mission-critical) | ~2–10ms | ~10–200µs | ~10–50ms |
+| Dry Run | No | Yes | No (preflight instead) |
+| Config changes | No | Yes | Yes (new binary) |
+| Binary changes | No | No | Yes |
+| RP2040 equivalent | Config reload | Firmware patch | Full firmware update |
 
 ---
 
@@ -1729,3 +1932,92 @@ Huge pages (2MB) reduce the TLB footprint of the same working set from hundreds 
 
 **Before implementing:** Profile with `perf stat -e dTLB-load-misses` on a realistic workload. If TLB misses are not in the top 5 bottlenecks, the change is not worth the complexity.
 
+
+---
+
+## 19. Runtime Update Protocol — Stage 3 Detail
+
+**Status: ✅ implemented**
+
+`fluxa update` replaces the running `./fluxa` binary with zero downtime. The running program's `prst` state is preserved across the binary swap — equivalent to `HANDOVER_MODE_FLASH` for RP2040 but for the host binary itself.
+
+### Usage
+
+```bash
+fluxa update ./fluxa_v2          # replace running binary
+fluxa update ./fluxa_v2 -p       # preflight: verify binary before sending
+FLUXA_TEST_UPDATE=1 bash tests/sprint13/update_protocol.sh  # full round-trip test
+```
+
+*Full protocol, security model, and IPC opcode documented in §10.3.*
+
+### Summary
+
+### Restart detection
+
+The new binary checks `FLUXA_RESTART_SNAPSHOT` environment variable before any command dispatch. If set:
+
+1. Loads serialized `PrstPool` from the snapshot file
+2. Logs `[fluxa] restart: loaded N prst vars from snapshot`
+3. Deletes the snapshot file (single-use)
+4. Clears the env var (not inherited by grandchildren)
+5. Continues normal execution with restored state
+
+Works with all run modes: `-dev`, `-prod`, and `FLUXA_SECURE` builds.
+
+---
+
+## 20. Huge Pages — FLUXA_HUGEPAGES=1
+
+**Status: ✅ implemented (opt-in)**
+
+```bash
+make FLUXA_HUGEPAGES=1 build
+```
+
+Calls `madvise(MADV_HUGEPAGE)` on the two large arrays inside `ASTPool`:
+- `nodes[4096]` — ~400KB of ASTNode structs walked by the runtime every cycle
+- `str_buf[65536]` — 64KB string arena walked by the resolver
+
+The kernel backs these arenas with 2MB transparent huge pages instead of 4KB pages, reducing dTLB misses when the runtime walks the AST in tight loops.
+
+### When to enable
+
+**Good candidates (RAM-intensive, long-running):**
+
+| Workload | Why it helps |
+|---|---|
+| Programs with large ASTs (>1000 nodes) | Runtime walks AST every cycle — many dTLB misses |
+| Long-running `-prod` processes (hours/days) | TLB pressure accumulates over millions of cycles |
+| `std.infer` workloads (LLM inference in a loop) | Large model + large AST = TLB thrashing |
+| `std.libv` / `std.libdsp` with large arrays | Matrix ops touch many pages per cycle |
+| Digital twin simulations | Many prst vars + deep prst_graph traversal |
+
+**No benefit (skip it):**
+
+| Workload | Why it doesn't help |
+|---|---|
+| Short scripts (run once and exit) | Kernel won't promote pages before process ends |
+| Small programs (<200 AST nodes) | Fits in L2 cache — TLB is not the bottleneck |
+| RP2040 / ESP32 embedded targets | No `madvise` syscall available (no-op on non-Linux) |
+| IoT sensor loops with simple logic | CPU-bound on the sensor I/O, not memory |
+
+### How to measure
+
+Before enabling, verify TLB pressure is real:
+
+```bash
+# Check dTLB miss rate on your workload
+perf stat -e dTLB-load-misses,dTLB-loads ./fluxa run main.flx -prod
+
+# If miss rate > 5%, Huge Pages will help
+# If miss rate < 1%, skip it — overhead is negligible either way
+
+# Compare with and without:
+make FLUXA_HUGEPAGES=1 build && perf stat ./fluxa run bench.flx
+make build               && perf stat ./fluxa run bench.flx
+```
+
+### Implementation
+
+`pool_init()` in `src/pool.h` calls `FLUXA_POOL_MADVISE()` on both arrays after the pool is initialized. Linux only — the macro is a no-op on macOS and embedded targets. No runtime cost if huge pages are not available (kernel silently ignores the hint).

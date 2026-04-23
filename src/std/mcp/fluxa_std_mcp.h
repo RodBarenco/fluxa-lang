@@ -2,166 +2,276 @@
 #define FLUXA_STD_MCP_H
 
 /*
- * std.mcp — Model Context Protocol client for Fluxa-lang
+ * std.mcp — Fluxa as MCP server (Model Context Protocol)
  *
- * MCP (https://modelcontextprotocol.io) enables Fluxa programs to call
- * tools exposed by MCP servers (Claude, filesystem, databases, etc).
+ * Exposes the Fluxa runtime as an MCP server over HTTP (mongoose backend).
+ * AI agents (Claude, GPT, Gemini, local llama.cpp) can discover and call
+ * Fluxa tools via the standard MCP protocol (JSON-RPC 2.0 over HTTP).
  *
- * Transport: HTTP POST (JSON-RPC 2.0). Requires std.http (libcurl).
+ * MCP tools exposed:
+ *   fluxa/observe   → read current value of a prst variable
+ *   fluxa/set       → mutate a prst variable at next safe point
+ *   fluxa/apply     → hot reload: swap script preserving prst state
+ *   fluxa/handover  → atomic handover (5-step protocol)
+ *   fluxa/status    → cycle count, prst count, errors, mode
+ *   fluxa/logs      → last N error entries
  *
  * API:
- *   mcp.connect(url)                     → dyn cursor
- *   mcp.connect_auth(url, token)         → dyn cursor
- *   mcp.list_tools(cursor)               → dyn of str (tool names)
- *   mcp.call(cursor, tool, args_json)    → str (result JSON)
- *   mcp.call_text(cursor, tool, args_json) → str (text content only)
- *   mcp.disconnect(cursor)               → nil
+ *   mcp.serve(port)           → dyn server cursor
+ *   mcp.poll(server, ms)      → nil (process one request cycle)
+ *   mcp.stop(server)          → nil
+ *   mcp.version()             → str
  *
- * Example:
- *   prst dyn claude = mcp.connect("http://localhost:3000")
- *   dyn tools = mcp.list_tools(claude)
- *   str result = mcp.call_text(claude, "read_file", "{\"path\":\"/etc/hostname\"}")
+ * Internally: mcp.serve() starts an HTTP server on the given port.
+ * All POST /mcp requests are dispatched as JSON-RPC 2.0.
+ * The server connects to the running Fluxa IPC socket to execute tools.
+ *
+ * Depends on std.http (mongoose).
  */
 
 #include <stdlib.h>
 #include <string.h>
-#include <curl/curl.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include "mongoose.h"
 #include "../../scope.h"
 #include "../../err.h"
+#include "../../fluxa_ipc.h"
 
-/* ── Cursor ──────────────────────────────────────────────────────── */
-typedef struct {
-    char *url;    /* MCP server base URL */
-    char *token;  /* Bearer token (optional, NULL if none) */
-    int   req_id; /* JSON-RPC request ID counter */
-} McpClient;
-
-/* ── Response buffer (shared with http pattern) ──────────────────── */
-typedef struct { char *data; size_t len; size_t cap; } McpBuf;
-
-static size_t mcp_write_cb(void *ptr, size_t size, size_t nmemb, void *ud) {
-    McpBuf *b = (McpBuf *)ud;
-    size_t n = size * nmemb;
-    if (b->len + n + 1 > b->cap) {
-        size_t nc = b->cap ? b->cap * 2 : 4096;
-        while (nc < b->len + n + 1) nc *= 2;
-        char *t = (char *)realloc(b->data, nc);
-        if (!t) return 0;
-        b->data = t; b->cap = nc;
+/* ── JSON-RPC 2.0 helpers ────────────────────────────────────────── */
+static void mcp_json_str(const char *s, char *out, int outsz) {
+    int i=0, j=0;
+    out[j++]='"';
+    while(s[i]&&j<outsz-4) {
+        if(s[i]=='"'||s[i]=='\\') out[j++]='\\';
+        if(s[i]=='\n') { out[j++]='\\'; out[j++]='n'; i++; continue; }
+        out[j++]=s[i++];
     }
-    memcpy(b->data + b->len, ptr, n);
-    b->len += n;
-    b->data[b->len] = '\0';
-    return n;
+    out[j++]='"'; out[j]='\0';
+}
+
+/* Extract a JSON string field (very simple, no full parser) */
+static int mcp_json_get(const char *json, const char *key, char *val, int vsz) {
+    char needle[64]; snprintf(needle,sizeof(needle),"\"%s\"",key);
+    const char *p=strstr(json,needle); if(!p) return 0;
+    p+=strlen(needle);
+    while(*p==' '||*p==':') p++;
+    if(*p=='"') {
+        p++;
+        int i=0;
+        while(*p&&*p!='"'&&i<vsz-1) val[i++]=*p++;
+        val[i]='\0'; return 1;
+    }
+    /* Also handle number/bool */
+    int i=0;
+    while(*p&&*p!=','&&*p!='}'&&*p!='\n'&&i<vsz-1) val[i++]=*p++;
+    while(i>0&&(val[i-1]==' '||val[i-1]=='\r')) i--;
+    val[i]='\0'; return i>0;
+}
+
+/* ── MCP server state ────────────────────────────────────────────── */
+typedef struct {
+    struct mg_mgr mgr;
+    int           running;
+    int           port;
+} McpServer;
+
+/* ── IPC call helper — sends one request to local runtime ─────────── */
+static int mcp_ipc_call(IpcRequest *req, IpcResponse *resp) {
+    /* Find the socket — try common PIDs via /tmp/fluxa-*.sock */
+    char sock_path[108];  /* sun_path limit on Linux */
+    /* Try to find via /proc */
+    FILE *fp = popen("ls /tmp/fluxa-*.sock 2>/dev/null | head -1", "r");
+    if (!fp) return -1;
+    char line[128] = "";
+    if (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = '\0';
+        /* snprintf: explicit truncate to sun_path limit, always NUL-terminates */
+        snprintf(sock_path, sizeof(sock_path), "%s", line);
+    }
+    pclose(fp);
+    if (!sock_path[0]) return -1;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un sa; memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", sock_path);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        close(fd); return -1;
+    }
+    if (send(fd, req, sizeof(*req), 0) != sizeof(*req)) { close(fd); return -1; }
+    if (recv(fd, resp, sizeof(*resp), MSG_WAITALL) != sizeof(*resp)) {
+        close(fd); return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+/* ── MCP dispatch: handle one JSON-RPC 2.0 call ────────────────────── */
+static void mcp_dispatch(struct mg_connection *c, struct mg_http_message *hm) {
+    char body_buf[4096];
+    int blen = (int)hm->body.len;
+    if (blen >= (int)sizeof(body_buf)) blen = sizeof(body_buf)-1;
+    memcpy(body_buf, hm->body.buf, (size_t)blen);
+    body_buf[blen] = '\0';
+
+    char method[64]="", params_name[128]="", params_val[256]="", id_str[32]="1";
+    mcp_json_get(body_buf, "method", method, sizeof(method));
+    mcp_json_get(body_buf, "id", id_str, sizeof(id_str));
+
+    /* Extract params.name and params.value */
+    const char *params_p = strstr(body_buf, "\"params\"");
+    if (params_p) {
+        mcp_json_get(params_p, "name",  params_name, sizeof(params_name));
+        mcp_json_get(params_p, "value", params_val,  sizeof(params_val));
+    }
+
+    char result_json[1024] = "{\"result\":\"ok\"}";
+    int  rpc_err = 0;
+    char err_msg[256] = "";
+
+    IpcRequest  req;
+    IpcResponse resp;
+    memset(&req, 0, sizeof(req));
+    memset(&resp, 0, sizeof(resp));
+
+    /* ── MCP tools list (initialize) ── */
+    if (!strcmp(method, "initialize") || !strcmp(method, "tools/list")) {
+        snprintf(result_json, sizeof(result_json),
+            "{\"tools\":["
+            "{\"name\":\"fluxa/observe\",\"description\":\"Read a prst variable\","
+             "\"inputSchema\":{\"type\":\"object\",\"properties\":"
+             "{\"name\":{\"type\":\"string\"}}}},"
+            "{\"name\":\"fluxa/set\",\"description\":\"Mutate a prst variable\","
+             "\"inputSchema\":{\"type\":\"object\",\"properties\":"
+             "{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}}}},"
+            "{\"name\":\"fluxa/status\",\"description\":\"Runtime status\","
+             "\"inputSchema\":{\"type\":\"object\"}},"
+            "{\"name\":\"fluxa/logs\",\"description\":\"Last error log entries\","
+             "\"inputSchema\":{\"type\":\"object\"}}"
+            "]}");
+    }
+    /* ── fluxa/observe ── */
+    else if (!strcmp(method, "tools/call") &&
+             strstr(body_buf, "fluxa/observe")) {
+        if (!params_name[0]) { rpc_err=1; strcpy(err_msg,"params.name required"); }
+        else {
+            ipc_req_observe(&req, 1, params_name);
+            if (mcp_ipc_call(&req, &resp) < 0) {
+                rpc_err=1; strcpy(err_msg,"IPC unavailable — is fluxa -prod running?");
+            } else if (resp.status == IPC_STATUS_OK) {
+                char val_j[256];
+                mcp_json_str(resp.message, val_j, sizeof(val_j));
+                snprintf(result_json, sizeof(result_json),
+                    "{\"content\":[{\"type\":\"text\",\"text\":%s}]}", val_j);
+            } else {
+                rpc_err=1;
+                snprintf(err_msg, sizeof(err_msg), "observe failed: %s", resp.message);
+            }
+        }
+    }
+    /* ── fluxa/set ── */
+    else if (!strcmp(method, "tools/call") &&
+             strstr(body_buf, "fluxa/set")) {
+        if (!params_name[0]) { rpc_err=1; strcpy(err_msg,"params.name required"); }
+        else {
+            ipc_req_set_str(&req, 1, params_name, params_val);
+            if (mcp_ipc_call(&req, &resp) < 0) {
+                rpc_err=1; strcpy(err_msg,"IPC unavailable");
+            } else if (resp.status == IPC_STATUS_OK) {
+                snprintf(result_json, sizeof(result_json),
+                    "{\"content\":[{\"type\":\"text\",\"text\":\"set ok\"}]}");
+            } else {
+                rpc_err=1;
+                snprintf(err_msg, sizeof(err_msg), "set failed: %s", resp.message);
+            }
+        }
+    }
+    /* ── fluxa/status ── */
+    else if (!strcmp(method, "tools/call") &&
+             strstr(body_buf, "fluxa/status")) {
+        ipc_req_status(&req, 1);
+        if (mcp_ipc_call(&req, &resp) < 0) {
+            rpc_err=1; strcpy(err_msg,"IPC unavailable");
+        } else {
+            snprintf(result_json, sizeof(result_json),
+                "{\"content\":[{\"type\":\"text\",\"text\":"
+                "\"cycle=%d prst=%d errors=%d mode=%d dry_run=%d\"}]}",
+                resp.cycle_count, resp.prst_count, resp.err_count,
+                resp.mode, resp.dry_run);
+        }
+    }
+    /* ── fluxa/logs ── */
+    else if (!strcmp(method, "tools/call") &&
+             strstr(body_buf, "fluxa/logs")) {
+        ipc_req_logs(&req, 1);
+        if (mcp_ipc_call(&req, &resp) < 0) {
+            rpc_err=1; strcpy(err_msg,"IPC unavailable");
+        } else {
+            char msg_j[512];
+            mcp_json_str(resp.message, msg_j, sizeof(msg_j));
+            snprintf(result_json, sizeof(result_json),
+                "{\"content\":[{\"type\":\"text\",\"text\":%s}]}", msg_j);
+        }
+    }
+
+    /* ── Build JSON-RPC 2.0 response ── */
+    char full_resp[2048];
+    if (rpc_err) {
+        char err_j[512]; mcp_json_str(err_msg, err_j, sizeof(err_j));
+        snprintf(full_resp, sizeof(full_resp),
+            "{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":"
+            "{\"code\":-32600,\"message\":%s}}",
+            id_str, err_j);
+    } else {
+        snprintf(full_resp, sizeof(full_resp),
+            "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}",
+            id_str, result_json);
+    }
+
+    mg_http_reply(c, 200, "Content-Type: application/json\r\n",
+                  "%s", full_resp);
+}
+
+/* ── Event callback ──────────────────────────────────────────────── */
+static void mcp_server_cb(struct mg_connection *c, int ev, void *ev_data) {
+    if (ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+        /* CORS preflight */
+        if (mg_match(hm->method, mg_str("OPTIONS"), NULL)) {
+            mg_http_reply(c, 200,
+                "Access-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n"
+                "Access-Control-Allow-Headers: Content-Type\r\n", "");
+            return;
+        }
+        mcp_dispatch(c, hm);
+    }
 }
 
 /* ── Value helpers ───────────────────────────────────────────────── */
-static inline Value mcp_nil(void)          { Value v; v.type = VAL_NIL;  return v; }
+static inline Value mcp_nil(void) { Value v; v.type=VAL_NIL; return v; }
 static inline Value mcp_str(const char *s) {
-    Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+
+static inline Value mcp_wrap(McpServer *srv) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=srv;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
 }
-
-static inline Value mcp_wrap(McpClient *c) {
-    FluxaDyn *d = (FluxaDyn *)malloc(sizeof(FluxaDyn));
-    d->cap = 1; d->count = 1;
-    d->items = (Value *)malloc(sizeof(Value));
-    d->items[0].type   = VAL_PTR;
-    d->items[0].as.ptr = c;
-    Value v; v.type = VAL_DYN; v.as.dyn = d;
-    return v;
-}
-
-static inline McpClient *mcp_unwrap(const Value *v, ErrStack *err,
-                                     int *had_error, int line,
-                                     const char *fn) {
-    char errbuf[280];
-    if (v->type != VAL_DYN || !v->as.dyn || v->as.dyn->count < 1 ||
-        v->as.dyn->items[0].type != VAL_PTR || !v->as.dyn->items[0].as.ptr) {
-        snprintf(errbuf, sizeof(errbuf),
-            "mcp.%s: invalid cursor — use mcp.connect() first", fn);
-        errstack_push(err, ERR_FLUXA, errbuf, "mcp", line);
-        *had_error = 1; return NULL;
-    }
-    return (McpClient *)v->as.dyn->items[0].as.ptr;
-}
-
-/* ── JSON-RPC POST helper ────────────────────────────────────────── */
-static char *mcp_post(McpClient *c, const char *body,
-                       ErrStack *err, int *had_error, int line) {
-    char errbuf[280];
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        errstack_push(err, ERR_FLUXA, "mcp: curl init failed", "mcp", line);
-        *had_error = 1; return NULL;
-    }
-
-    McpBuf buf = {NULL, 0, 0};
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, "Accept: application/json");
-
-    if (c->token) {
-        char auth[512];
-        snprintf(auth, sizeof(auth), "Authorization: Bearer %s", c->token);
-        headers = curl_slist_append(headers, auth);
-    }
-
-    /* MCP endpoint: POST to base URL */
-    char endpoint[1024];
-    snprintf(endpoint, sizeof(endpoint), "%s", c->url);
-
-    curl_easy_setopt(curl, CURLOPT_URL, endpoint);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, mcp_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "fluxa-mcp/1.0");
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    curl_slist_free_all(headers);
-
-    if (res != CURLE_OK) {
-        snprintf(errbuf, sizeof(errbuf), "mcp: %s", curl_easy_strerror(res));
-        errstack_push(err, ERR_FLUXA, errbuf, "mcp", line);
-        *had_error = 1;
-        free(buf.data);
-        return NULL;
-    }
-    return buf.data; /* caller frees */
-}
-
-/* ── Minimal JSON helpers (no external dep) ──────────────────────── */
-
-/* Extract string value of a top-level JSON key (shallow, no nesting) */
-static char *mcp_json_str(const char *json, const char *key) {
-    if (!json || !key) return NULL;
-    char needle[128];
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    const char *p = strstr(json, needle);
-    if (!p) return NULL;
-    p += strlen(needle);
-    while (*p == ' ' || *p == ':' || *p == ' ') p++;
-    if (*p == '"') {
-        p++;
-        const char *end = strchr(p, '"');
-        if (!end) return NULL;
-        size_t len = (size_t)(end - p);
-        char *result = (char *)malloc(len + 1);
-        memcpy(result, p, len);
-        result[len] = '\0';
-        return result;
-    }
-    return NULL;
-}
-
-/* Check if JSON response has an "error" key */
-static int mcp_json_has_error(const char *json) {
-    return json && strstr(json, "\"error\"") != NULL &&
-           strstr(json, "\"result\"") == NULL;
+static inline McpServer *mcp_unwrap(const Value *v, ErrStack *err,
+                                     int *had_error, int line, const char *fn) {
+    char eb[280];
+    if (v->type!=VAL_DYN||!v->as.dyn||v->as.dyn->count<1||
+        v->as.dyn->items[0].type!=VAL_PTR||!v->as.dyn->items[0].as.ptr) {
+        snprintf(eb,sizeof(eb),"mcp.%s: invalid server cursor",fn);
+        errstack_push(err,ERR_FLUXA,eb,"mcp",line); *had_error=1; return NULL; }
+    return (McpServer *)v->as.dyn->items[0].as.ptr;
 }
 
 /* ── Dispatch ────────────────────────────────────────────────────── */
@@ -172,190 +282,71 @@ static inline Value fluxa_std_mcp_call(const char *fn_name,
     char errbuf[280];
 
 #define MCP_ERR(msg) do { \
-    char _eb[512]; \
-    snprintf(_eb, sizeof(_eb), "mcp.%s (line %d): %.400s", \
-             fn_name, line, (msg)); \
-    errstack_push(err, ERR_FLUXA, _eb, "mcp", line); \
-    *had_error = 1; return mcp_nil(); \
-} while(0)
+    snprintf(errbuf,sizeof(errbuf),"mcp.%s (line %d): %s",fn_name,line,(msg)); \
+    errstack_push(err,ERR_FLUXA,errbuf,"mcp",line); \
+    *had_error=1; return mcp_nil(); } while(0)
 
-#define NEED(n) do { \
-    if (argc < (n)) { \
-        snprintf(errbuf, sizeof(errbuf), \
-            "mcp.%s: expected %d arg(s), got %d", fn_name, (n), argc); \
-        errstack_push(err, ERR_FLUXA, errbuf, "mcp", line); \
-        *had_error = 1; return mcp_nil(); \
-    } \
-} while(0)
+#define NEED(n) do { if(argc<(n)) { \
+    snprintf(errbuf,sizeof(errbuf),"mcp.%s: expected %d arg(s)",fn_name,(n)); \
+    errstack_push(err,ERR_FLUXA,errbuf,"mcp",line); \
+    *had_error=1; return mcp_nil(); } } while(0)
 
-#define GET_STR(idx, var) \
-    if (args[(idx)].type != VAL_STRING || !args[(idx)].as.string) \
-        MCP_ERR("expected str argument"); \
-    const char *(var) = args[(idx)].as.string;
+#define GET_INT(idx,var) \
+    if(args[(idx)].type!=VAL_INT) MCP_ERR("expected int"); \
+    long (var)=args[(idx)].as.integer;
 
-#define GET_CLIENT(idx) \
-    McpClient *client = mcp_unwrap(&args[(idx)], err, had_error, line, fn_name); \
-    if (!client) return mcp_nil();
-
-    /* mcp.connect(url) → dyn */
-    if (strcmp(fn_name, "connect") == 0) {
-        NEED(1); GET_STR(0, url);
-        McpClient *c = (McpClient *)malloc(sizeof(McpClient));
-        c->url    = strdup(url);
-        c->token  = NULL;
-        c->req_id = 1;
-        return mcp_wrap(c);
+    if (!strcmp(fn_name,"version")) {
+        return mcp_str("fluxa-mcp/1.0 MCP-2024-11-05 mongoose/" MG_VERSION);
     }
 
-    /* mcp.connect_auth(url, token) → dyn */
-    if (strcmp(fn_name, "connect_auth") == 0) {
-        NEED(2); GET_STR(0, url); GET_STR(1, token);
-        McpClient *c = (McpClient *)malloc(sizeof(McpClient));
-        c->url    = strdup(url);
-        c->token  = strdup(token);
-        c->req_id = 1;
-        return mcp_wrap(c);
-    }
-
-    /* mcp.list_tools(cursor) → dyn of str */
-    if (strcmp(fn_name, "list_tools") == 0) {
-        NEED(1); GET_CLIENT(0);
-
-        char body[256];
-        snprintf(body, sizeof(body),
-            "{\"jsonrpc\":\"2.0\",\"id\":%d,"
-            "\"method\":\"tools/list\",\"params\":{}}", client->req_id++);
-
-        char *resp = mcp_post(client, body, err, had_error, line);
-        if (!resp) return mcp_nil();
-
-        /* Parse tools array — extract "name" fields */
-        FluxaDyn *d = (FluxaDyn *)malloc(sizeof(FluxaDyn));
-        d->cap = 8; d->count = 0;
-        d->items = (Value *)malloc(sizeof(Value) * (size_t)d->cap);
-
-        if (mcp_json_has_error(resp)) {
-            char *emsg = mcp_json_str(resp, "message");
-            snprintf(errbuf, sizeof(errbuf), "mcp.list_tools: %s",
-                     emsg ? emsg : "server error");
-            free(emsg); free(resp); free(d->items); free(d);
-            MCP_ERR(errbuf);
+    if (!strcmp(fn_name,"serve")) {
+        NEED(1); GET_INT(0,port);
+        McpServer *srv = (McpServer *)calloc(1, sizeof(McpServer));
+        srv->port = (int)port;
+        mg_mgr_init(&srv->mgr);
+        mg_log_set(MG_LL_NONE);
+        char url[64]; snprintf(url, sizeof(url), "http://0.0.0.0:%ld", port);
+        struct mg_connection *lc = mg_http_listen(
+            &srv->mgr, url, mcp_server_cb, srv);
+        if (!lc) {
+            mg_mgr_free(&srv->mgr); free(srv);
+            MCP_ERR("serve: failed to bind port");
         }
-
-        /* Scan for "name":"toolname" patterns in the tools array */
-        const char *p = resp;
-        while ((p = strstr(p, "\"name\"")) != NULL) {
-            p += 6;
-            while (*p == ' ' || *p == ':') p++;
-            if (*p != '"') { p++; continue; }
-            p++;
-            const char *end = strchr(p, '"');
-            if (!end) break;
-            size_t len = (size_t)(end - p);
-            char *name = (char *)malloc(len + 1);
-            memcpy(name, p, len); name[len] = '\0';
-
-            if (d->count >= d->cap) {
-                d->cap *= 2;
-                d->items = (Value *)realloc(d->items,
-                    sizeof(Value) * (size_t)d->cap);
-            }
-            d->items[d->count].type      = VAL_STRING;
-            d->items[d->count].as.string = name;
-            d->count++;
-            p = end + 1;
-        }
-
-        free(resp);
-        Value v; v.type = VAL_DYN; v.as.dyn = d;
-        return v;
+        srv->running = 1;
+        fprintf(stderr, "[fluxa] mcp: listening on http://0.0.0.0:%ld\n", port);
+        return mcp_wrap(srv);
     }
 
-    /* mcp.call(cursor, tool, args_json) → str (full JSON result) */
-    if (strcmp(fn_name, "call") == 0) {
-        NEED(3); GET_CLIENT(0); GET_STR(1, tool); GET_STR(2, args_json);
-
-        /* Build JSON-RPC request */
-        size_t blen = strlen(tool) + strlen(args_json) + 128;
-        char *body = (char *)malloc(blen);
-        snprintf(body, blen,
-            "{\"jsonrpc\":\"2.0\",\"id\":%d,"
-            "\"method\":\"tools/call\","
-            "\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
-            client->req_id++, tool, args_json);
-
-        char *resp = mcp_post(client, body, err, had_error, line);
-        free(body);
-        if (!resp) return mcp_nil();
-
-        if (mcp_json_has_error(resp)) {
-            char *emsg = mcp_json_str(resp, "message");
-            snprintf(errbuf, sizeof(errbuf), "mcp.call '%s': %s",
-                     tool, emsg ? emsg : "server error");
-            free(emsg); free(resp);
-            MCP_ERR(errbuf);
-        }
-
-        Value result = mcp_str(resp);
-        free(resp);
-        return result;
+    if (!strcmp(fn_name,"poll")) {
+        NEED(2);
+        McpServer *srv = mcp_unwrap(&args[0], err, had_error, line, fn_name);
+        if (!srv) return mcp_nil();
+        if(args[1].type!=VAL_INT) MCP_ERR("expected int timeout");
+        long ms = args[1].as.integer;
+        mg_mgr_poll(&srv->mgr, (int)ms);
+        return mcp_nil();
     }
 
-    /* mcp.call_text(cursor, tool, args_json) → str (text content only) */
-    if (strcmp(fn_name, "call_text") == 0) {
-        NEED(3); GET_CLIENT(0); GET_STR(1, tool); GET_STR(2, args_json);
-
-        size_t blen = strlen(tool) + strlen(args_json) + 128;
-        char *body = (char *)malloc(blen);
-        snprintf(body, blen,
-            "{\"jsonrpc\":\"2.0\",\"id\":%d,"
-            "\"method\":\"tools/call\","
-            "\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
-            client->req_id++, tool, args_json);
-
-        char *resp = mcp_post(client, body, err, had_error, line);
-        free(body);
-        if (!resp) return mcp_nil();
-
-        if (mcp_json_has_error(resp)) {
-            char *emsg = mcp_json_str(resp, "message");
-            snprintf(errbuf, sizeof(errbuf), "mcp.call_text '%s': %s",
-                     tool, emsg ? emsg : "server error");
-            free(emsg); free(resp);
-            MCP_ERR(errbuf);
-        }
-
-        /* Extract "text" field from content array */
-        char *text = mcp_json_str(resp, "text");
-        Value result = mcp_str(text ? text : resp);
-        free(text); free(resp);
-        return result;
-    }
-
-    /* mcp.disconnect(cursor) → nil */
-    if (strcmp(fn_name, "disconnect") == 0) {
-        NEED(1); GET_CLIENT(0);
-        free(client->url);
-        free(client->token);
-        free(client);
-        if (args[0].type == VAL_DYN && args[0].as.dyn &&
-            args[0].as.dyn->count >= 1)
+    if (!strcmp(fn_name,"stop")) {
+        NEED(1);
+        McpServer *srv = mcp_unwrap(&args[0], err, had_error, line, fn_name);
+        if (!srv) return mcp_nil();
+        mg_mgr_free(&srv->mgr);
+        free(srv);
+        if (args[0].type==VAL_DYN && args[0].as.dyn)
             args[0].as.dyn->items[0].as.ptr = NULL;
         return mcp_nil();
     }
 
 #undef MCP_ERR
 #undef NEED
-#undef GET_STR
-#undef GET_CLIENT
+#undef GET_INT
 
-    snprintf(errbuf, sizeof(errbuf), "mcp.%s: unknown function", fn_name);
-    errstack_push(err, ERR_FLUXA, errbuf, "mcp", line);
-    *had_error = 1;
-    return mcp_nil();
+    snprintf(errbuf,sizeof(errbuf),"mcp.%s: unknown function",fn_name);
+    errstack_push(err,ERR_FLUXA,errbuf,"mcp",line);
+    *had_error=1; return mcp_nil();
 }
 
-/* ── Lib descriptor ──────────────────────────────────────────────── */
 FLUXA_LIB_EXPORT(
     name      = "mcp",
     toml_key  = "std.mcp",

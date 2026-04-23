@@ -483,11 +483,23 @@ else
 $(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
 fi
 
+# ── sprint13: Runtime Update Protocol ───────────────────────────────────────
+printf "  %-56s" "sprint13/update_protocol (Runtime Update Protocol)"
+_s13_out=$(timeout 30s bash "$SCRIPT_DIR/sprint13/update_protocol.sh" --fluxa "$FLUXA" 2>&1 || true)
+if echo "$_s13_out" | grep -q "sprint13: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    FAILURES+="
+  sprint13/update_protocol:
+$(echo "$_s13_out" | grep -E "FAIL|PASS|SKIP" | sed 's/^/    /')"
+fi
+
 # ── std libs (tests/libs/) ───────────────────────────────────────────────────
 for _lib_script in "$SCRIPT_DIR/libs/"*.sh; do
     _lib_name=$(basename "$_lib_script" .sh)
     printf "  %-56s" "std.${_lib_name}"
-    _lib_out=$(bash "$_lib_script" --fluxa "$FLUXA" 2>&1)
+    _lib_out=$(timeout 120s bash "$_lib_script" --fluxa "$FLUXA" 2>&1 || true)
     if echo "$_lib_out" | grep -q "std\.${_lib_name}: PASS"; then
         echo "PASS"
         PASS=$((PASS+1))

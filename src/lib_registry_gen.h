@@ -22,14 +22,35 @@
 #ifdef FLUXA_STD_FLXTHREAD
 #  include "std/flxthread/fluxa_std_flxthread.h"
 #endif
+#ifdef FLUXA_STD_FS
+#  include "std/fs/fluxa_std_fs.h"
+#endif
+#ifdef FLUXA_STD_GRAPH
+#  include "std/graph/fluxa_std_graph.h"
+#endif
 #ifdef FLUXA_STD_HTTP
 #  include "std/http/fluxa_std_http.h"
+#endif
+#ifdef FLUXA_STD_HTTPC
+#  include "std/httpc/fluxa_std_httpc.h"
+#endif
+#ifdef FLUXA_STD_HTTPS
+#  include "std/https/fluxa_std_https.h"
 #endif
 #ifdef FLUXA_STD_I2C
 #  include "std/i2c/fluxa_std_i2c.h"
 #endif
+#ifdef FLUXA_STD_INFER
+#  include "std/infer/fluxa_std_infer.h"
+#endif
 #ifdef FLUXA_STD_JSON
 #  include "std/json/fluxa_std_json.h"
+#endif
+#ifdef FLUXA_STD_JSON2
+#  include "std/json2/fluxa_std_json2.h"
+#endif
+#ifdef FLUXA_STD_LIBDSP
+#  include "std/libdsp/fluxa_std_libdsp.h"
 #endif
 #ifdef FLUXA_STD_LIBV
 #  include "std/libv/fluxa_std_libv.h"
@@ -39,6 +60,12 @@
 #endif
 #ifdef FLUXA_STD_MCP
 #  include "std/mcp/fluxa_std_mcp.h"
+#endif
+#ifdef FLUXA_STD_MCPC
+#  include "std/mcpc/fluxa_std_mcpc.h"
+#endif
+#ifdef FLUXA_STD_MCPS
+#  include "std/mcps/fluxa_std_mcps.h"
 #endif
 #ifdef FLUXA_STD_MQTT
 #  include "std/mqtt/fluxa_std_mqtt.h"
@@ -57,6 +84,12 @@
 #endif
 #ifdef FLUXA_STD_TIME
 #  include "std/time/fluxa_std_time.h"
+#endif
+#ifdef FLUXA_STD_WEBSOCKET
+#  include "std/websocket/fluxa_std_websocket.h"
+#endif
+#ifdef FLUXA_STD_ZLIB
+#  include "std/zlib/fluxa_std_zlib.h"
 #endif
 
 /* ── rt_aware forward declarations ────────────────────────────────── */
@@ -106,25 +139,60 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "flxthread", "std.flxthread", "ft", NULL, NULL, NULL, 1, 0, 0 },
 #endif
+#ifdef FLUXA_STD_FS
+    { "fs", "std.fs", "fs", fluxa_std_fs_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "fs", "std.fs", "fs", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_GRAPH
+    { "graph", "std.graph", "graph", fluxa_std_graph_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "graph", "std.graph", "graph", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_HTTP
     { "http", "std.http", "http", fluxa_std_http_call, NULL, NULL, 0, 0, 1 },
 #else
     { "http", "std.http", "http", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_HTTPC
+    { "httpc", "std.httpc", "httpc", fluxa_std_httpc_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "httpc", "std.httpc", "httpc", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_HTTPS
+    { "https", "std.https", "https", fluxa_std_https_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "https", "std.https", "https", NULL, NULL, NULL, 0, 0, 0 },
 #endif
 #ifdef FLUXA_STD_I2C
     { "i2c", "std.i2c", "i2c", fluxa_std_i2c_call, NULL, NULL, 0, 0, 1 },
 #else
     { "i2c", "std.i2c", "i2c", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_INFER
+    { "infer", "std.infer", "infer", fluxa_std_infer_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "infer", "std.infer", "infer", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_JSON
     { "json", "std.json", "json", NULL, NULL, fluxa_std_json_call, 0, 1, 1 },
 #else
     { "json", "std.json", "json", NULL, NULL, NULL, 0, 1, 0 },
 #endif
-#ifdef FLUXA_STD_LIBV
-    { "libv", "std.libv", "libv", fluxa_std_libv_call, NULL, NULL, 0, 0, 1 },
+#ifdef FLUXA_STD_JSON2
+    { "json2", "std.json2", "json2", fluxa_std_json2_call, NULL, NULL, 0, 0, 1 },
 #else
-    { "libv", "std.libv", "libv", NULL, NULL, NULL, 0, 0, 0 },
+    { "json2", "std.json2", "json2", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_LIBDSP
+    { "libdsp", "std.libdsp", "libdsp", NULL, NULL, fluxa_std_libdsp_call, 0, 1, 1 },
+#else
+    { "libdsp", "std.libdsp", "libdsp", NULL, NULL, NULL, 0, 1, 0 },
+#endif
+#ifdef FLUXA_STD_LIBV
+    { "libv", "std.libv", "libv", NULL, NULL, fluxa_std_libv_call, 0, 1, 1 },
+#else
+    { "libv", "std.libv", "libv", NULL, NULL, NULL, 0, 1, 0 },
 #endif
 #ifdef FLUXA_STD_MATH
     { "math", "std.math", "math", fluxa_std_math_call, NULL, NULL, 0, 0, 1 },
@@ -135,6 +203,16 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
     { "mcp", "std.mcp", "mcp", fluxa_std_mcp_call, NULL, NULL, 0, 0, 1 },
 #else
     { "mcp", "std.mcp", "mcp", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_MCPC
+    { "mcpc", "std.mcpc", "mcpc", fluxa_std_mcpc_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "mcpc", "std.mcpc", "mcpc", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_MCPS
+    { "mcps", "std.mcps", "mcps", fluxa_std_mcps_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "mcps", "std.mcps", "mcps", NULL, NULL, NULL, 0, 0, 0 },
 #endif
 #ifdef FLUXA_STD_MQTT
     { "mqtt", "std.mqtt", "mqtt", fluxa_std_mqtt_call, NULL, NULL, 0, 0, 1 },
@@ -166,9 +244,19 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "time", "std.time", "time", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_WEBSOCKET
+    { "websocket", "std.websocket", "websocket", fluxa_std_websocket_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "websocket", "std.websocket", "websocket", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_ZLIB
+    { "zlib", "std.zlib", "zlib", fluxa_std_zlib_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "zlib", "std.zlib", "zlib", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 };
 
-#define FLUXA_LIB_COUNT 15
+#define FLUXA_LIB_COUNT 26
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

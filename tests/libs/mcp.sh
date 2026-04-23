@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # tests/libs/mcp.sh — std.mcp test suite
-# Tests that don't require a live MCP server validate API shape and errors.
-# Server-dependent tests are skipped if no MCP server is reachable.
+#
+# std.mcp = Fluxa AS an MCP server (JSON-RPC 2.0 over HTTP, mongoose backend)
+# API: mcp.serve(port), mcp.poll(server, ms), mcp.stop(server), mcp.version()
 set -euo pipefail
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
-P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT
+P="$(mktemp -d)"; _SRV_PID=0
+trap 'rm -rf "$P"; [ "$_SRV_PID" -gt 0 ] && kill "$_SRV_PID" 2>/dev/null || true' EXIT
 FAILS=0; PASS=0
 
 pass() { printf "  PASS  libs/mcp/%s\n" "$1"; PASS=$((PASS+1)); }
@@ -13,14 +15,7 @@ fail() { printf "  FAIL  libs/mcp/%s\n    expected: %s\n    got:      %s\n" "$1"
 skip() { printf "  SKIP  libs/mcp/%s  (%s)\n" "$1" "$2"; PASS=$((PASS+1)); }
 
 toml() { printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.mcp="1.0"\n' > "$P/fluxa.toml"; }
-run()  { toml; cat > "$P/main.flx"; timeout 10s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true; }
-
-# MCP server check — only if MCP_TEST_URL is set in env
-MCP_URL="${MCP_TEST_URL:-}"
-HAVE_MCP=0
-if [ -n "$MCP_URL" ]; then
-    curl -s --max-time 3 "$MCP_URL" >/dev/null 2>&1 && HAVE_MCP=1 || true
-fi
+run()  { toml; cat > "$P/main.flx"; timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true; }
 
 echo "── std.mcp ──────────────────────────────────────────────────────"
 
@@ -28,106 +23,84 @@ echo "── std.mcp ───────────────────�
 printf '[project]\nname="t"\nentry="main.flx"\n' > "$P/fluxa.toml"
 cat > "$P/main.flx" << 'FLX'
 import std mcp
-danger { dyn c = mcp.connect("http://localhost:3000") }
+danger { dyn s = mcp.serve(19300) }
 FLX
 out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
-echo "$out" | grep -qiE "not declared|libs|toml" && pass "import_without_toml_error" || fail "import_without_toml_error" "not declared" "$out"
+echo "$out" | grep -qiE "not declared|libs|toml" \
+    && pass "import_without_toml_error" || fail "import_without_toml_error" "not declared" "$out"
 
-# 2. connect returns dyn cursor (no network needed — lazy connect)
+# 2. version is nonempty
+out=$(run << 'FLX'
+import std mcp
+str v = mcp.version()
+print(len(v))
+FLX
+)
+echo "$out" | grep -qE "^[1-9]" && pass "version_nonempty" || fail "version_nonempty" "nonempty" "$out"
+
+# 3. version mentions backend
+out=$(run << 'FLX'
+import std mcp
+str v = mcp.version()
+print(v)
+FLX
+)
+echo "$out" | grep -qiE "mongoose|fluxa-mcp" && pass "version_contains_backend" || fail "version_contains_backend" "mongoose" "$out"
+
+# 4. serve returns cursor
 out=$(run << 'FLX'
 import std mcp
 danger {
-    dyn c = mcp.connect("http://localhost:9999")
-    print("cursor ok")
+    dyn s = mcp.serve(19301)
+    bool ok = s != nil
+    print(ok)
+    mcp.stop(s)
 }
+if err != nil { print(err[0]) }
 FLX
 )
-echo "$out" | grep -q "cursor ok" && pass "connect_returns_cursor" || fail "connect_returns_cursor" "cursor ok" "$out"
+echo "$out" | grep -q "true" && pass "serve_returns_cursor" || fail "serve_returns_cursor" "true" "$out"
 
-# 3. connect_auth returns dyn cursor
+# 5. poll returns nil on timeout (no request)
 out=$(run << 'FLX'
 import std mcp
 danger {
-    dyn c = mcp.connect_auth("http://localhost:9999", "mytoken")
-    print("auth ok")
+    dyn s = mcp.serve(19303)
+    dyn req = mcp.poll(s, 100)
+    bool is_nil = req == nil
+    print(is_nil)
+    mcp.stop(s)
 }
+if err != nil { print(err[0]) }
 FLX
 )
-echo "$out" | grep -q "auth ok" && pass "connect_auth_returns_cursor" || fail "connect_auth_returns_cursor" "auth ok" "$out"
+echo "$out" | grep -q "true" && pass "poll_no_request_nil" || fail "poll_no_request_nil" "true" "$out"
 
-# 4. list_tools on unreachable server → error in danger
+# 6. stop bad cursor → error
 out=$(run << 'FLX'
-import std mcp
-danger {
-    dyn c = mcp.connect("http://this-host-does-not-exist-fluxa.invalid:9999")
-    dyn tools = mcp.list_tools(c)
-}
-if err != nil { print("error caught") }
-FLX
-)
-echo "$out" | grep -q "error caught" && pass "list_tools_unreachable_error" || fail "list_tools_unreachable_error" "error caught" "$out"
-
-# 5. call on unreachable server → error in danger
-out=$(run << 'FLX'
-import std mcp
-danger {
-    dyn c = mcp.connect("http://this-host-does-not-exist-fluxa.invalid:9999")
-    str result = mcp.call(c, "read_file", "{\"path\":\"/tmp/x\"}")
-}
-if err != nil { print("error caught") }
-FLX
-)
-echo "$out" | grep -q "error caught" && pass "call_unreachable_error" || fail "call_unreachable_error" "error caught" "$out"
-
-# 6. list_tools on bad cursor → error
-toml
-cat > "$P/main.flx" << 'FLX'
 import std mcp
 danger {
     dyn bad = [1, 2, 3]
-    dyn tools = mcp.list_tools(bad)
+    mcp.stop(bad)
 }
 if err != nil { print("error caught") }
-FLX
-out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
-echo "$out" | grep -q "error caught" && pass "list_tools_bad_cursor_error" || fail "list_tools_bad_cursor_error" "error caught" "$out"
-
-# 7. call on bad cursor → error
-toml
-cat > "$P/main.flx" << 'FLX'
-import std mcp
-danger {
-    dyn bad = [1, 2, 3]
-    str r = mcp.call(bad, "tool", "{}")
-}
-if err != nil { print("error caught") }
-FLX
-out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
-echo "$out" | grep -q "error caught" && pass "call_bad_cursor_error" || fail "call_bad_cursor_error" "error caught" "$out"
-
-# 8. disconnect on bad cursor → error
-toml
-cat > "$P/main.flx" << 'FLX'
-import std mcp
-danger {
-    dyn bad = [1, 2, 3]
-    mcp.disconnect(bad)
-}
-if err != nil { print("error caught") }
-FLX
-out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
-echo "$out" | grep -q "error caught" && pass "disconnect_bad_cursor_error" || fail "disconnect_bad_cursor_error" "error caught" "$out"
-
-# 9. prst dyn cursor pattern (state survives hot reload)
-out=$(run << 'FLX'
-import std mcp
-prst dyn server = [0]
-print("prst ok")
 FLX
 )
-echo "$out" | grep -q "prst ok" && pass "prst_cursor_pattern" || fail "prst_cursor_pattern" "prst ok" "$out"
+echo "$out" | grep -q "error caught" && pass "stop_bad_cursor_error" || fail "stop_bad_cursor_error" "error caught" "$out"
 
-# 10. unknown function → error
+# 7. poll bad cursor → error
+out=$(run << 'FLX'
+import std mcp
+danger {
+    dyn bad = [1, 2, 3]
+    mcp.poll(bad, 100)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "poll_bad_cursor_error" || fail "poll_bad_cursor_error" "error caught" "$out"
+
+# 8. unknown function → error
 out=$(run << 'FLX'
 import std mcp
 danger { mcp.nonexistent_fn() }
@@ -136,21 +109,50 @@ FLX
 )
 echo "$out" | grep -q "error caught" && pass "unknown_function_error" || fail "unknown_function_error" "error caught" "$out"
 
-# 11. live server — list_tools (only if MCP_TEST_URL is set)
-if [ "$HAVE_MCP" -eq 1 ]; then
-    out=$(run << FLX
+# 9. serve+poll loop pattern
+out=$(run << 'FLX'
 import std mcp
 danger {
-    dyn c = mcp.connect("$MCP_URL")
-    dyn tools = mcp.list_tools(c)
-    print(len(tools))
-    mcp.disconnect(c)
+    dyn srv = mcp.serve(19304)
+    int tick = 0
+    while tick < 3 {
+        mcp.poll(srv, 50)
+        tick = tick + 1
+    }
+    print("loop ok")
+    mcp.stop(srv)
 }
+if err != nil { print(err[0]) }
 FLX
 )
-    echo "$out" | grep -qE "^[0-9]+" && pass "live_list_tools_returns_count" || fail "live_list_tools_returns_count" "integer count" "$out"
+echo "$out" | grep -q "loop ok" && pass "serve_poll_loop_pattern" || fail "serve_poll_loop_pattern" "loop ok" "$out"
+
+# 10. live: tools/list via JSON-RPC POST (opt-in: FLUXA_TEST_MCP=1)
+if [ "${FLUXA_TEST_MCP:-0}" = "1" ]; then
+    toml
+    cat > "$P/main.flx" << 'FLX'
+import std mcp
+danger {
+    dyn srv = mcp.serve(19305)
+    int tick = 0
+    while tick < 50 {
+        mcp.poll(srv, 100)
+        tick = tick + 1
+    }
+    mcp.stop(srv)
+}
+FLX
+    timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" >/dev/null 2>&1 &
+    _SRV_PID=$!; sleep 0.5
+    resp=$(curl -s --max-time 3 -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+        http://127.0.0.1:19305/ 2>/dev/null || echo "")
+    kill "$_SRV_PID" 2>/dev/null; _SRV_PID=0
+    echo "$resp" | grep -q '"tools"' \
+        && pass "live_tools_list" || fail "live_tools_list" '"tools" in JSON' "$resp"
 else
-    skip "live_list_tools_returns_count" "no MCP server (set MCP_TEST_URL to enable)"
+    skip "live_tools_list" "set FLUXA_TEST_MCP=1 to enable"
 fi
 
 echo "────────────────────────────────────────────────────────────────"

@@ -39,6 +39,15 @@ void runtime_set_cancel_flag(volatile int *flag) {
     g_cancel_flag = flag;
 }
 
+/* ── Sprint 13: Runtime Update Protocol — restart snapshot ───────────────── */
+/* Path to a serialized PrstPool left by the previous binary via execve.
+ * Set once by main() before runtime_exec(). Consumed on first cycle. */
+static char g_restart_snapshot_path[4096] = {0};
+
+void runtime_set_restart_snapshot(const char *path) {
+    if (path) strncpy(g_restart_snapshot_path, path, sizeof(g_restart_snapshot_path)-1);
+}
+
 /* ── Error helpers ────────────────────────────────────────────────────────── */
 /* Sprint 8: rt_error_line includes line number in message and ErrEntry.
  * rt_error kept for compatibility — calls rt_error_line with line=0. */
@@ -2287,6 +2296,43 @@ int runtime_exec(ASTNode *program) {
             if (ne) { rt.prst_pool.entries = ne; rt.prst_pool.cap = config.prst_cap; }
         }
         prst_graph_init_cap(&rt.prst_graph, config.prst_graph_cap);
+
+        /* ── Sprint 13: Runtime Update Protocol — load restart snapshot ──── */
+        if (g_restart_snapshot_path[0]) {
+            FILE *snap_f = fopen(g_restart_snapshot_path, "rb");
+            if (snap_f) {
+                fseek(snap_f, 0, SEEK_END);
+                long snap_sz = ftell(snap_f); rewind(snap_f);
+                if (snap_sz > 0) {
+                    void *snap_buf = malloc((size_t)snap_sz);
+                    size_t snap_nr = fread(snap_buf, 1, (size_t)snap_sz, snap_f);
+                    fclose(snap_f);
+                    if (snap_nr == (size_t)snap_sz) {
+                        if (prst_pool_deserialize(&rt.prst_pool,
+                                                  snap_buf, (size_t)snap_sz)) {
+                            fprintf(stderr,
+                                "[fluxa] restart: loaded %d prst vars from snapshot\n",
+                                rt.prst_pool.count);
+                        } else {
+                            fprintf(stderr,
+                                "[fluxa] restart: WARNING — snapshot load failed, "
+                                "starting with empty prst pool\n");
+                        }
+                    }
+                    free(snap_buf);
+                } else {
+                    fclose(snap_f);
+                }
+                /* Remove snapshot file — consumed */
+                remove(g_restart_snapshot_path);
+                g_restart_snapshot_path[0] = '\0';
+            } else {
+                fprintf(stderr,
+                    "[fluxa] restart: WARNING — snapshot file not found: %s\n",
+                    g_restart_snapshot_path);
+                g_restart_snapshot_path[0] = '\0';
+            }
+        }
     } else {
         /* Script mode: zero out pool/graph so free() calls are safe */
         rt.prst_pool.entries = NULL;

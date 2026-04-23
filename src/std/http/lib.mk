@@ -1,7 +1,7 @@
-# std.http — HTTP client via libcurl
+# std.http — HTTP server + client via mongoose (vendored in vendor/)
 ifeq ($(FLUXA_BUILDTIME_HTTP),1)
-ifeq ($(shell pkg-config --exists libcurl 2>/dev/null && echo 1 || echo 0),1)
-FLUXA_EXTRA_CFLAGS  += -DFLUXA_STD_HTTP=1 $(shell pkg-config --cflags libcurl)
-FLUXA_EXTRA_LDFLAGS += $(shell pkg-config --libs libcurl)
-endif
+FLUXA_EXTRA_CFLAGS  += -DFLUXA_STD_HTTP=1 -D_GNU_SOURCE -Ivendor
+FLUXA_MG_GNU_SOURCE := 1
+# mongoose.c compiled as part of the build
+FLUXA_EXTRA_SRCS    += vendor/mongoose.c
 endif

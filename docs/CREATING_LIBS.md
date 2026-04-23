@@ -1,6 +1,6 @@
 # Creating Standard Libraries for Fluxa-lang
 
-**Current workflow — Sprint 12.b+**
+**Current workflow — v0.13.x+**
 
 Adding a new lib requires **4 files** and **zero edits to core runtime files**.
 The lib linker (`scripts/gen_lib_registry.py`) handles all integration automatically.
@@ -435,3 +435,47 @@ If your lib spawns background threads (like `std.flxthread`):
 Every spawned thread gets its own `Runtime` clone via `runtime_clone_for_thread()` — own stack, scope, GC; shared prst pool (synchronized automatically by `NODE_ASSIGN`).
 
 Document which loop pattern the thread uses (sleep / hot / polling) — it determines mailbox drain frequency.
+
+---
+
+## Dual-Backend Pattern
+
+When a lib benefits from an optional high-performance dependency (libwebsockets, FFTW3, OpenBLAS, Raylib, llama.cpp), use the dual-backend pattern:
+
+```c
+#ifdef FLUXA_MYLIB_FAST_BACKEND
+#include <fastlib.h>
+// Full implementation using fast library
+#else
+// Pure C99 fallback — same API, simpler/slower implementation
+// Use fprintf(stderr, "[fluxa] std.mylib: stub backend\n") to inform user
+#endif
+```
+
+In `lib.mk`:
+
+```make
+ifeq ($(FLUXA_BUILDTIME_MYLIB),1)
+FLUXA_EXTRA_CFLAGS += -DFLUXA_STD_MYLIB=1
+
+ifdef FLUXA_MYLIB_FAST_BACKEND
+  ifneq ($(wildcard vendor/fastlib.h),)
+    FLUXA_EXTRA_CFLAGS  += -DFLUXA_MYLIB_FAST_BACKEND=1 -Ivendor
+    FLUXA_EXTRA_LDFLAGS += vendor/libfast.a -lm
+  else ifeq ($(shell pkg-config --exists fastlib 2>/dev/null && echo 1 || echo 0),1)
+    FLUXA_EXTRA_CFLAGS  += -DFLUXA_MYLIB_FAST_BACKEND=1 $(shell pkg-config --cflags fastlib)
+    FLUXA_EXTRA_LDFLAGS += $(shell pkg-config --libs fastlib)
+  else
+    $(warning std.mylib: fast backend requested but not found — using stub)
+  endif
+endif
+
+endif
+```
+
+**Examples using this pattern:**
+- `std.websocket`: native RFC6455 ↔ libwebsockets (`make FLUXA_WS_LWS=1`)
+- `std.libdsp`: pure C99 FFT ↔ FFTW3 (`[libs.libdsp] backend = "fftw"`)
+- `std.libv`: pure C99 ↔ OpenBLAS (`[libs.libv] backend = "blas"`)
+- `std.graph`: stub no-op ↔ Raylib (`make FLUXA_GRAPH_RAYLIB=1`)
+- `std.infer`: stub placeholder ↔ llama.cpp (`make FLUXA_INFER_LLAMA=1`)

@@ -111,6 +111,8 @@ typedef struct {
     int          json_max_str;    /* [libs.json] max_str_bytes, default 4096  */
     int          ffi_str_buf_size; /* [ffi] str_buf_size — writable char* buffer
                                    * allocated per pointer arg, default 1024   */
+    char         libdsp_backend[16]; /* [libs.libdsp] backend = "native"|"fftw"  */
+    char         libv_backend[16];   /* [libs.libv]   backend = "native"|"blas"  */
     FluxaSecurityConfig security; /* [security] — key paths + enforcement mode */
 } FluxaConfig;
 
@@ -125,6 +127,8 @@ static inline FluxaConfig fluxa_config_defaults(void) {
     c.warm_func_cap  = 32;  /* WARM_FUNC_CAP_DEFAULT */
     c.json_max_str      = 4096;
     c.ffi_str_buf_size  = 1024;
+    strncpy(c.libdsp_backend, "native", sizeof(c.libdsp_backend)-1);
+    strncpy(c.libv_backend,   "native", sizeof(c.libv_backend)-1);
     /* security: off by default — must be explicitly enabled in [security] */
     c.security.mode = FLUXA_SEC_MODE_OFF;
     c.security.signing_key_path[0]  = '\0';
@@ -409,16 +413,20 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
     FILE *f = fopen(toml_path, "r");
     if (!f) return;
     char line[512];
-    int in_libs = 0;
+    int in_libs      = 0;
     int in_libs_json = 0;
+    int in_libs_libdsp = 0;
+    int in_libs_libv   = 0;
     while (fgets(line, sizeof(line), f)) {
         /* Strip leading whitespace */
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
         /* Section header */
         if (*p == '[') {
-            in_libs      = (strncmp(p, "[libs]",      6) == 0);
-            in_libs_json = (strncmp(p, "[libs.json]", 11) == 0);
+            in_libs        = (strncmp(p, "[libs]",        6) == 0);
+            in_libs_json   = (strncmp(p, "[libs.json]",  11) == 0);
+            in_libs_libdsp = (strncmp(p, "[libs.libdsp]",13) == 0);
+            in_libs_libv   = (strncmp(p, "[libs.libv]",  11) == 0);
             continue;
         }
         if (in_libs) {
@@ -453,6 +461,38 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
                 if (eq) {
                     int v = (int)strtol(eq + 1, NULL, 10);
                     if (v > 0) cfg->json_max_str = v;
+                }
+            }
+        }
+        if (in_libs_libdsp) {
+            if (strncmp(p, "backend", 7) == 0) {
+                char *eq = strchr(p, '=');
+                if (eq) {
+                    eq++;
+                    while (*eq == ' ' || *eq == '"') eq++;
+                    char *end = eq;
+                    while (*end && *end != '"' && *end != '\n' && *end != ' ') end++;
+                    int len = (int)(end - eq);
+                    if (len > 0 && len < 15) {
+                        memcpy(cfg->libdsp_backend, eq, (size_t)len);
+                        cfg->libdsp_backend[len] = '\0';
+                    }
+                }
+            }
+        }
+        if (in_libs_libv) {
+            if (strncmp(p, "backend", 7) == 0) {
+                char *eq = strchr(p, '=');
+                if (eq) {
+                    eq++;
+                    while (*eq == ' ' || *eq == '"') eq++;
+                    char *end = eq;
+                    while (*end && *end != '"' && *end != '\n' && *end != ' ') end++;
+                    int len = (int)(end - eq);
+                    if (len > 0 && len < 15) {
+                        memcpy(cfg->libv_backend, eq, (size_t)len);
+                        cfg->libv_backend[len] = '\0';
+                    }
                 }
             }
         }

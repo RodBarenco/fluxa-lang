@@ -1,11 +1,9 @@
-# std.mcp — MCP client (depends on libcurl via std.http)
+# std.mcp — Fluxa as MCP server via mongoose
+# Depends on std.http (shares mongoose.c — only compiled once)
 ifeq ($(FLUXA_BUILDTIME_MCP),1)
-ifeq ($(shell pkg-config --exists libcurl 2>/dev/null && echo 1 || echo 0),1)
-FLUXA_EXTRA_CFLAGS  += -DFLUXA_STD_MCP=1 $(shell pkg-config --cflags libcurl)
-# libcurl already added by std.http/lib.mk if both enabled — no dup link needed
-# but we guard in case http is disabled and mcp is enabled standalone
+FLUXA_EXTRA_CFLAGS += -DFLUXA_STD_MCP=1 -D_GNU_SOURCE -Ivendor
+# mongoose.c only added if http didn't add it already
 ifneq ($(FLUXA_BUILDTIME_HTTP),1)
-FLUXA_EXTRA_LDFLAGS += $(shell pkg-config --libs libcurl)
-endif
+FLUXA_EXTRA_SRCS   += vendor/mongoose.c
 endif
 endif
