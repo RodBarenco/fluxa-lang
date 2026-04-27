@@ -56,7 +56,7 @@ echo "  Fluxa Suite 2 — Edge Cases & Integration (v0.10)"
 echo "  binary: $FLUXA"
 echo "════════════════════════════════════════════════════════════════════"
 
-ALL_SECTIONS="prst handover gc dyn block types_danger embedded"
+ALL_SECTIONS="prst handover gc dyn block types_danger embedded flxthread"
 
 if [ -n "$SECTION" ]; then
     # Run only requested sections (comma-separated)

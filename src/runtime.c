@@ -17,6 +17,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Thread-shared prst pool accessor.
+ * In thread clones, shared_prst_pool points to the parent's PrstPool so all
+ * threads read/write the same live state. In the main runtime, it is NULL and
+ * we fall back to the local prst_pool. ft.lock() provides per-variable
+ * serialization of the read-modify-write cycle for locked prst vars. */
+#define RT_POOL(rt) ((rt)->shared_prst_pool ? (rt)->shared_prst_pool : &(rt)->prst_pool)
+
+#ifdef FLUXA_STD_FLXTHREAD
+#include "std/flxthread/fluxa_std_flxthread.h"
+#endif
+
 /* Sprint 9: IPC pending-set hook — defined in ipc_server.c. */
 extern void ipc_apply_pending_set(Runtime *rt);
 struct IpcRtView;
@@ -225,8 +236,16 @@ static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
      * not from the stack. Local fn vars (params, locals) share stack slot
      * numbers with global prst vars in the resolver's flat offset space. */
     if (rt->call_depth > 0 && node && node->resolved_offset >= 0 &&
-        prst_pool_has(&rt->prst_pool, name)) {
+        prst_pool_has(RT_POOL(rt), name)) {
         Value v; v.type = VAL_NIL;
+        /* In thread clones, always read prst from the shared pool so we see
+         * the latest value written by any thread. Local scope is a stale copy.
+         * Note: lock is acquired in NODE_ASSIGN (write side) — the read here
+         * is intentionally outside the lock to avoid recursive mutex acquire. */
+        if (rt->shared_prst_pool) {
+            prst_pool_get(RT_POOL(rt), name, &v);
+            return v;
+        }
         if (scope_get(&rt->scope, name, &v) && v.type != VAL_NIL) return v;
         /* prst var not yet in scope (first access before fn writes it) —
          * try the global scope table which holds the top-level frame. */
@@ -239,8 +258,23 @@ static inline Value rt_get(Runtime *rt, ASTNode *node, const char *name) {
         /* Only trust the stack slot if it contains a real value.
          * Block instances and other scope-stored vars have a resolved_offset
          * assigned by the resolver but are never written to the stack —
-         * their slot stays VAL_NIL. Fall through to scope lookup in that case. */
-        if (v.type != VAL_NIL) return v;
+         * their slot stays VAL_NIL. Fall through to scope lookup in that case.
+         * In thread clones, prst globals live in the shared pool — if the
+         * stack slot is NIL (not yet written by this thread), read the pool. */
+        if (v.type != VAL_NIL) {
+            /* If we're in a thread clone and this var is a prst global,
+             * always read from shared pool to see other threads' writes. */
+            if (rt->shared_prst_pool && prst_pool_has(RT_POOL(rt), name)) {
+                prst_pool_get(RT_POOL(rt), name, &v);
+            }
+            return v;
+        }
+    }
+    /* Thread clone fallback: if prst var not yet on local stack, read pool. */
+    if (rt->shared_prst_pool && prst_pool_has(RT_POOL(rt), name)) {
+        Value v; v.type = VAL_NIL;
+        prst_pool_get(RT_POOL(rt), name, &v);
+        return v;
     }
     if (rt->current_instance) {
         Value v;
@@ -461,8 +495,8 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
      * For VAL_STRING: scope_free() will free the char* — so we must
      * strdup() to give each frame its own copy independent of the pool. */
     if (rt->mode == FLUXA_MODE_PROJECT) {
-        for (int _pi = 0; _pi < rt->prst_pool.count; _pi++) {
-            PrstEntry *_pe = &rt->prst_pool.entries[_pi];
+        for (int _pi = 0; _pi < RT_POOL(rt)->count; _pi++) {
+            PrstEntry *_pe = &RT_POOL(rt)->entries[_pi];
             ValType _vt = _pe->value.type;
             if (_vt == VAL_INT || _vt == VAL_FLOAT || _vt == VAL_BOOL) {
                 scope_set(&rt->scope, _pe->name, _pe->value);
@@ -755,7 +789,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 } else {
                     /* PROJECT mode: check pool first */
                     Value pooled;
-                    if (prst_pool_has(&rt->prst_pool, vname)) {
+                    if (prst_pool_has(RT_POOL(rt), vname)) {
                         /* Reload path: pool has a value from the previous run.
                          *
                          * Two cases:
@@ -769,7 +803,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                          * user changed the source -> use source.  If they match,
                          * keep the runtime value from the pool.
                          */
-                        prst_pool_get(&rt->prst_pool, vname, &pooled);
+                        prst_pool_get(RT_POOL(rt), vname, &pooled);
 
                         Value src_init = eval(rt, node->as.var_decl.initializer);
                         if (rt->had_error) return val_nil();
@@ -778,9 +812,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
                          * (the declared value at first run or at migration time).
                          * If they differ → user edited the source → use source.
                          * If they match → runtime mutated the value → keep pooled. */
-                        int entry_idx = prst_pool_find(&rt->prst_pool, vname);
+                        int entry_idx = prst_pool_find(RT_POOL(rt), vname);
                         Value ref = (entry_idx >= 0)
-                            ? rt->prst_pool.entries[entry_idx].init_value
+                            ? RT_POOL(rt)->entries[entry_idx].init_value
                             : pooled;
 
                         int src_changed = 0;
@@ -805,13 +839,13 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
                         /* Always refresh offset: resolver may assign a different
                          * slot on a new parse of the same file. */
-                        prst_pool_set(&rt->prst_pool, vname, chosen, &rt->err_stack);
-                        prst_pool_set_offset(&rt->prst_pool, vname,
+                        prst_pool_set(RT_POOL(rt), vname, chosen, &rt->err_stack);
+                        prst_pool_set_offset(RT_POOL(rt), vname,
                                              node->resolved_offset);
                         /* If the source declaration changed, update init_value
                          * so future reloads use the new declaration as baseline. */
                         if (src_changed && entry_idx >= 0) {
-                            Value *iv = &rt->prst_pool.entries[entry_idx].init_value;
+                            Value *iv = &RT_POOL(rt)->entries[entry_idx].init_value;
                             if (iv->type == VAL_STRING && iv->as.string)
                                 free(iv->as.string);
                             *iv = src_init;
@@ -827,12 +861,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (rt->had_error) return val_nil();
                     if (!rt_type_check(rt, node, node->as.var_decl.type_name, v, vname))
                         return val_nil();
-                    int ok = prst_pool_set(&rt->prst_pool, vname, v, &rt->err_stack);
+                    int ok = prst_pool_set(RT_POOL(rt), vname, v, &rt->err_stack);
                     if (ok >= 0) {
                         rt_set(rt, node, vname, v);
                         rt_gc_pin(rt, &v);
                         /* Record stack offset so post-VM sync can read rt->stack */
-                        prst_pool_set_offset(&rt->prst_pool, vname,
+                        prst_pool_set_offset(RT_POOL(rt), vname,
                                               node->resolved_offset);
                         scope_table_set(&rt->global_table, vname, v);
                     }
@@ -898,13 +932,23 @@ static Value eval(Runtime *rt, ASTNode *node) {
             /* Sprint 7: keep prst_pool in sync so fluxa explain shows
              * current values and reload restores the latest state.
              * Skip during dry_run (Ciclo Imaginário) — mutations must not
-             * pollute the pool that will be transferred to the live runtime. */
+             * pollute the pool that will be transferred to the live runtime.
+             * flxthread: if ft.lock("var") was called, acquire the named
+             * mutex before writing to the shared pool and release after. */
             if (!rt->dry_run &&
                 rt->mode == FLUXA_MODE_PROJECT &&
-                prst_pool_has(&rt->prst_pool, node->as.assign.var_name)) {
-                prst_pool_set(&rt->prst_pool, node->as.assign.var_name,
+                prst_pool_has(RT_POOL(rt), node->as.assign.var_name)) {
+#ifdef FLUXA_STD_FLXTHREAD
+                int _locked = rt->shared_prst_pool
+                              ? flx_lock_acquire(node->as.assign.var_name)
+                              : 0;
+#endif
+                prst_pool_set(RT_POOL(rt), node->as.assign.var_name,
                               v, &rt->err_stack);
                 scope_table_set(&rt->global_table, node->as.assign.var_name, v);
+#ifdef FLUXA_STD_FLXTHREAD
+                if (_locked) flx_lock_release(node->as.assign.var_name);
+#endif
             }
             return val_nil();
         }
@@ -1026,6 +1070,20 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_WHILE: {
             Chunk chunk;
             if (chunk_compile_loop(&chunk, node)) {
+                /* Thread clone: refresh stack from shared pool before VM so
+                 * the loop starts with the latest prst values from any thread. */
+                if (rt->shared_prst_pool && rt->mode == FLUXA_MODE_PROJECT) {
+                    PrstPool *pool = rt->shared_prst_pool;
+                    for (int _pi = 0; _pi < pool->count; _pi++) {
+                        PrstEntry *_pe = &pool->entries[_pi];
+                        int _off = _pe->stack_offset;
+                        if (_off >= 0 && _off < FLUXA_STACK_SIZE) {
+                            rt->stack[_off] = _pe->value;
+                            if (_off >= rt->stack_size)
+                                rt->stack_size = _off + 1;
+                        }
+                    }
+                }
                 vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size,
                        rt->cancel_flag);
                 chunk_free(&chunk);
@@ -1033,15 +1091,22 @@ static Value eval(Runtime *rt, ASTNode *node) {
                  * pool and global_table. The VM writes rt->stack[offset]
                  * directly — the PrstEntry stores the offset set at decl time. */
                 if (rt->mode == FLUXA_MODE_PROJECT) {
-                    for (int pi = 0; pi < rt->prst_pool.count; pi++) {
-                        PrstEntry *pe = &rt->prst_pool.entries[pi];
+                    for (int pi = 0; pi < RT_POOL(rt)->count; pi++) {
+                        PrstEntry *pe = &RT_POOL(rt)->entries[pi];
                         int off = pe->stack_offset;
                         if (off >= 0 && off < rt->stack_size) {
                             Value sv = rt->stack[off];
                             if (sv.type == pe->declared_type) {
-                                prst_pool_set(&rt->prst_pool, pe->name,
+#ifdef FLUXA_STD_FLXTHREAD
+                                int _lk = rt->shared_prst_pool
+                                          ? flx_lock_acquire(pe->name) : 0;
+#endif
+                                prst_pool_set(RT_POOL(rt), pe->name,
                                               sv, &rt->err_stack);
                                 scope_table_set(&rt->global_table, pe->name, sv);
+#ifdef FLUXA_STD_FLXTHREAD
+                                if (_lk) flx_lock_release(pe->name);
+#endif
                             }
                         }
                     }
@@ -1194,23 +1259,23 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 /* Register in prst pool if declared persistent */
                 if (node->as.arr_decl.persistent && !rt->dry_run &&
                     rt->mode == FLUXA_MODE_PROJECT) {
-                    int pi = prst_pool_find(&rt->prst_pool,
+                    int pi = prst_pool_find(RT_POOL(rt),
                                             node->as.arr_decl.arr_name);
                     if (pi < 0) {
                         /* First run — register with init_value = declared arr */
-                        prst_pool_set(&rt->prst_pool,
+                        prst_pool_set(RT_POOL(rt),
                                       node->as.arr_decl.arr_name,
                                       arr, &rt->err_stack);
-                        pi = prst_pool_find(&rt->prst_pool,
+                        pi = prst_pool_find(RT_POOL(rt),
                                             node->as.arr_decl.arr_name);
                         if (pi >= 0) {
-                            rt->prst_pool.entries[pi].declared_type = VAL_ARR;
-                            rt->prst_pool.entries[pi].init_value    = arr;
+                            RT_POOL(rt)->entries[pi].declared_type = VAL_ARR;
+                            RT_POOL(rt)->entries[pi].init_value    = arr;
                         }
                     } else {
                         /* Reload — deep copy pooled arr into scope so mutations
                          * to scope don't alias the pool's copy */
-                        Value pooled = rt->prst_pool.entries[pi].value;
+                        Value pooled = RT_POOL(rt)->entries[pi].value;
                         if (pooled.type == VAL_ARR && pooled.as.arr.data) {
                             int psz = pooled.as.arr.size;
                             Value *dcopy = (Value*)malloc(
@@ -1426,10 +1491,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
             /* Sync mutated arr back to prst pool if it's a prst variable */
             if (!rt->dry_run && rt->mode == FLUXA_MODE_PROJECT) {
-                int pi = prst_pool_find(&rt->prst_pool, arr_name);
+                int pi = prst_pool_find(RT_POOL(rt), arr_name);
                 if (pi >= 0) {
                     /* The pool entry holds its own copy — update element in place */
-                    Value *pool_val = &rt->prst_pool.entries[pi].value;
+                    Value *pool_val = &RT_POOL(rt)->entries[pi].value;
                     if (pool_val->type == VAL_ARR && pool_val->as.arr.data &&
                         idx < pool_val->as.arr.size) {
                         if (pool_val->as.arr.data[idx].type == VAL_STRING &&
@@ -1743,8 +1808,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 found = scope_table_get(rt->global_table, arr_name, &arr_val);
             /* 5. prst pool */
             if (!found && rt->mode == FLUXA_MODE_PROJECT) {
-                int pi = prst_pool_find(&rt->prst_pool, arr_name);
-                if (pi >= 0) { arr_val = rt->prst_pool.entries[pi].value; found = 1; }
+                int pi = prst_pool_find(RT_POOL(rt), arr_name);
+                if (pi >= 0) { arr_val = RT_POOL(rt)->entries[pi].value; found = 1; }
             }
             if (!found) {
                 char buf[280];
@@ -1801,7 +1866,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
             /* prst check — hard error in all modes, bypasses danger capture */
             if (rt->mode == FLUXA_MODE_PROJECT &&
-                prst_pool_find(&rt->prst_pool, var_name) >= 0) {
+                prst_pool_find(RT_POOL(rt), var_name) >= 0) {
                 char buf[320];
                 snprintf(buf, sizeof(buf),
                     "[fluxa] Runtime error (line %d): cannot free prst variable '%s'"
@@ -2208,9 +2273,30 @@ Runtime *runtime_clone_for_thread(Runtime *parent) {
     rt->config       = parent->config;         /* lib flags — read-only */
     rt->mode         = parent->mode;
     rt->cancel_flag  = parent->cancel_flag;
-    /* Shared mutable — prst pool needs external mutex for thread safety */
-    rt->prst_pool    = parent->prst_pool;
+    /* Shared mutable — thread clone points to parent's prst_pool so all
+     * threads read/write the same live state. ft.lock() serializes per-var
+     * read-modify-write for any variable registered with ft.lock("name"). */
+    rt->shared_prst_pool = parent->shared_prst_pool
+                           ? parent->shared_prst_pool
+                           : &parent->prst_pool;
     rt->prst_graph   = parent->prst_graph;
+    /* Pre-populate the clone's stack from the shared pool so the VM and
+     * tree-walker both start with the correct prst values.
+     * This is a snapshot at thread-start; subsequent reads go back to the
+     * pool (for rt_get in shared_prst_pool mode) or via the stack (for the
+     * VM, which syncs back to the pool after each while loop). */
+    if (rt->mode == FLUXA_MODE_PROJECT) {
+        PrstPool *pool = rt->shared_prst_pool;
+        for (int _i = 0; _i < pool->count; _i++) {
+            PrstEntry *_pe = &pool->entries[_i];
+            int _off = _pe->stack_offset;
+            if (_off >= 0 && _off < FLUXA_STACK_SIZE) {
+                rt->stack[_off] = _pe->value;
+                if (_off >= rt->stack_size)
+                    rt->stack_size = _off + 1;
+            }
+        }
+    }
     /* GC: each thread has its own GC table to avoid races on dyn alloc */
     gc_init(&rt->gc, parent->config.gc_cap > 0 ? parent->config.gc_cap : 256);
     /* FFI: shared (read-only after init) */
@@ -2273,6 +2359,7 @@ int runtime_exec(ASTNode *program) {
     rt.current_line     = 0;
     rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = mode;
+    rt.shared_prst_pool = NULL;   /* main runtime owns its own pool */
     rt.config           = config;
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
@@ -2407,6 +2494,7 @@ int runtime_exec_explain(ASTNode *program) {
     rt.current_line     = 0;
     rt.cancel_flag      = g_cancel_flag;
     rt.mode             = FLUXA_MODE_PROJECT;  /* always project for explain */
+    rt.shared_prst_pool = NULL;
     rt.config           = config;
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
@@ -2451,11 +2539,11 @@ int runtime_exec_explain(ASTNode *program) {
 void runtime_explain(Runtime *rt) {
     printf("\n── prst (persist across reloads) ");
     printf("────────────────────────────────────\n");
-    if (rt->prst_pool.count == 0) {
+    if (RT_POOL(rt)->count == 0) {
         printf("  (none)\n");
     } else {
-        for (int i = 0; i < rt->prst_pool.count; i++) {
-            PrstEntry *e = &rt->prst_pool.entries[i];
+        for (int i = 0; i < RT_POOL(rt)->count; i++) {
+            PrstEntry *e = &RT_POOL(rt)->entries[i];
             /* Prefer value from global_table (reflects latest assignments,
              * including those done via bytecode VM) over pool snapshot */
             Value cur = e->value;
@@ -2557,6 +2645,7 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
     rt.cancel_flag      = g_cancel_flag;  /* watcher sets this in -dev mode */
     rt.mode             = FLUXA_MODE_PROJECT;
     rt.config           = config;
+    rt.shared_prst_pool = NULL;
     errstack_clear(&rt.err_stack);
     gc_init(&rt.gc, config.gc_cap);
     ffi_registry_init(&rt.ffi);
@@ -2632,8 +2721,8 @@ int runtime_exec_with_rt(Runtime *rt, ASTNode *program) {
     rt->stack_size = 0;
 
     /* Invalidate graph deps — will be re-registered during execution */
-    for (int i = 0; i < rt->prst_pool.count; i++)
-        prst_graph_invalidate(&rt->prst_graph, rt->prst_pool.entries[i].name);
+    for (int i = 0; i < RT_POOL(rt)->count; i++)
+        prst_graph_invalidate(&rt->prst_graph, RT_POOL(rt)->entries[i].name);
 
     for (int i = 0; i < program->as.list.count; i++) {
         eval(rt, program->as.list.children[i]);

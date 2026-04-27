@@ -67,6 +67,10 @@ typedef struct Runtime {
     /* Sprint 7 */
     FluxaMode      mode;
     PrstPool       prst_pool;
+    PrstPool      *shared_prst_pool; /* non-NULL in thread clones: points to
+                                      * parent's prst_pool so all threads share
+                                      * the same pool. ft.lock() serializes
+                                      * reads+writes per named variable. */
     PrstGraph      prst_graph;
     FluxaConfig    config;
 

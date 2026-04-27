@@ -391,10 +391,12 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         pthread_mutex_unlock(&g_flx_registry.registry_mu);
 
         /* Sync main runtime stack from prst_pool so main thread sees
-         * any prst writes made by child threads (global fn threads). */
+         * any prst writes made by child threads (global fn threads).
+         * Use the same pool resolution as RT_POOL: shared if clone, local if main. */
         if (rt->mode == FLUXA_MODE_PROJECT) {
-            for (int _pi = 0; _pi < rt->prst_pool.count; _pi++) {
-                PrstEntry *_pe = &rt->prst_pool.entries[_pi];
+            PrstPool *pool = rt->shared_prst_pool ? rt->shared_prst_pool : &rt->prst_pool;
+            for (int _pi = 0; _pi < pool->count; _pi++) {
+                PrstEntry *_pe = &pool->entries[_pi];
                 if (_pe->stack_offset >= 0 &&
                     _pe->stack_offset < FLUXA_STACK_SIZE) {
                     rt->stack[_pe->stack_offset] = _pe->value;
