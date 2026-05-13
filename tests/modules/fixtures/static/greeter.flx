@@ -1,0 +1,2 @@
+fn greet(str name) str  { return name }
+fn is_long(str s)  bool { return len(s) > 5 }

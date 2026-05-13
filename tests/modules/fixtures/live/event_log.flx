@@ -1,0 +1,4 @@
+prst dyn log = []
+fn append(int v)  nil { log[len(log)] = v }
+fn size()         int { return len(log) }
+fn get(int i)     int { return log[i] }

@@ -1,0 +1,8 @@
+// static/constants.flx — compile-time constants (no fn needed, used directly)
+// These are top-level values read by main, not inside functions.
+// Standard Fluxa: non-prst globals not accessible inside fn bodies.
+
+int   MAX_RETRY  = 3
+float THRESHOLD  = 0.5
+str   VERSION    = "1.0.0"
+bool  DEBUG_MODE = false

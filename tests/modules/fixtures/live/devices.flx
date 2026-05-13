@@ -1,0 +1,17 @@
+Block Motor {
+    prst int rpm = 0
+
+    fn set_rpm(int v)  nil  { rpm = v }
+    fn get_rpm()       int  { return rpm }
+    fn is_running()    bool { return rpm > 0 }
+}
+
+Block Thermometer {
+    prst float temp = 20.0
+    prst bool  alarm = false
+
+    fn set(float v)    nil  { temp = v }
+    fn get()           float { return temp }
+    fn check(float hi) nil  { if temp > hi { alarm = true } }
+    fn alarmed()       bool { return alarm }
+}

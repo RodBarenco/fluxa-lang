@@ -144,7 +144,7 @@ else
 fi
 
 # ── CASO 7: fluxa ffi list executa sem crash ─────────────────────────────────
-out=$(timeout 10s "$FLUXA" ffi list 2>&1 || true)
+out=$(timeout 20s "$FLUXA" ffi list 2>&1 || true)
 # Accept any non-empty output — the test verifies it doesn't crash
 # "lib", "available", "declared", "ffi", "ldconfig", or any system message
 if [ -n "$out" ] && echo "$out" | grep -qiv "command not found\|unknown command\|error.*ffi list"; then

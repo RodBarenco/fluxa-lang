@@ -1,6 +1,6 @@
 # fluxa dis — Fluxa Program Disassembler
 
-**v0.14 — stable**
+**v0.15 — stable**
 
 `fluxa dis` is a standalone static analysis command. It parses and resolves
 a Fluxa program without executing it, then writes a human-readable report

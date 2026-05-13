@@ -1,0 +1,8 @@
+prst int arr buf[8] = 0
+prst int     head   = 0
+fn push(int v) nil {
+    buf[head] = v
+    head = head + 1
+}
+fn get(int i) int { return buf[i] }
+fn size()     int { return head }

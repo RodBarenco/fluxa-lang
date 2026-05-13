@@ -1,0 +1,16 @@
+// live/arr_module.flx — arr types in a module
+prst int arr readings[4] = 0
+prst int   write_idx = 0
+
+fn push(int v) nil {
+    readings[write_idx] = v
+    write_idx = write_idx + 1
+}
+
+fn get(int i) int {
+    return readings[i]
+}
+
+fn count() int {
+    return write_idx
+}

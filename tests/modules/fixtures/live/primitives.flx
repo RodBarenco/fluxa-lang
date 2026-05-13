@@ -1,0 +1,18 @@
+// live/primitives.flx — exports primitives of each type
+//
+// prst vars: accessible inside fn bodies (standard Fluxa scoping)
+// Constants used only at top-level don't need prst
+
+prst int   count   = 42
+prst float ratio   = 3.14
+prst str   label   = "fluxa"
+prst bool  active  = true
+
+fn get_count()  int   { return count  }
+fn get_ratio()  float { return ratio  }
+fn get_label()  str   { return label  }
+fn get_active() bool  { return active }
+
+fn set_count(int v)   nil { count  = v    }
+fn set_label(str v)   nil { label  = v    }
+fn toggle()           nil { active = !active }

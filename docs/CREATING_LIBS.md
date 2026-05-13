@@ -1,6 +1,6 @@
 # Creating Standard Libraries for Fluxa-lang
 
-**Current workflow — v0.14+**
+**Current workflow — v0.15+**
 
 Adding a new lib requires **4 files** and **zero edits to core runtime files**.
 The lib linker (`scripts/gen_lib_registry.py`) handles all integration automatically.

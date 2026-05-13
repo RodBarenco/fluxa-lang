@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.14 — Beta**
+**v0.15 — Beta**
 
-*Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 26 stdlib libs*
+*Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 26 stdlib libs · Module System*
 
 *Hobby language — Rio de Janeiro, Brazil*
 
@@ -164,6 +164,29 @@ Represents absence of value. Functions without a return value declare nil as the
 ## 4. Variable Declaration
 
 Static typing always precedes the identifier. No untyped declaration, no inference.
+
+### 4.0 Scope and Ownership
+
+Fluxa has **no global variables**. Every value has exactly one owner. Ownership is the organizing principle of the entire language.
+
+A variable declared at the script body level belongs to the script execution context. It lives for the duration of that execution and dies when the context ends. Functions receive values as arguments and return values — there is no shared mutable state between them except through `prst` (which persists across reloads) or `Block` members (which are explicitly encapsulated).
+
+```fluxa
+int x = 10         // x belongs to this execution context
+
+fn double(int n) int {
+    return n + n   // n is a parameter — x is not visible here
+}
+
+// To use x in a function, pass it explicitly:
+int result = double(x)
+```
+
+This is not a limitation — it is a feature. It eliminates an entire class of bugs caused by hidden state coupling between functions. Every data flow in a Fluxa program is explicit.
+
+The only cross-call state mechanisms are:
+- `prst` — survives hot reloads, stored in PrstPool, accessible from any `Block` or module that declares it
+- `Block` members — state encapsulated within a Block, accessible through that Block's methods
 
 ```fluxa
 int   a    = 10
@@ -333,11 +356,152 @@ Hot reload is a first-class citizen. The runtime maintains a dependency graph (P
 
 ### 9.1 Import Types
 
-Fluxa supports three import forms:
+Fluxa supports four import forms:
 
 - `import std <lib>` → opt-in standard library (declared in `[libs]` of fluxa.toml)
 - `import c <lib>`   → C FFI via dlopen/libffi — only valid inside `danger` blocks
-- `import live` / `import static` → planned; not yet implemented
+- `import live <name>` → load a Fluxa module from `live/<name>.flx` (or `<module_root>/live/<name>.flx`)
+- `import static <name>` → load a Fluxa module from `static/<name>.flx`
+
+See §9.5 for the module system.
+
+### 9.5 Module System
+
+Fluxa v0.15 introduces `import live` and `import static` for organizing code across multiple `.flx` files. Modules are a **lens of organization**, not a runtime concept. They do not introduce new scoping rules, new runtime objects, or new execution phases.
+
+#### How it works
+
+The module loader runs entirely before the lexer. When `main.flx` contains `import live sensor`, the loader:
+
+1. Reads `live/sensor.flx`
+2. Prefixes all top-level declarations with the namespace: `fn set(...)` → `fn sensor__set(...)`
+3. Inserts these declarations into the program **before** the main body
+4. Registers `sensor` as a known namespace in the parser
+5. When the parser sees `sensor.set(42.0)` in main, it emits `NODE_FUNC_CALL "sensor__set"` — a plain function call
+
+The result is a single flat program. The runtime sees no modules — only functions and Block declarations with mangled names.
+
+#### Syntax
+
+```fluxa
+// main.flx
+import live sensor      // loads live/sensor.flx
+import static utils     // loads static/utils.flx
+
+Block s typeof sensor.Sensor
+s.set(3.14)
+print(s.get())
+print(utils.double(7))
+```
+
+```fluxa
+// live/sensor.flx
+Block Sensor {
+    prst float reading = 0.0
+    fn set(float v) nil { reading = v }
+    fn get() float       { return reading }
+}
+```
+
+```fluxa
+// static/utils.flx
+fn double(int n) int { return n + n }
+fn clamp(int v, int lo, int hi) int {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+```
+
+#### Convention: live vs static
+
+The `live/` and `static/` directories are convention, not enforcement. The runtime treats them identically. The distinction communicates intent:
+
+| Directory | Convention |
+|---|---|
+| `live/` | Modules with `prst` state — designed for hot reload |
+| `static/` | Pure function modules — no state, just logic |
+
+#### Namespace isolation
+
+The double-underscore separator (`__`) prevents accidental collision between module names and user identifiers:
+
+```fluxa
+import static utils
+int utils__double = 99       // user variable — different from utils.double
+print(utils.double(3))       // → 6  (calls utils__double fn)
+print(utils__double)         // → 99 (accesses user variable)
+```
+
+#### Why single-level imports only
+
+Fluxa deliberately limits imports to `main.flx`. Modules cannot import other modules.
+
+This is not a missing feature — it is a design decision:
+
+- **No namespace hell.** In systems where modules can import modules, understanding what is in scope requires tracing a graph of imports. In Fluxa, everything in scope is declared in one of two places: the current file, or a module listed at the top of `main.flx`. No transitive dependencies, no diamond problems, no hidden coupling.
+
+- **No circular dependencies.** Circular imports between modules are structurally impossible when imports are one-level only.
+
+- **Complete visibility.** The top of `main.flx` is a complete manifest of everything the program depends on. Reading 10 lines tells you everything the program uses.
+
+- **Consistent with Fluxa's philosophy.** *Simple > Complete. Local Control > Global Magic.* A module system that requires a build tool to understand is not simple. Fluxa's module system fits in a few lines of `main.c`.
+
+The solution to "I need to share code between modules" is the same as in any Fluxa code: extract it to a module that both import from `main.flx`, or pass the value explicitly.
+
+#### Block declarations in modules
+
+A `Block` declared in a module is namespaced automatically:
+
+```fluxa
+// live/devices.flx
+Block Motor {
+    prst int rpm = 0
+    fn set_rpm(int v) nil { rpm = v }
+    fn get_rpm()      int { return rpm }
+}
+```
+
+```fluxa
+// main.flx
+import live devices
+Block m typeof devices.Motor   // typeof accepts namespace.BlockName
+m.set_rpm(1200)
+print(m.get_rpm())
+```
+
+#### module_root — custom path resolution
+
+By default, `import live sensor` resolves to `live/sensor.flx` relative to the CWD. A project with a different layout can configure the root:
+
+```toml
+[project]
+module_root = "src"
+# import live sensor → src/live/sensor.flx
+```
+
+#### Scope rules in modules
+
+Modules follow the same scope rules as the rest of Fluxa. There are no module-level globals. Functions in modules receive all values as arguments and return values. State lives in `Block` members (via `prst`).
+
+```fluxa
+// live/counter.flx
+Block Counter {
+    prst int count = 0
+    fn increment() nil { count = count + 1 }  // count is a Block member
+    fn get()       int { return count }
+    fn reset()     nil { count = 0 }
+}
+```
+
+```fluxa
+// main.flx
+import live counter
+Block c typeof counter.Counter
+c.increment()
+c.increment()
+print(c.get())    // 2
+```
 
 ### 9.2 Execution Mode — Script vs Project
 
@@ -1222,6 +1386,7 @@ synchronized via the pool's own lock, not via the GC.
 | 12.e | ✅ | **std.libv** — N-dimensional vectors, matrices, tensors. GLM-inspired API. Col-major. In-place ops. Pure C99 ~800L, zero deps. |
 | 12.f | ✅ | **std.libdsp** — FFT (Cooley-Tukey, in-place), STFT, windowing, FIR/IIR, range-Doppler, CFAR, matched filter. Radar/DSP math. Requires std.libv. |
 | 12.g | ✅ | **Libs 3** — std.graph (Raylib), std.infer (llama.cpp). Dual backend: stub (zero deps, default) + real backend when vendored. `make FLUXA_GRAPH_RAYLIB=1` / `make FLUXA_INFER_LLAMA=1`. |
+| 15   | ✅ | **Module System** — `import live <name>` / `import static <name>`. Single-level imports in `main.flx` only. Namespace mangling at parse time (`sensor.fn()` → `sensor__fn()`). Zero runtime changes. `[project] module_root` in fluxa.toml. `Block` declarations in modules with `typeof ns.Block`. 15 module tests. |
 | 13   | ✅ | **Runtime Update Protocol** — `fluxa update <new_binary> [-p]` replaces the running binary with zero downtime. IPC_OP_UPDATE (0x07) triggers prst serialization at safe point, then `execve` with `FLUXA_RESTART_SNAPSHOT` env var. New binary loads snapshot and continues execution. Security: UID check always enforced, generic errors to client, path traversal guard, FLUXA_SECURE requires `.sig` file. |
 
 ---
@@ -1232,8 +1397,11 @@ synchronized via the pool's own lock, not via the GC.
 # fluxa.toml — optional config at project root
 
 [project]
-name  = "my_project"
-entry = "main.flx"
+name        = "my_project"
+entry       = "main.flx"
+module_root = "src"   # optional — base dir for import live/static resolution
+                      # default: CWD  →  import live sensor = live/sensor.flx
+                      # with src:     →  import live sensor = src/live/sensor.flx
 
 [runtime]
 gc_cap         = 1024   # GC table hard cap (static array, default 1024)
@@ -1405,7 +1573,7 @@ std.csv  = "1.0"    # Data
 | std.fs | System | POSIX | **✅ implemented** | Filesystem: read, write, append, exists, delete, rename, copy, size, mkdir, listdir, isdir, isfile, join, basename, dirname, ext, tempfile. |
 | std.websocket | Network | native C99 + libwebsockets optional | **✅ implemented** | WebSocket client. ws:// native (RFC 6455 pure C99, zero deps). wss:// with FLUXA_WS_LWS=1 + libssl-dev. |
 | std.libv | Math / Graphics | own ~450L C99 | **✅ implemented** | N-dimensional vectors, matrices, tensors. GLM-inspired API. col-major. In-place ops. vec2/3/4, mat2/3/4, matmul, FFT-ready. |
-| std.libdsp | DSP / Radar | own C99 + FFTW 🔲 | **✅ implemented** | FFT (Cooley-Tukey), STFT, windowing, FIR/IIR, matched filter, range-Doppler, CFAR. FFTW backend planned. |
+| std.libdsp | DSP / Radar | own C99 + FFTW opt-in | **✅ implemented** | FFT (Cooley-Tukey), STFT, windowing, FIR/IIR, matched filter, range-Doppler, CFAR. FFTW backend planned. |
 
 ### 17.4 Library Memory Model
 
@@ -1460,7 +1628,7 @@ mcp.serve(7777)
 
 ### 17.6 std.libv — N-Dimensional Vectors, Matrices, Tensors
 
-**Status: 🔲 planned** — design finalized, not yet implemented.
+**Status: ✅ implemented**
 
 `std.libv` brings GLM-style vector and matrix math to Fluxa. The mental model is deliberately identical to GLSL/GLM — anyone who has written a shader or used OpenGL already knows the API. No new types are introduced: all storage is backed by `float arr` or `int arr` (always flat, col-major). The lib adds shape semantics and algebraic operations on top of existing Fluxa arrays.
 
@@ -1580,7 +1748,7 @@ No C dependencies — pure C99 ~800 lines. Works on RP2040 and ESP32.
 
 ### 17.7 std.libdsp — DSP and Radar Math
 
-**Status: 🔲 planned** — requires std.libv.
+**Status: ✅ implemented** — requires std.libv.
 
 `std.libdsp` provides frequency-domain operations for signal processing and radar applications. It uses `std.libv` arrays as its native storage format. FFT operates in-place on `float arr` — no separate complex type, interleaved real/imag layout.
 

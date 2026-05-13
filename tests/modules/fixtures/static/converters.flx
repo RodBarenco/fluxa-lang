@@ -1,0 +1,8 @@
+fn int_to_float(int n) float { return n }
+fn bool_to_int(bool b) int { if b { return 1 } return 0 }
+fn clamp_int(int v, int lo, int hi) int {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+fn is_even(int n) bool { return n - (n/2)*2 == 0 }
