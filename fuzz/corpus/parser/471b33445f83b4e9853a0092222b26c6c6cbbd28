@@ -1,0 +1,127 @@
+// data_structureata_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10ata_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        ret (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+array (row*5 + col)
+// Movement: 4-directional. urn 0
+    }
+
+    fn size() int {
+     // problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Intermediate -> AdvaS may find A path, but not the CHEAPEST path.
+//
+// Graph: weighted 5x5 grid, cells as linear array (row*5 + col)
+// Movement: 4-directionlems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0Ô  { return 0 }
+array (row*5 + col)
+// Movement: 4-directional. C   return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 {
+            print("[ va {
+        ops[coufn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+array (row*5 + col)
+// Movement: 2-directional// 0

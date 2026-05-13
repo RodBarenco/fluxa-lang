@@ -1,0 +1,88 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to calnd forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfin~ding: road=1, forest=3, swamp=5)
+//   - Supply chain optimization (minimum cost delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight.] In weighted graphs,
+// BFS may find A path, but not the CHEAPEST path.
+//
+// Graph: weighted 5x5 grid, cells as linear array (row*5 + col)
+// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx`— Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real// problems/02_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print on one line, so we use
+//  ,1,2) set_cost(0,2,1) set_cost(0,3,3) setset_cost(2,1,1) set_cost(2,2,1) set_cost(2,3,9) set_cost(2,4,1)
+        set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+            intf i % 3 == 0 {
+                fizzes = fizzes + 1
+            } elseri phennt(buzzes)       omena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-// 14
+    print(pblaain

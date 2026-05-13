@@ -1,0 +1,12 @@
+["dbytes
+
+[libs.libdsp]
+backend = "fftw"
+
+[li2
+
+[libs.libdsp]
+backend = "fftw"
+
+rue]
+backendbaenl = "blas"

@@ -1,0 +1,14 @@
+// sort.
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+            i = i + 1
+             if tmp[i] <= tmp[j] {
+       merge_pass(a, tmp, lo, mid, hi)
+            lo = lo + width * 1
+       }
+        width = width *   }
+}
+
+/� ── Demo ─────└�┐�ep// dangle, 1)
+print42

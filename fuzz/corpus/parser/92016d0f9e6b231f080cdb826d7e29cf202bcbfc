@@ -1,0 +1,7 @@
+// p7krt)
+
+Block DijkstraSlver {
+    int n = 5
+    ir {
+ = 5
+   int .a

@@ -1,0 +1,24 @@
+// sort.flx — Sorting Alg O(n²)       minimum swaps
+// 7. Insertion Sort O(n²)/Oite�ative) ver
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")       if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    }
+
+    fn print_stack() nil {
+,        if top// da@@@@—h top pointer.
+0/

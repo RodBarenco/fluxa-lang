@@ -1,0 +1,6 @@
+// stack.flx
+
+Block Stack {
+    int arr fordata[64] = 0
+   prst tÿop
+0

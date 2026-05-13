@@ -1,0 +1,9 @@
+// trucﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂülx
+
+Block Stack {
+   int top = -1
+
+    fn push(int val) nil {
+}
+
+    fn is_empty() int  {

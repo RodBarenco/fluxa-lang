@@ -1,0 +1,27 @@
+// sort.flx âamples/sort.flxÿÿ^\J{ù`
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+   print(a[i])
+        i = i + 1// r.
+//úĞĞß·ˆßto run:
+//   ./fluxa run examples/sort.flx
+
+fn p2int_arr(int arr a, dyn n) nil {
+    int i =  5 
+  while i < n {
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+      }
+}
+
+// â”€â”€â”€â”t.fllx
+
+fn print_arr(int arr a, dyn n) nil        dst[i] = srd[i]
+      key = a[i]
+ rr a, int 

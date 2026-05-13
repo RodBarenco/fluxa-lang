@@ -1,0 +1,12 @@
+// data_structures/stack. Out.
+// Implement
+    fn check() int {
+        Block s typeof Stack
+        int i = 0
+        while i < count {
+            if ops[i] == 1 {
+                s.push(1)
+            } else {
+              }
+                s.pop()
+        0

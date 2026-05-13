@@ -1,0 +1,18 @@
+// data_structures Implementation: þÿÿÿstati
+
+    fn is_empty() int {
+      if top < 0 {
+            return 0
+        }
+        return int(tack.pop())       // 11
+print(kz)      // 10   e checker  ”€â”*â”€â”€â”€â€n data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+    
+    }
+
+    fn check() int {
+        Bloc  c1.c

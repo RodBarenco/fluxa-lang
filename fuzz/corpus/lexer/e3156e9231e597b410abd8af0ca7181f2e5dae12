@@ -1,0 +1,12 @@
+//aceite Sprint 7.a
+//
+// imulado: inicializa com 0,
+//    reatribuiÃ§Ã£o representa segundo acesso pÃ³s-reload)
+// 2. prst registra dependÃªncia no grafo
+// 3. Block com prst &€” modo project ativo
+// 4. Leitura de prst em funÃo£ §Ãâ†’ dependÃªncia registrada
+// 4. GC cflow gera err em err_stack sem crash
+
+//¬â”€â”€ 1. prst bÃ¡sitÃ©rios de aceiâ”€â”€
+€
+Blotcke

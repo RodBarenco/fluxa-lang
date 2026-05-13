@@ -1,0 +1,5 @@
+pu  32
+
+[security]
+ipc_max_conns= 2n
+ipc_max_conns         = 14 

@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <math.h>
+#include <limits.h>
 #include "../../scope.h"
 #include "../../err.h"
 
@@ -240,7 +241,13 @@ static inline J2Node *j2_navigate(J2Node *root, const char *path) {
             /* array index */
             p++;
             int idx = 0;
-            while (*p && isdigit((unsigned char)*p)) { idx = idx*10 + (*p-'0'); p++; }
+            while (*p && isdigit((unsigned char)*p)) {
+                /* Clamp at INT_MAX before signed-overflow; the index
+                 * check below will reject it as out-of-range either way. */
+                if (idx > (INT_MAX - 9) / 10) idx = INT_MAX;
+                else                          idx = idx * 10 + (*p - '0');
+                p++;
+            }
             if (*p == ']') p++;
             if (cur->type != J2_ARRAY || idx >= cur->v.arr.count) return NULL;
             cur = cur->v.arr.items[idx];

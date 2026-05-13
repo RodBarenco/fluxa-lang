@@ -1,0 +1,169 @@
+// proble�/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fi to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last I/ data_structures/stack.flx — Stack
+//
+// LIFO: Last In, Fiisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does noton: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Le// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  iflx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  pusher
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//             k
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last I/ data_structures/stack.flx — Stack
+//
+// LIFO: Last In, Fiisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does noton: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Le// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// oblem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementvel: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problemation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Bgeinner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixe:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by // problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-t3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx — Stack
+//
+// LIFO: d-type print On one linLast In, First Out.
+// Ime, so we use
+//    inte O(2) | peek O(1) | is_empty O(1)
+//
+pleme// ntApplications// dation

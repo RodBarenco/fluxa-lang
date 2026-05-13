@@ -1,0 +1,158 @@
+// proble�/01_fizzbuzz.flxnd 5 (Fizz����)
+//     - 3  if divisible by 3     (Fi to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking    (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does noton: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// L(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_/
+s.is(_s(s(_exp/
+s.is(_/is(_._exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_.iexp/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.ortis(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.iss(_ins(_.is(_.is(_inss(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_.iexp/(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.isp(_s(_ins(_.is(s(_exp/
+s.is(_.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_.iexp/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(ns(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(s(_s(_ins_.is(_.is(_.is(_s(_ins(_.iexp/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.isp(_s(_ins(_.is(s(_exp/
+s.p/
+s.is(_s(s(_exp/
+s.is/
+s.is(_.iwidtis(_.is(_s(s(_s(_ins_.is(_.is(_.is(_s(_ins(W.iexp/
+s.is(_s(s(_exp/
+s.is(_/is(_._exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_.iexp/
+s.is(_s(s(_exp/
+s.is((_.ortis(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.iss(_ins(_.is(_.is(_inss(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(_ins(_.iexp/(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.isp(_s(_ins(_.is(s(_exp/
+s.is(_.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+is(_.is(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.i(_.isp(_s(_ins(_.is(s(_exp/
+s.p/
+s.is(_s(s(_exp/
+s.is/
+s.is(_.iwidt_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.ortis(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.iss(_ins(_.is(_.is(_inss(_ins(_.is(_.is(_ins(_.is(_.is(_exp/
+s.is(_.issp(_s(_ins(_.is(s(_exp/
+s.is(_.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_ins(_.is(_.ipppppppppppppppppppppppppppppppppppppppppp88888888888888888888888s(_exp/s.is(_.is(_.is(_.is(_s(_ins(_.iexp/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(ns(_.is(_.is(_exp/
+s.is(_.is(_.is(_.is(_s(s(_s(_ins_.is(_.is(_.is(_s(_ins(_.igxp/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.is(_insxp/
+s.is(_.is(_.is(_.iss(_ins(_.is(_.is(_ins(_.is(_.is(_.is(_.is(_.isp(_s(_ins(_.is(s(_exp/
+s.p/
+s.is(_s(s(_exp/
+s.is(_/is(_.iexp/
+s.is(_.is(_.s(_ins(_.is(_.ortis(_insxp/
+s.is(_.is(e// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 Last In, Fiisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does noton: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Le// oprblems/01_fizzbuzz.flx — FizzzzBu
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic intstack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementvel: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problemation: statiekzzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx — Stack
+//
+// LIFO: Last I/ data_structures/stack.flx — Stack
+//
+// LIFO: Last In, Fiisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does noton: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+/isible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     s// dation

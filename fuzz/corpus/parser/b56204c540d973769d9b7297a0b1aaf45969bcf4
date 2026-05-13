@@ -1,0 +1,8 @@
+// ory$of the p2inlx
+
+Block DijkraSolver {
+      int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[0] = [ 0, 0,-1, 1]
+
+    fn iddi t.,3,9f)

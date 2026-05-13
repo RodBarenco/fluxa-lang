@@ -1,0 +1,7 @@
+[runtime]
+ )= 1024
+prst_cap   =    24
+prst_cap       = 64
+= 1*20
+prst_cap= 10
+prst_cap      = 6

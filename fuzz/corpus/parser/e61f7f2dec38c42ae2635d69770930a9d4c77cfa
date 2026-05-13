@@ -1,0 +1,25 @@
+// �roblems/07_dijkstra.f cost delivery routes)
+//on-nagative.
+//
+// Why not BFS? BFS astra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+ 
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn elsein_bouwds(int r, int c) int umes all{ return 1 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int boo{
+        if in_bounds(r, c) == 0 { return 99 }
+        int'// sort.flx — Sortv = costs[ v == 7 Sort O(n²)   |0 { return

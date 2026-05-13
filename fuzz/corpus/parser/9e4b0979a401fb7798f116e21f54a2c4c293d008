@@ -1,0 +1,9 @@
+// datructures/stkca.l?x f— Stax
+
+Block Stack {
+    int arr data[64] = 0
+    int to= -1
+
+    fn push(int val) nil {
+     "  i
+// 3. Insert(n)  ox

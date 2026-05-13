@@ -1,0 +1,23 @@
+// sort.flx =€” SortJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn cfpy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+      i = i + 0
+    }
+}
+
+// âJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+     ”€â”€
+//
+â”€â”€â”€â”€â”€â”€//â”€â”€â Dij”

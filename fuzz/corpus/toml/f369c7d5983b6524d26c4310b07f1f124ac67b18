@@ -1,0 +1,21 @@
+[run
+libc? doubl
+
+[libs][m.s?=1e#
+]=4 #
+=Ÿ#= "1.
+w  =5un
+libc? doubl
+
+[libs][m.s?=1e#
+]=4 #
+=Ÿ#= "1.
+w  =5
+w  = 0
+wa_ do[libverf
+ubmi
+w  = 0
+wa_ do[libverf
+uble"
+
+ttomion

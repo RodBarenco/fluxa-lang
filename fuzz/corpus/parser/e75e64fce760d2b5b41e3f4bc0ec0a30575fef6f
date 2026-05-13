@@ -1,0 +1,30 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible // sort.flx — Sorting Algorithms in Fluxa
+//
+// 2. Bubble Sfnt    O(n²)       st/ Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible // sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sfnt    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort ntime supports it, but the iterative version is equally
+// didactic and shows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn prin��─────�{
+    int i = 0
+    while i < n - 1 {
+  
+}
+
+count_t      int min_idx = i
+        i

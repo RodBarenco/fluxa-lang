@@ -1,0 +1,10 @@
+//data_strutucr; {
+    int arr ops[32] = 0
+    int count = 0
+
+    fn add(int op) nil {
+        ops[count] = op
+     }
+
+    fn check() int {
+        Block s typeof`// problems/01_”€â”€â”€â”€â”€âššššššššššišš”€â        

@@ -1,0 +1,6 @@
+// sort.flx â€²)/Oiàteative) ver
+    fn pop() int {
+   return data[top]
+    }
+
+    fn is()int        if top

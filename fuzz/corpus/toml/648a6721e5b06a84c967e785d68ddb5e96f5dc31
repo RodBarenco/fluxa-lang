@@ -1,0 +1,15 @@
+[rnuiemt]gc_cap _cap  = 17
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/libso"
+st3935
+
+[935
+
+[ffi.m.signatures]
+sqrt  = "(double) -> ddouble"
+
+[libs]
+std.mat.cs "1.0"
+ótd.js%%%% = "blas"

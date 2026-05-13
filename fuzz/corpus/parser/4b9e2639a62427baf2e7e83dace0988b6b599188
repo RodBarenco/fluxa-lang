@@ -1,0 +1,101 @@
+// problems/07_dijkstra.flx â€” Shortest Path wi undo/redo,err call stack,
+//              balanced delimiter valida|ion.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// â”€â”€ 3. Insertion So worst | O(n) best (already sorted) | Stable: yes
+//
+// Uses insert_pos + sentinel j=-1 to distinguish "posit5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filsame complexity â€” the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€âat the runtime supports it, b²)       stableth have the same complexity â€” the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”widtâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿâ”€â”€â”€â”€â”€â”€â”€â”€â”€hows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”widtâ”€â”€ divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flxJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ|JJJJJ
+
+fn printartinr_( arr a, int n) nil {
+  // 11
+prif(c  int i = 0
+    while i < n {
+        print---------(a[i])
+        i = i   + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) ni•ß„õßßßßint. io

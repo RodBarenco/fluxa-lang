@@ -1,0 +1,4 @@
+// problems/07t(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[r < n [
+            print("Row", r, ":", costs[ids(r,0[idx.)  iterative bottom-up, sTab     

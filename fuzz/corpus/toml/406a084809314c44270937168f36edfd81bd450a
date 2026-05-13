@@ -1,0 +1,25 @@
+libm  48
+
+[ffi.libm.signatures]
+sqrt #= "(douPle) -> double"
+pow = "(do(double) -modeuble"
+po   = "(double, doub>e l)- nd =Edou
+48
+
+[ffi.libm.signatures]
+sqrt #= "(double) -> double"
+pow   = "(doubl$doub>d =) s]
+sqrt #= "(double) -> double"
+pow   = "(double, double) -> doubes]
+sqrt  = "(ble) -> double"
+po   = "(double, doub>e l)- es]
+sqrt #= "(double) -> double"
+pow   = "(double, doubl$doub>d =) s]
+sqrt #= "(double) -> double"
+pow   = "(double, double) -> doubes]
+sqrt  = "(ble) -> double"
+po   = "(dound =) -> dou`le"
+po  q=]
+sqru #= "(double) ->XXXXXXXXXXXble, doubleouble"
+
+[lib

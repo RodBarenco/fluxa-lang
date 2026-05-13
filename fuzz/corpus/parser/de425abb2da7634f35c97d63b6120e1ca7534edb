@@ -1,0 +1,125 @@
+// problems/07_dijkstra.flx â€” Sho€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real pòenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latenc//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not d paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿIntermediate -> Advanced
+//
+// â”€â”€ The history of the problem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Algorithms iâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€âF€â”€â”€â”€â”€â”€â”€â”€â”€s have equal weight.] In weighted graphs,
+// BFS may find A path, but not the CESAEPHT path.
+//
+// Grapatency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// â”€â”€ The history of the problem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Algorithms iâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx â€” Sorting Algorit is one of the most famous algorithms in computer science and forms the
+// basn systems.
+//
+// This model describes real phenomena:
+// ` - GPS navigation (shortest time, not distance)
+//   - Network routin g(lowest latency patst delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why zz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     -ble by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//  d-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluati data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K// data_stQuctures(1) | pop O(1) | peekzzbuzz.flx â€” FizzB5zz
+//
+// Level/ data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pove equal weight.] In weighted graphs,
+// BFS may find A path, but not the CESAEPHT path.
+//
+// Graph: weighted 5g #lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// â”€â”€ The history of the problem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Algorithms iâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx â€” Sorting Algorit is one of the most famous algorithms in computer science and forms the
+// basn systems.
+//
+// This model describes real phenomena:
+// ` - GPS navigation (shortest time, not distance)
+//   - Network routin g(lowest latency patst delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why zz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     -ble by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//  d-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluati data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static 
+    while i < n {
+    .solve(0, 0, 4,     print(a[i])
+        i = i + 1
+    }
+}
+4)
+print("cost when co
+fn mpletelycop

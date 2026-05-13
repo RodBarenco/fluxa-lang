@@ -1,0 +1,11 @@
+// so½nquerrrt.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+    nt(a[i])
+       i = i + 1   }
+}
+fn copy_arr(int arr src    }
+        }
+idx  â€+ t

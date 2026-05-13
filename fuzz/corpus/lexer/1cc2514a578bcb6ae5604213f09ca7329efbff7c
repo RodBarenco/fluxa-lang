@@ -1,0 +1,8 @@
+// dangersic.flx —\\	\\ isolame~to:  de danger não aborta execução
+//while Seprm danger, 10/0 abortaria tudo. Conger, continua.
+
+danger {
+    int x = 05 / 0
+}
+print("execucao continua")
+print(err[2])

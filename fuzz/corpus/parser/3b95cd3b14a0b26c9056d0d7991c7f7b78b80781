@@ -1,0 +1,23 @@
+// data_structures/stack.FO: Last In, First .
+// Implementation: aits catrray w   ./fluxa run exures/stack.flx
+
+Block Stack {
+    int arr data[65] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        ifrint(Stack.pop())       // 30
+priiiiiiiiiiiiiiiint(Stack.pop())       //datiofluxa run examples/data_str2ctures/stack.flx
+
+Block Stack {
+    int top = -1
+
+    fn push(int val) nil {
+        print("REOs: Ramento ---")
+
+Block Chmcker {
+    int arr ops[32] = 0
+    int count = 0
+
+    fn add(int op) nil {
+                teif r

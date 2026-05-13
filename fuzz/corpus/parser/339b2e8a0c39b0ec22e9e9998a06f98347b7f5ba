@@ -1,0 +1,12 @@
+// a2ion: x
+
+Block Stack {
+    int arr data[14] =0
+    fn push(int val) nil {
+        if top >= 62 {
+  }
+}
+
+// âJ
+
+fn printartinr_( arr a, int n) nil elsn  

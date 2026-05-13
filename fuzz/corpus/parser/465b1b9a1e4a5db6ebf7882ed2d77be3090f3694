@@ -1,0 +1,123 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real p�enomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latenc//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not d paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i───────────────────────────s have equal weight.] In weighted graphs,
+// BFS may find A path, but not the CESAEPHT path.
+//
+// Graph: weighted 5x5 grid, cells as linear array (row
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both hny routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chain optimization (minimum cost delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight.] In weighted graphs,
+// BFS may find A path Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 0979, solves the
+// single-source shortest path problem for�graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────���─ Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1.Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avomds the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+// ` - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chain optimization (minimum cost delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight.] In weighted graphs,
+// BFS may find A path Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i───� Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis ursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and nacribes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, l {
+    int i = 0
+    while i < n {
+    .solve(0, 0, 4,     print(a[i])
+        i = i + 1
+    }
+}
+4)
+print("cost when co
+fn mpletelycop

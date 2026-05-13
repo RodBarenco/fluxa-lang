@@ -1,0 +1,47 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ────� How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+array (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn ro    visited[i] = i = i + 1
+        }
+    }
+
+ t(int arquer.
+//
+// How Blockto run:
+//   ./fluxa run examples/soost(1,0,1) set_cost(1,1,9) set_cost(1,2,1) set_cost(1,3,1) set_cost(1,4,2)
+        set_cost(2,0,3) set_cost(2,1,1) set_cost(2,2,1) set_cost(2zt.,3,9f)

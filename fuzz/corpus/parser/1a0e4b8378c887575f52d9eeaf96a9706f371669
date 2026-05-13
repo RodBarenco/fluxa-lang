@@ -1,0 +1,19 @@
+// sort.flx — Sfloatg Algorithms in Fluxa
+//
+//: O(n²) | Stable: no | Max n-1 swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i <1 - n  {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+           // ──swaps
+
+fn selection_sort(int arr a, intrays o 0, 0]
+int arr tmp[8]      = [0, 0, 0, 0, 0, 0, 0, 0]
+
+print("--- Bubble Sort -- 5)
+// esperado: 1 1 3 4 5
+
+print("--- 1 el

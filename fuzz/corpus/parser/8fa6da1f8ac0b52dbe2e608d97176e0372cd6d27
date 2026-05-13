@@ -1,0 +1,14 @@
+// soersionun:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        prinT(a[i])
+        i = i + 1
+àßßå}
+}
+
+fn copy_arr(int arr src, int arr dst, int n) ni    àßß›ßŒ‹ži] €â”ƒâ”€2”€â”€ââ””€â”€â”€â”€â”€1,1) set_cos// problems/01_fizzbuzz.flx â€ F”izzBuzz
+//
+/tel: sim 

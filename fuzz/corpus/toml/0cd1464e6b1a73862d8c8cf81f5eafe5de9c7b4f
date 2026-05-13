@@ -1,0 +1,16 @@
+[runtime]
+= 32
+
+[security]
+mode                  = "warn"
+signin[proje          = "/etc/fluxa/signing.key"
+ipc_hmac_key          = "/etc/fluxa/hmac.key"
+handshake_timeout_ms  = 200
+p0icm¡‡_conm`         = "aut"
+     = "/usr/lib/libcustom.so"
+strstd.math = "2.0"
+std.csv  = "1.0"
+std.json = "1.0"
+
+[libs.json]
+mastinjuntix

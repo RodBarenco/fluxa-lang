@@ -101,6 +101,9 @@ static inline const char *json_read_string(const char *p, char *buf, int buf_siz
     while (*p && *p != '"' && i < buf_size - 1) {
         if (*p == '\\') {
             p++;
+            /* Trailing '\\' with no escape char — stop before reading and
+             * advancing past the source's null terminator. */
+            if (*p == '\0') break;
             switch (*p) {
                 case '"':  buf[i++] = '"';  break;
                 case '\\': buf[i++] = '\\'; break;
@@ -124,35 +127,50 @@ static inline const char *json_read_string(const char *p, char *buf, int buf_siz
  * Only handles flat objects (no nested search). */
 static inline const char *json_find_key(const char *json, const char *key) {
     const char *p = json_skip_ws(json);
-    if (*p != '{') return NULL;
+    if (!p || *p != '{') return NULL;
     p++;
-    while (*p) {
+    while (p && *p) {
         p = json_skip_ws(p);
-        if (*p == '}') break;
+        if (!p || *p == '}') break;
         if (*p == ',') { p++; continue; }
         if (*p != '"') break;
+        /* Read key */
         char kbuf[FLUXA_JSON_MAX_KEY];
         p = json_read_string(p, kbuf, sizeof(kbuf));
         if (!p) break;
         p = json_skip_ws(p);
-        if (*p != ':') break;
+        if (!p || *p != ':') break;
         p++;
         p = json_skip_ws(p);
+        if (!p) break;
         if (strcmp(kbuf, key) == 0) return p;
-        /* Skip value */
+        /* Skip value to advance to next key */
         if (*p == '"') {
+            /* String value */
             char vbuf[FLUXA_JSON_MAX_STR];
             p = json_read_string(p, vbuf, sizeof(vbuf));
+            /* p may be NULL on malformed input — outer while checks */
         } else if (*p == '{' || *p == '[') {
-            int depth = 1; char open = *p; char close = open == '{' ? '}' : ']';
+            /* Nested object or array — track depth, skip strings inside */
+            int depth = 1;
+            char open = *p, close = (open == '{') ? '}' : ']';
             p++;
-            while (*p && depth > 0) {
-                if (*p == open) depth++;
-                else if (*p == close) depth--;
-                p++;
+            while (p && *p && depth > 0) {
+                if (*p == '"') {
+                    /* Skip string to avoid counting braces inside it */
+                    p++;
+                    while (p && *p && *p != '"') {
+                        if (*p == '\\' && *(p+1)) p++; /* skip escape */
+                        p++;
+                    }
+                    if (p && *p == '"') p++;
+                } else if (*p == open)  { depth++; p++; }
+                else if (*p == close) { depth--; p++; }
+                else { p++; }
             }
         } else {
-            while (*p && *p != ',' && *p != '}') p++;
+            /* Primitive: number, bool, null — advance past it */
+            while (p && *p && *p != ',' && *p != '}' && *p != ']') p++;
         }
     }
     return NULL;

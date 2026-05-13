@@ -1,0 +1,15 @@
+[
+[security]
+mode     = "/usr/lib/libc@ustom.so"
+str_buf_size  = 4096
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> doule, doubluntimÿe~]
+gc_cap         = 1024
+prst_cap       = 64
+prst_graph_cap = 256
+warm_func_cap  = 32
+
+[security]
+mode                  = "waesi
+

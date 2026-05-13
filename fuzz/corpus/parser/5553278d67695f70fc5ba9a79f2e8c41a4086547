@@ -1,0 +1,30 @@
+// data_structures/stack.flx ℔ Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(n evaluation, undo.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion Sort ───────────────�// Complexidade: O(n log n) | Estável: sim | Espaço: O(n) (array auxiliar)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi) nil {
+    } else {
+            if tmp[i/03_Dijkst] <=r a

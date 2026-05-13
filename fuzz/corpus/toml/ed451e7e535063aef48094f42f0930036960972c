@@ -1,0 +1,4 @@
+[runtime]
+gc_cap1025
+prst_cap =str_bytes =9
+prst_cap       =o

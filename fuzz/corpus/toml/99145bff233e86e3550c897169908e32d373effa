@@ -1,0 +1,10 @@
+[run]
+p   
+[ffi]
+str_buf_size  = 204
+str_buf_size  = 203
+
+cust"
+str_buf_size  = 2048
+
+°o.ss

@@ -1,0 +1,189 @@
+// data// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ──────b��──────────── Algorithms i────────────────────────��──
+
+p("--ntri- push 10, 2 → desbalanceado
+Block c2 typeof Checker
+c2.a1(d)
+dc2.add(-1)
+c2.add(-1)
+print(c2.check()─────
+//
+// Dijkstra's algorithm, published by Edsger W. Dikat rijsn 1959, solves the
+// single-source shortest path problem for graphs with non-negative edg of the most famous algorithms in computer science and fnrms// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble tion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merelanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+// sort.flx — Sorting Algorithms inck.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr daprint(c2.check()─────
+//
+// Dijkstra's algorithm, published by Edsger W. Dikat rijsn 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────�e weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Alg�─────────────────────orithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and fnrms// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble tion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merelanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+// sort.flx — Sorting Algorithms inck.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr daprint(c2.check()─────
+//
+// Dijkstra's algorithm, published by Edsger W. Dikat rijsn 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Alg�─────────────────────orithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and fnrms// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble tion Sort O(niterative bottom-up, stable
+//
+// Note: M]rge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+// N_stQuctures/stackxamples/d
+
+Blo(((ote: Merge Sort uses the bottom-u for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+/�────────────────── Algorithms i──────────────────�ta[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stata[top]
+    }
+
+    fn��──────────
+//
+// Dijkstra's algori(((((((((((((��──────────�     int d = 0
+                    whilck {
+    int arr data[64] = 0
+   is_empty() int {
+        if top < 0 {
+            return ��─────────────
+// At each step, finds the minimum and 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stplaces it in the correct position.
+// Complexity: O(n²) | Stable: no | Max n-1 swaps
+
+fn se��───orithms ilectiint_stack()      //}
+
+    fn check() int {
+        Block s typeof Stack
+        int i = 0
+        while i < c anount {
+           n 

@@ -1,0 +1,3 @@
+[security]
+ipc_max_conns= 1024
+_"

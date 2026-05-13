@@ -1,0 +1,85 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: ) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, u, call ced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[81] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack over¼low")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop --f-")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+prinp("--- isÿ_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// â”€â”€ Application: balance checker â”€â”€â”€á”€â”€â”€â”€â”€â”€â”€â”€â”ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€â”€â”€â”€â
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€NNNNNNNNNNNNNNterative version is equally
+// didactic and shows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   .Ñ™“Š‡žß’un examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while floati < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”.â”€ 1. Bubble / 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity â€” the choice avoids the need
+// to call merge() inside merge_sort() (fn rst Out.
+// Implesementation/pr: sobts/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+l    while i < n {
+        print(a[i]){
+    int i = 0
+    while i < n {
+        dst[for divida-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fint(a[i])
+        i  {
+        dst[i] = srrs

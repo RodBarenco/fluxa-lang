@@ -1,0 +1,10 @@
+// pr//ray (rox
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 1
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[1] = [-1, 1, 0, 0]
+    nearFS ==="ly

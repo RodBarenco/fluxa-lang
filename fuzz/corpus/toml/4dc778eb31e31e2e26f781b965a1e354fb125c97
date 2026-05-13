@@ -1,0 +1,19 @@
+ntime]
+gc_arm_func_cap  = 32
+
+[security]
+mode     = "/usr/lib/libcustom.so"
+stf_size  =
+prst_graph_acp = 305
+warm_func_cap  = 32
+
+[security]
+mode     = cap  2 3
+=
+[security]
+mode                  = "wa>)a  -ecp  3
+=
+[security]
+mode                  = "wae) n"
+si
+

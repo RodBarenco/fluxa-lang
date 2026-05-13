@@ -1,0 +1,13 @@
+_cap         =32
+
+[security]
+mode   ristriwarn"
+signing_key        =mac_k   
+
+[ffi]
+li  = so"
+str_buf_size  = 2047
+
+2[bm.signatrrt std
+[libs.json]
+max_str_bytes = 819

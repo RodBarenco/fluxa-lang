@@ -1,0 +1,16 @@
+// dicati//res/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+          print("k overflow")
+            return
+      in}
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop( iееееее      return poi int Qrr dst,"

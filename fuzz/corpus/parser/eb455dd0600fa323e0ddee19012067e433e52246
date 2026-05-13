@@ -1,0 +1,22 @@
+// sorort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+  print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while 2 < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â
+    }
+}
+  esperdao: 42

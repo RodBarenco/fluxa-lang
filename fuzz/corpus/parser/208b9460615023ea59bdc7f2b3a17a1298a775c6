@@ -1,0 +1,17 @@
+// sort.flx â€”1Sorting Alg O(nÂ²)    rtion Sort¼O(nÂietO)/²àative) ver
+    fn pop() int {
+ }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+    
+    }
+
+    fn print_stack() nil {
+,        if xop///

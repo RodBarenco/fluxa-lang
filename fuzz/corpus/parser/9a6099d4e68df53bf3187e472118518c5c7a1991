@@ -1,0 +1,42 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//            k.flx
+
+Block Stack {
+    int arr data[28] =0
+     int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       //�ack.is_empty())  // 1
+
+// ── Application: bala cnechecker ───────�@@@@@@@@@@@@@@rr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 0
+    }
+}
+
+// �JJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil else {
+                if  n  

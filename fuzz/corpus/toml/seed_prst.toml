@@ -1,0 +1,5 @@
+# sprint8_prst_cap_toml.toml — testa caps customizados via toml
+[runtime]
+gc_cap         = 512
+prst_cap       = 128
+prst_graph_cap = 512

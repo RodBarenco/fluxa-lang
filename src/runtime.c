@@ -1787,7 +1787,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                             node->as.arr_decl.arr_name);
                         if (pi >= 0) {
                             RT_POOL(rt)->entries[pi].declared_type = VAL_ARR;
-                            RT_POOL(rt)->entries[pi].init_value    = arr;
+                            /* Deep clone so pool and scope don't share
+                             * arr.data — sharing caused double free when
+                             * scope_free and prst_pool_free both freed it. */
+                            RT_POOL(rt)->entries[pi].init_value =
+                                prst_value_deep_clone(&arr);
                         }
                     } else {
                         /* Reload — deep copy pooled arr into scope so mutations

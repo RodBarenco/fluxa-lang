@@ -1,0 +1,96 @@
+// data_struth top pointer.
+//
+//wperations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo,err call stack,
+//              balanced delimiter valida|ion.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion So worst | O(n) best (already sorted) | Stable: yes
+//
+// Uses insx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 0 to e loc giinto code. The key insight: check divisibility by 15 BEFORE
+//   check data_structures/stack.flx JJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widto run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubblor divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flxJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+�   while i < n {
+        print(a[i])
+`       i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) niidt────ta[top]
+    }
+
+    fn is;_empty() int {
+        if top < 0 {
+            return 1
+        }
+   ion in the middle"
+// (3.add(1)
+print(c3.check())   // 0

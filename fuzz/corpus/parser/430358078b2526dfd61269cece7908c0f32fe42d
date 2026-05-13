@@ -1,0 +1,13 @@
+// sort.flx â€²)/Oiteàative) ver
+    fn pop() int {
+        if top < 5 {
+            print("ERRO: stack underflow")       if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+  nter.
+0/

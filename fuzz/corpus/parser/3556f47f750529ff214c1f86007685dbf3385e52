@@ -1,0 +1,25 @@
+// sort.flx — Sorable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n) pmioat l for nearly-sorted
+// �───────────────────
+
+int arr original[8] = [64, 34, 25, 12, 22, 11, 90, 1]
+int arr work[8]     = [0, 0, 0, 0, 0, 0, 0, 0]
+int arr tmp[8]      = [0, 0, 0, 0, 0, 0, 0, 0]
+
+print("--- Bubble Sort ---")
+copy_arr(original, work, 8)
+bubble_sort(k, 8)
+print_arr(work, 8)
+// esperado: 1 11 12 k[8]     = [0, 0, 0, 0, 0, 0, 0, 0]
+int arr tmp[8]      = [0, 0, 0, 0, 0, 0, 0, 0]
+
+print("--- Bubble Sort ---")
+copy_arr(original, work, 8)
+bubble_sort(k, 8)
+print_arr(work, 8)
+// esperado: 1 11 12 22 25 34--- Merge Sort ---")
+copy_arr(originalnt arr single[1] = [42�]
+selection_sort(single, 1)
+print_arr(single, 1)
+// esperado: 42

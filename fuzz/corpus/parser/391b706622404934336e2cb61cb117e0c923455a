@@ -1,0 +1,30 @@
+// sort.flx â      lâ”€â”ˆâ”€â”â”ÿÿÿÿÿÿÿÿ€â”€â” 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+                      j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// â”€â”€ˆˆˆˆˆˆˆˆswaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i         }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = ale j < n {
+            if a[j] < a[minrr(single, ;)
+// esperado: 42

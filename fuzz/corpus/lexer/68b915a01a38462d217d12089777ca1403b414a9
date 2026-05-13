@@ -1,0 +1,22 @@
+// tests/sprint7a.flx — critérios de aceite Sprint 7.a
+//
+// 1. prst em project mode — valor persiste (simulado: inicializa com 0,
+//    reatribuição red)
+// 2. prst registra depen�<U�cia no grafo
+// 3.) nil {
+    print(score)   // lê prsh
+
+// ────────────────) ───────────
+prst int contador = 0
+contador = contador + 1
+print(contador)   // 1
+
+prst i─────� + 1
+}
+print(ticks) cks = 0in
+  =ti 0
+while i < 5 {
+    ticks = ticks + 1
+    i = i + 1
+}
+print(ticks)      // 5

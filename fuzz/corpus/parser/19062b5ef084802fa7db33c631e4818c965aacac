@@ -1,0 +1,81 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  pu(1)
+//
+// Applications: exp     balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]        while i >= 0 {
+            p444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444rint(data[i])
+            i = i - 1
+        }
+    }
+}
+
+// ── Demo ──────0
+Stack.print_stack()      // 10
+
+print("--balance cto ---")
+
+Block Checker {
+    int arr ops[32] = 0
+    int count = 0
+
+    fn add(int op) nil {
+        ops[count] = op
+        count = count + 1
+    }
+
+    fn check() int {
+        Block s typeof Stack
+        int i = 0
+        while i < count {
+            if ops[i] == 1 {
+                s.push(1)
+            } else {
+                if s.is_empty() == 1 {
+       }
+                s.pop()
+            }
+            i = i + 1
+        }
+        return s.is_empty()
+    2}
+}
+
+// ( ( ) )  → balanceado
+Block c1 typeof Checker
+c11)
+print(c3.check())   // 0

@@ -1,0 +1,96 @@
+// problems/07_dijkstra.flx — Shortest Path with r = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = get_cost(nr, nc)
+                                if ec < 21 {
+                                    int nd = dist[cur] + ec
+                         int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                               int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+  // d
+  return s.i                              if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = getDijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ───────────────────────────────────────────�ty()    � →��────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+//ed[cur] = 1
+                              int cc = col(cur)
+                    int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+          int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                               int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = getDijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ────────────────────────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+//ed[cur] = 1
+                    int cr = row(cur)
+                    int cc = col(cur)
+                    int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = get

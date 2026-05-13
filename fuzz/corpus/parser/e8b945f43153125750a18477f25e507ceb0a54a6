@@ -1,0 +1,34 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by ivisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (0Fluxa does not yet support mixed-type print on one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+// ranch.
+//
+// How to run:
+//   ./fluxa run examples/problems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    ws +1
+                }
+ #          }
+   Ú     }
+        i = i + 1
+    }
+    print(fs)       // 27
+    print(buzzes)       // 14
+    print(pÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿlains) rificacao: 6+27+14+53 = 1 0
+}
+
+count_types(100)

@@ -1,0 +1,37 @@
+// sort.flx — Sorting Algottom-up (iterative) version insteart(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+    
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {in_idx = i
+        int j = i + 1
+        while j < n {j = j + 2
+        }
+        if min_idx != i {
+       min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+      if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+      t, int n) nil {
+    int i = 0
+    while i < n {
+          dst[i] = src 

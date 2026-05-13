@@ -178,6 +178,7 @@ static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
 
     /* params: between ( and last ) before -> */
     const char *open  = strchr(sig_str, '(');
+    if (!open) return;
     /* find the ) that closes the param list — search backwards from arrow or end */
     const char *close = NULL;
     {
@@ -186,7 +187,7 @@ static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
             if (*p == ')') { close = p; break; }
         }
     }
-    if (!open || !close || close <= open) return;
+    if (!close || close <= open) return;
 
     char inner[512];
     int inner_len = (int)(close - open - 1);
@@ -325,11 +326,14 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 if (v > 0 && v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
             } else if (strcmp(key, "warm_func_cap") == 0) {
                 /* Initial hash table capacity — grows automatically via realloc.
-                 * Any positive value accepted; rounded up to next power of 2. */
-                if (v > 0) {
-                    int p = 4;
-                    while (p < v) p *= 2;
-                    cfg.warm_func_cap = p;
+                 * Any positive value accepted; rounded up to next power of 2.
+                 * Cap at 1<<20 (1M entries) to prevent overflow in p*=2 loop. */
+                if (v > 0 && v <= (1 << 20)) {
+                    int p2 = 4;
+                    while (p2 < v) p2 *= 2;
+                    cfg.warm_func_cap = p2;
+                } else if (v > (1 << 20)) {
+                    cfg.warm_func_cap = (1 << 20);
                 }
             }
             continue;

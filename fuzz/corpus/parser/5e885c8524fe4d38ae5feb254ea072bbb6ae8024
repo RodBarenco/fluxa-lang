@@ -1,0 +1,11 @@
+// problemd graphs,
+// BFS mayflx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[2] = [-1, 1, 0, 0]
+(n²)/O( compl foetBr nearFS ==="ly

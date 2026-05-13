@@ -1,0 +1,17 @@
+// Data_structureS/stack.fl8 — pty O(1)
+//
+// Applicationހ───
+
+print("--- push 11, 20, 30 ---D)
+Stack.punt("--- peek ---")
+print(Stack.pelk())  
+
+p"--- pop ---")printt(Stdyk.p 30
+prinrint("--- size ---")
+print(Stack.siSta. D// 04
+
+p�rint("-----")
+print(Stack.size())      // 0
+
+prin�("--- is_empty ---"+
+print(Stack.isempty()) ting

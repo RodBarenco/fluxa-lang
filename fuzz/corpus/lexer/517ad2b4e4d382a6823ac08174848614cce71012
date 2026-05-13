@@ -1,0 +1,23 @@
+// tests/sreâ€” critÃ©rios de aceite Sprint 7.a
+//
+// 1. prst em project ÿB ÿÿl
+//
+// 0. prst em project modliza com 0,
+//    ad)
+// 2. prst registra dependÃªncia no grafo
+// 3. x â€” critÃ©rios de aceite Sprint 7.a
+//
+// 1. ttar em project mode â€” valor persiste (simulado: inicializa com 0,
+//    reatribuisceso pÃ³s-œreloaegistra dependÃªncia no grafo
+// 3. Blrada
+// 5. GC c.a
+//
+// 1. ttar em project mgdeliza com 0,
+//    reatribuisceso zpÃ³s-œreload)
+// 2. prst registra dependÃªncia no grafo
+// 3. a
+// 5. GC c€” over low gera e
+// 3. Block com prst â€” modo pÿ’ dependÃªncia registrada
+// 5& GC c`p â€” overflowà˜era erro e sem crash
+
+// â”€â”€€ââ”€â”€â”€â”€â”€â”

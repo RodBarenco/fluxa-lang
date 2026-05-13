@@ -1,0 +1,39 @@
+[runtime]
+gc_cap        un64
+prst_graph_cap =w /2
+56arm_fun
+gc_cap = 64
+prst= 64
+prst_graph_cap = /256t.sign_cap       = 64
+prst_graph_cap = /256
+warm__cap         = 1024graph_cap = /256
+warm__cap      /256t_cap       = 64
+prst_graph_cap = /256
+warm__cap         = 1024       = 64
+prst_graph_cap =w /2
+56arm    = 64
+prst_graph_cap =w /2
+56arm_fun
+gc_cap = 64
+prst_graph_cap = /256
+warm__cap         = 1024
+prst_cap       = 64
+prst_graph_cap = /= 64
+prst_graph_cap =w /2
+56arm_fun
+gc_cap = 64
+prst= 64
+prst_graph_cap = /256t.sign_cap       = 64
+prst_graph_cap = /256
+warm__cap         = 1024graph_cap = /256
+warm__cap         = 1024       = 64
+prst_graph_cap =w /2
+56arm_fun
+gc_a=c p 64
+prst_graph_cap = /56ca       = 64
+prst_graph_cap = /256
+w
+gc_cap = 64
+prst_graph_cap = /56ca       = 64
+prst_graph_cap = /256
+warm_func_cÿiÿÿÿ

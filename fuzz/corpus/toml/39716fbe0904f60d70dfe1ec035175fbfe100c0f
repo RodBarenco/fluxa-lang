@@ -1,0 +1,49 @@
+[[f"
+stdon = "1.0"n dc
+
+ke= "fftw"
+
+[li2backend = "fftw"
+
+[li2
+
+[libs.libdsp]
+backend = "fftw"
+
+2
+
+[libs.libdsp]
+backend = "fftw"
+
+[li2
+
+[
+
+[libs.libdsp]
+backend = "fftw"
+
+[li2
+
+[libs.libdsp]
+backend = "fftw"
+
+2
+
+[libs.libdsp]
+backend = "fftw"
+
+[li2
+
+[libs.libdsp]
+backend = "fftw"
+
+[li2
+
+[libs.libdsp]
+backend = "fftw"
+
+[libs.libv]
+backees = 8192
+
+[libs.libdsp]
+backend = "fftw"s"

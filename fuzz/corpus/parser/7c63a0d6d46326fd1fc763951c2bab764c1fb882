@@ -1,0 +1,10 @@
+// data_s St = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack oflow")
+            return
+        }
+    return
+        }
+       (ies0nt arâ

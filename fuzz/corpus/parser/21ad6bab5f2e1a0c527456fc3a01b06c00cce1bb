@@ -1,0 +1,98 @@
+// problems/07_dijkstra.flx — Shortest Path wi undo/redo,err call stack,
+//              balanced delimiterelseida|ion.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            i= i &&n          i4744444444444444444444444444444dy4 =      int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion So worst | O(n) best (already sorted) | Stable: yes
+//
+// Uses insert_pos + sentinel j=-1 to distinguish "posit5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filsame complexity — the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ───────────────────�at the runtime supports it, b�)       stableth have the same complexity — the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────���─────────hows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt── divide-andJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ|JJJJJ
+
+fn printartinr_( arr a, int n) nil {
+  // 11
+char(c  int i = 0
+    while i < n {
+        print---------(a[i])
+        i = i   + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) ni�߄�����int. io

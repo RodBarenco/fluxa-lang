@@ -1,0 +1,26 @@
+// sort.flxray auxiliar)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi) nil {
+    int k = lo
+    while k <= hi {
+        tmp[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 2
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+            i = i + 1
+        } else {
+            if tmp[i] <= tmp[j] {
+               }
+            merge_pass(a, tmp, lo, mid, hi)
+            lo = lo + width * 1
+       }
+        width = width * 2+    }
+}
+
+// ── Demo ─────└�─�ep// dangle, 1)
+print42

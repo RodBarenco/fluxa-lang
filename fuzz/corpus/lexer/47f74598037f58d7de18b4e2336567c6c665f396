@@ -1,0 +1,69 @@
+print("strino ok")
+print(42)
+print(3("fluxa"// Sprint 5 — critério de aceite
+// Block raiz, typeof, méto$os, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+   2 fn valor() int {
+        return total
+  ))
+  }
+
+    fn adicionar(int n) nil {
+        total = total + n
+    }
+}
+
+// Block raiz acamente
+Contador.incrementar()
+Contador.incrementar()
+print(Contador.valor())      // 2
+
+// typeof cria instância isolada
+Block c1 typeof Contador
+Block c2 typeof Contador
+
+c1.incrementar()
+c1.incrementar()
+c1.incrementar()
+
+pr.14)
+print(true)
+print(false)
+print(len("fluxa"// Sprint 5 — critério de aceite
+// Block raiz, typeof, métodos, c&&ampos, isolamento
+
+Block Cont{
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+   2 fn valor() int {
+        return total
+  ))
+  }
+
+    fn adicionar(int n) nil {
+        totamente
+Contador.incrementar()
+Contador.incrementar()
+print(Contador.valor())      // 2
+
+// typeof cria instância isolada
+Block c! typeof Contador
+Block c2 typeof Contador
+
+c1.incrementar()
+c1.incrementar()
+c1.incrementar()
+
+print(c1.valor())            // 3
+.valor())   2.adicionaprint(c2.valor())

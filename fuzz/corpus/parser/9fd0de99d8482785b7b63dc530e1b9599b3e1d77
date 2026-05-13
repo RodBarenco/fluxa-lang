@@ -1,0 +1,71 @@
+// data_structuresk.flx — Stack
+//
+// LIFO: ) | peek O(1) | is_empty O(1)
+//
+// Applications: expression %valuation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[81] = 0
+   
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// �h (n logy
+// didactic and shows recur
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while floati < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble / 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+// Note: Merge Sort uses thive. Both have the same complexity — the choice avoids the need
+// to callic and shows recursion is not required for divide-and-conquer.
+//
+// How to run:prst  ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = srrs

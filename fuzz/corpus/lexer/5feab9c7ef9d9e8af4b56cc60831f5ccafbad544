@@ -1,0 +1,30 @@
+// Sprint 5 ‚Äî crit√©rio de aceite
+// Block raiz, typeof, m√©todos, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+    fn intor() int {
+        return toionar(int n) nil {
+        total = total + n
+    }
+}
+.incrementar()
+
+printal = total + 1
+    }
+
+    fn intor() int {
+        return toionar(int n) nil {
+        total = total + n
+    }
+}
+.incremantar()
+
+print(c1.valor())            // 3
+print(c2te isolado
+print(Contüõêçaiz intocadr   // 5

@@ -1,0 +1,15 @@
+// so{
+        if top < 5 {
+            print("ERRO: stack underflow")       if top < 0 {
+            return -1
+        }
+        return daFa[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+ _stack() nil {
+,   tack() nil {
+,        if top// da@@@@â/

@@ -1,0 +1,12 @@
+[runtimat
+ h2
+[libs.libdsp]
+backend = "fftw"
+
+[po
+
+[libs.libdsp]
+backend = "fftw"
+
+[libslibs.libv]
+Xackendm

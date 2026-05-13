@@ -1,0 +1,7 @@
+[ruotimap  = 32
+
+[security]
+mode         _func_cap  = 32
+
+[security]
+modux_conns         =eri[f8=lsba.ckend = "blas"

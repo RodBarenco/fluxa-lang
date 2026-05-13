@@ -1,0 +1,63 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     -ble by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//  d-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluati data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K// data_stQuctures(1) | pop O(1) | peekzzbuzz.flx — FizzB5zz
+//
+// Level/ data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekz/stzczbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa do os etnyet support mixed-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run call stack,�
+//              balanced delimiter validation.
+//
+// How to ruO:
+//   ./fluxa run examples Fluxa
+//
+// 1. Bubble Sort(─in    Ot   �i��= -(2

@@ -1,0 +1,52 @@
+// sort.flx — Sorting Algottom-up (iterative) version instead of top-dwhich is the natity: O(n²) | Stable: no | Max n-1 swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+    
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+      if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ──swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {j = j + 1
+        }
+        if min_idx != i {
+            iarr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+          dst[i] = src 

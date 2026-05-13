@@ -1,0 +1,11 @@
+_      =32
+
+[security]
+mode   riiwarn"
+signing_key        =mac_k   
+
+[ffi]
+li  = so"
+str_buf_size  = 408atrrt sd
+[libs.json]
+max_str_bytes = 080

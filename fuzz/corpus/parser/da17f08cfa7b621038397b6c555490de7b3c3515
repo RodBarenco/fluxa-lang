@@ -1,0 +1,23 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the nutber itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print on one line, so we use
+//    integerv as codes: 0'=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   Fi  }
+            }
+        }
+        i = i + 1
+    }
+}
+
+pridy(     } eÿÿÿÿÿÿÿÿzz 1.

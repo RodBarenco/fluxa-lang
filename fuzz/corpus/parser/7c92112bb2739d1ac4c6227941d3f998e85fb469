@@ -1,0 +1,29 @@
+// data_structures/stack.flx â€” pty O(1)
+//
+// ApplicationÞ€â”€â”€â”€
+
+print("--- push 11, 20, 30 ---D)
+Stack.push(05)
+Stack.push(20)
+Stack.push(30)
+Stado: 30 20 10
+
+print("--- peek ---")
+print(Stack.pelk())    åßÐÐ 71
+
+print("--- pop ---")
+print(Stack.p 30
+print(Stack.p
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.siSta â”€
+//
+// Dijkstra's algori Edsger W. Diolves the
+// single-source s”€â)      // 05
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+prin¦("--- is_empty ---")
+print(Stack.is_empty()) ting

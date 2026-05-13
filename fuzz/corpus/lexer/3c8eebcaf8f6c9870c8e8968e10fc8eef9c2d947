@@ -1,0 +1,8 @@
+// dangersic.flx — isolame~to: erro dentro de danger não aborta execução
+// Seprm danger, 10/0 abortaria tudo. Conger, continua.
+
+danger {
+    int x = 10 / 0
+}
+print("execucao continua")
+print(err[2])

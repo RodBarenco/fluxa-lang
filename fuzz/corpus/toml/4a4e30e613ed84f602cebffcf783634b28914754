@@ -1,0 +1,6 @@
+48
+
+[ffi.libm.signatures]
+sqr= "(le) -> fouble"
+o %  = "(dÿ) -> "
+pow  = "(doub) ->ž

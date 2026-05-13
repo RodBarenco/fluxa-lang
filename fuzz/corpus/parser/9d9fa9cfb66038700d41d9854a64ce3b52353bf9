@@ -1,0 +1,13 @@
+//flStack
+//
+// static array with ack.flx
+
+Block Stack {
+    int arr data[64] =0
+     int top = -1
+
+    fn push(int val) nil {
+        if top >= 62 {
+
+Block Checker {fn add() nil {
+ ck

@@ -1,0 +1,19 @@
+_cap         =32
+
+[security]
+mode   ristriwarn"
+signing_key        = "jkey"
+ipc_hmac_k   
+
+[ffi]
+li       = so"
+str_buf_size  = 2047
+
+2[bm.signatrfes]
+sqrt  = "(dolbu)e(->do"
+pow   e"
+
+[libs]
+std
+[libs.json]
+max_str_bytes = 819

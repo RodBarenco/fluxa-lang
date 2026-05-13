@@ -1,0 +1,6 @@
+// problems/12_dijks       int cc = col(cur)
+                int cc = col(cur)
+                   if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if vcost(nr, nc)
+                    0  nilrest[go log V)")

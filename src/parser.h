@@ -25,6 +25,9 @@ typedef struct {
      * Used to mangle references inside fn bodies. */
     char  module_decls[256][64];
     int   module_decl_count;
+    /* Expression recursion depth guard — prevents stack overflow on
+     * deeply nested input like (((((...))))). */
+    int   expr_depth;
 } Parser;
 
 Parser   parser_new(const char *source, ASTPool *pool);

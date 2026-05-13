@@ -1,0 +1,43 @@
+// sort.flx — Sorting Algorithms �───────
+// Each pass "bubbles" the largest element to the end.
+// Complexity: O(n²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = tmp
+            }
+          }
+       // sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O//�problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible // sort.flx — Sorting Algorithms in Fluxa
+//
+// 2. Bubble Sfnt    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n)  optimal for nearly-sor:ed
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) nersion instead of top-down
+// recursive. Both have the same complexity — the choice aative version is equally
+// didactic and shows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa// data_structures/stack.flx — Stack
+//
+// LIFO: Lasppris53 = 100
+
+fn selection_sort(int arr a, int n) nil { exam
+  ple

@@ -9,6 +9,8 @@ fluxa_debug
 fluxa-rp2040
 fluxa-esp32
 fluxa-cortex-m
+fluxa_sim_esp32
+fluxa_sim_rp2040
 *.o
 *.elf
 *.uf2
@@ -32,3 +34,11 @@ fluxa_asan
 *.dis
 fluxa_secure
 fluxa_dis
+
+# Fuzz build + findings (fuzz/corpus/ is checked in)
+/fuzz/build/
+/fuzz/findings/
+/fuzz/crash-*
+/fuzz/leak-*
+/fuzz/timeout-*
+/fuzz/oom-*

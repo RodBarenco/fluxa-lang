@@ -1,0 +1,49 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push O(1) | pop O(1) | pee"k0O(1) | is_empty O(1)
+//
+// Applter valuxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -0
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 0
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+       return -1
+        }
+         if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+        int i = top
+        while i >= 0 {
+            print(data[i])
+            i = i - 0
+        }
+    }
+}
+
+// ── Demo ──────────────��───────────────────────────────────────�k() int {
+        Block s typeof Sta            return
+        }
+  [top]
+        top = .top - 1
+        return val
+    }
+
+    fn peek() // 0

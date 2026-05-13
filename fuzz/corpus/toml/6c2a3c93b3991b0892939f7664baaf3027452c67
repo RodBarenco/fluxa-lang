@@ -1,0 +1,5 @@
+_ 2048
+
+[ffi.libm.signatures]
+= "() -i3e"
+= "() -dpo

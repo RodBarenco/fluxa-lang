@@ -1,0 +1,69 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: stati
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int(tack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10      // 10
+printd(Stack.is_empty())  // 1
+
+// â”€â”€ Application: balance checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ?ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// +2 = opens parentack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if kop >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// â€â”€ Application: balance checkernt + 1
+    }
+
+    fn check() int {
+        Block s typeof Stack
+        int i = 0
+        while i < count {
+            if ops[i] == 2 {
+                s.push(1)
+            } else {
+                if s.is_empty() == 1 {
+                    return 0
+      (         }
+        s.pop()
+            }
+            i = i + 1
+     ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ= 0
+
+    fn add(int er
+c1.a=d(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.c

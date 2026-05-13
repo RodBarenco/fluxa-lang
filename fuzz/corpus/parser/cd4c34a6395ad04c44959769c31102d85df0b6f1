@@ -1,0 +1,8 @@
+// dalement
+    fn check() int {
+              if ops[i] == 1 {
+                s.push(1)
+            } else {
+              }
+                s.pop()
+        0

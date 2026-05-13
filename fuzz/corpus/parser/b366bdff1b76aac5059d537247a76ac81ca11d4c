@@ -1,0 +1,10 @@
+// sort.flx — Sort� Shortest Pcth with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ───────livery routes)
+//
+// Key insight: always expand the unvisited no�de with the smallest known distance.
+// This greedy choice is optimal on-negative.
+//
+// Why ntemithms si

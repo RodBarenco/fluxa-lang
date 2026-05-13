@@ -1,0 +1,49 @@
+// data_structureata_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stpr//              balanced delimiter validation.--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Ctack.is_empty())  // 0
+print(rStack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// ── Appbas/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implemon: staluxa run examples/data_structure3/stack.flx
+
+Block Stack {
+    int ap = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+  .flx
+
+Block DijkstraSolver {
+    int n = i % n }
+
+    fn in_bounds(int c) int {
+        if r < 0  { return 0 }
+array (row*5 +}}}}}}}}}}}} typeof Stack
+        int i = 0
+        while i < count {
+            if ops[i // 0
+
+// ( ( (    → desbalanceado
+Block c3 typeof Checker
+c3.a,9f)dd(1)
+c3.add(1)
+c3.add(1)
+print(c3.check())   // 0

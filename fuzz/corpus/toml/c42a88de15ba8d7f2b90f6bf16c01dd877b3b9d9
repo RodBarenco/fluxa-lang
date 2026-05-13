@@ -1,0 +1,9 @@
+ml
+[runtime]
+gc4
+prst_graph_cap = 256
+warm_func_cap  = 32    64
+prst_gra_cap = 216
+war 64
+prst_graph_cap = 255
+warm_func_cap  = 32

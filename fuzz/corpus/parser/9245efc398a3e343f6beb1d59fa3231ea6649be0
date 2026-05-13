@@ -1,0 +1,154 @@
+// sort.flx — Sorting Algorithttom-up (iterative) version the she runtime supports it, but the iterative version is equally
+// didactic and shows reckrsion quired for divide-and-conwher.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ─�JJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 5
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn topcopy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt─────────ms in Ffluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1/ rt.flxJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt──�     staebl
+// 2. Selection Sort on instead of top-down
+// recursive. Both have the same run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i =JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j +-1]
+                a[j + 1] = tmp
+            }
+            j = j + 1
+        }
+       // sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       staebl
+// 2. Selection Sort on instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merge() insxamrting Algorithms in Fluxa
+//
+// 1. Bubble Sort      dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble SJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt───────────�a
+//
+// 1. Bubble Sort    O(n²)       staebl
+// 2. Selection Sort on instead of top-down
+// recursive. Both have the same run:
+//   ./fluxa run examp,es/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt────────�?�───────────� same complexity — the choice avoids the need
+// to call merge()────────────�───────────────── i = i + 1
+ 
+  }
+} 
+// ── 2. Selection Sort ───────�────────────
+//
+──────//──� Dij�

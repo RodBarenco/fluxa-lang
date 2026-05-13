@@ -1,0 +1,236 @@
+// sort.flx â€” Sorting Algoriis the natural
+// pattern now that the runtime sto run:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+       int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+        if v == 0  { return 1 }
+        if v == 99 { return 99 }
+        return v
+    }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_coct(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+ set_cost(2,1,1) set_cost(2,2,1) set_cost(2,3,9) s0et_cost(2,4,1)
+        set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+         // problemturn i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return t(0,4,1)
+        set_cost(1,0,1) set_cost(1,1,9) set_cost(1,2,1) set_cost(1,3,1) set_cost(1,4,2)
+        set_cost(2,0,3) set_cost(2,1,1) set_cost(2,2,1) set_cost(2,3,9) set_cost(2,4,1)
+        set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+         // problemturn i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+             dst[i] = src[i]
+       int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+        if v == 0  { return 1 }
+        if v == 99 { return 99 }
+        return v
+    }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+    st(3,2,2) fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+        if v == 0  {     if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+        if v == 0  { return 1 }
+        if v == 99 { return 99 }
+        return v
+    }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+    st(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+         // problemturn i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return      set_cost(2,0,3) set_cost(2,1,1) set_cost(2,2,1) set_cost(2,3,9) set_cost(2,4,1)
+        set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+         // problemturn i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { retusts[idx(r, c)]
+     ¯   if v == 0  { return 1 }
+        if v ½= 99 { retur// sort.fln â€” Sortimal for near{
+          n 99 }
+        return v
+    }
+
+    fn cleaordem iœ‰ersa ---")
+int arr rev[5] = [5,

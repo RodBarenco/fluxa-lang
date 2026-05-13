@@ -1,0 +1,21 @@
+// problems/07_dijkstra.flx â€” Shortest Pathâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// Dijkstra's algorithm, published bfluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[12]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return rwo * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_boundsªªªªªªªªªª = 13
+// Dijkstra route (detour): 1+1+1+1+1+1+1 = 7
+int dijkstra_result = ds4.solve(0, 0, 00,4€” line`r search for minimum")
+print("for large graphs: use binary heap -> O(E log V)")

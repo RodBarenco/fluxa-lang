@@ -1,0 +1,132 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ──────b���// data_struth top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo,err call stack,
+//              balanced delimiter valida|ion.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion So worst | O(n) best (already sorted) | Stable: yes
+//
+// Uses insert_pos + sentinel j=-1 to distinguish "posit5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candida    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, / sort.flx — Sorting Algorithms in Fluxa
+//
+// 0. Bubble Sort    O(n²)       stableth have the same complexity — the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ───────────────────�at the runtime supports it, but the iterative �version is equally
+// didactic and shows recursion is not required for divide-a top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx — FizzBuzz
+//
+// Level: | is_empty O(1)
+//
+// Applications: expression evaluation, / sort.flx — Sorting Algorithms in Fluxa
+//
+// 0. Bubble Sort    O(n²)       stableth have the same complexity — the choicJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt───────────────────────────────�ort     O(�ߓ�g n)  iterative bottom-up, stort uses the bottom-up (iterative) version the same complexity — the choice avoids the need
+// to call merge() inside merge_sort() (fn calling fn), which is the natural
+// pattern now that the runtime supports it, but the iterative �version is equally
+// didactic and shows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�widt────ows recursion is not required for divide-and-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flxJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ|JJJJJ
+
+fn printartinr_( arr a, int n) nil {
+  // 11
+prif(c  int i = 0
+    while i < n {
+        print---------(a[i])
+        i = i   + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) ni�߄�����int. io

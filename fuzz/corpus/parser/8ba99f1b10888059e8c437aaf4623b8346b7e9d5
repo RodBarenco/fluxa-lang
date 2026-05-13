@@ -1,0 +1,9 @@
+// probanslate
+//     while i <= n {
+        if i % 15 == 0 {
+      print(0)
+        } else {
+            if i % 3 == 0 {
+      print(3)
+            } else {
+       22t_types(100)

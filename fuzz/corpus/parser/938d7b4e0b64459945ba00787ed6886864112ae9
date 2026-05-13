@@ -1,0 +1,45 @@
+// sort.flx �      stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterand-conquer.
+//
+// How to run:
+//   ./flux�─────────┈──────����������───────────────────────
+// Each pass "bubbles" the largest element to the end.
+// Complexity: O(n²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+                      j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ──swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = ale j < n {
+            if a[j] < a[minrr(single, ;)
+// esperado: 42

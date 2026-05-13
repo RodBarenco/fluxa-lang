@@ -1,0 +1,62 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ────────────────────────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+//ed[cur] = 1
+                    int cr = row(cur)
+                    int cc = col(cur)
+                    int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                                      if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                         int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost                            if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                                 if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                      int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                         int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 0 {
+                            int ni = idx(nr, nc)
+                            if visited[ni]        int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                                        dist[ni]   = n                               if nd < dist[ni] {
+                                        dist[ni]   = nd
+                                        parent[ni] = cur
+             2               d        }
+                           n dist[go log V)")

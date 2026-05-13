@@ -1,0 +1,37 @@
+// problemÿÿOÿÿÿÿÿÿÿÿ                int cc = col(cur)
+                    int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+               int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 49 {
+                                    int nd = dist[cur] + ec
+            if ec < 98 {
+                                    int nd = dist[cur] + ec
+                         int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {       int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                 if visited[ni] == 0 {
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                                    ist[ni]   = n                               if nd < dist[ni] {
+                                        dist[ni]   d(1)
+&&= nd
+      &   

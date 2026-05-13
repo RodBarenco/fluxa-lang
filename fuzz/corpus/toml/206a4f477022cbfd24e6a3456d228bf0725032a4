@@ -1,0 +1,6 @@
+[rnuiemt]gc_cap _cap  = 17
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/libso"
+st393td.js%%%% = "blas"

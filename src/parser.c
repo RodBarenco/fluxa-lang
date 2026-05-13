@@ -171,6 +171,14 @@ static void parse_args_into(Parser *p, ASTNode ***args_out, int *count_out) {
 
 /* ── Expression parsing ──────────────────────────────────────────────────── */
 static ASTNode *parse_primary(Parser *p) {
+    /* Depth guard: prevents stack overflow on deeply nested expressions
+     * like (((((...)))). 512 levels is more than any real Fluxa program
+     * needs and well within default stack limits. Found by fuzz_parser. */
+    if (p->expr_depth > 512) {
+        parse_error(p, "expression nested too deeply");
+        return NULL;
+    }
+    p->expr_depth++;
     int cur_line = p->current.line;   /* Sprint 8: linha do token atual */
     if (check(p, TOK_STRING)) {
         ASTNode *n = p_string(p, p->current.value);
@@ -707,6 +715,7 @@ static ASTNode *parse_body(Parser *p) {
 static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     int stmt_line = p->current.line;   /* Sprint 8: captura linha do statement */
+    p->expr_depth = 0;   /* reset per statement — depth only guards within one expression */
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); stmt_line = p->current.line; }
 
     /* Sprint 6.b: import c libname [as alias] */
@@ -1331,9 +1340,10 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.pool      = pool;
     p.current   = lexer_next(&p.lexer);
     p.next      = lexer_next(&p.lexer);
-    p.ns[0]           = '\0';
-    p.imported_count  = 0;
+    p.ns[0]             = '\0';
+    p.imported_count    = 0;
     p.module_decl_count = 0;
+    p.expr_depth        = 0;
     return p;
 }
 

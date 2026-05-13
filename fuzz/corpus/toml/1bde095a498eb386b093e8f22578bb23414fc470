@@ -1,0 +1,5 @@
+#dos viogl
+[runtime]
+gc2
+prst_cap      = 128
+prst_graph_cap = 5

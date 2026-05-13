@@ -1,0 +1,13 @@
+// so{
+        if top < 5 {
+            print("ERR")       if top < 0 {
+      return -1
+        }
+        return daFa[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            retu        }
+  truetack() nil {
+,    @  @ @@â/

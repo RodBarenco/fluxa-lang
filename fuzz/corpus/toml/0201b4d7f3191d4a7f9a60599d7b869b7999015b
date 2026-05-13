@@ -1,0 +1,29 @@
+[runtime]
+gc_cap         = prst_g?aph_cap = 256
+warm_func_cap  = 32
+
+[security]
+mode                  = "stristriwarn"
+signing_key           = "/etc/fluxa/signing.key"
+ipc_hmac_key      
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/lib/libcustom.so"
+str_buf_size  = 2048
+
+2[ffi.libm.signatures]
+sqrt  = "(double) -> do"
+pow   = "(double, doubble"
+
+[libs]
+std.math = "1.0"
+std.cs 
+[libs.json]
+max_str_bytes = 8192
+
+[libs.libdsp]
+bacstrikend = "fftw"
+
+[libs.libv]
+backend = "blas"
