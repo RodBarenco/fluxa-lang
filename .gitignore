@@ -34,3 +34,11 @@ fluxa_asan
 *.dis
 fluxa_secure
 fluxa_dis
+
+# Fuzz build + findings (fuzz/corpus/ is checked in)
+/fuzz/build/
+/fuzz/findings/
+/fuzz/crash-*
+/fuzz/leak-*
+/fuzz/timeout-*
+/fuzz/oom-*

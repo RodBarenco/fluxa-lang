@@ -1,0 +1,7 @@
+// mslx*
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   =pri  
+    int arr dr[4] = [-10 , ,1 ,0]
+  Bubble Sort t(nr, nc)
+    

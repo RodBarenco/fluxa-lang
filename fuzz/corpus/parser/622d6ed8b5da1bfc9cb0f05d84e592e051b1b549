@@ -1,0 +1,7 @@
+// data_structurnil {
+        if top >= 63 {
+            print("Eet_cosset_cost(3,0,1) ")
+            return
+        }
+        int i = top
+        while ie_sort(int arâ

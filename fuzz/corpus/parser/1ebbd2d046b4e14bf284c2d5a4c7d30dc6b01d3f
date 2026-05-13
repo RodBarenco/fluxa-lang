@@ -1,0 +1,30 @@
+// data_structures/stack.ion, undo/redo, call stack,
+//              balanš›İdelimiter validati
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+  int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return   int arr data[64] = 0
+    int  

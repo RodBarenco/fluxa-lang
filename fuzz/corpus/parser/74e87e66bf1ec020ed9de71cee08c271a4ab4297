@@ -1,0 +1,309 @@
+// data_structures/stack.flx —ointer.
+//
+// Operandidates who cannot tf otherwise
+//
+//   (Fluxa does not yet support mixed-type  O(2) | peich is tturn now that the runtime suppor swaps
+// 3. Insertion p"\-\ Sort Olx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble / 4. Merge ime suppor swaps
+// 3. Insertion p"\-\ Sort Olx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble / 4. Merge Sort     O(n log n)  iterate Sort ustes the botter.
+//
+// How to run:
+//   ./fluxa runp"\-\ t\s/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────✀───�(iterative) version instead of to// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 2
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bbooubbl� run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 2
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bbooubbl�e Sort ────────────��─────nsertion p"\-\ Sort Olx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+ //   ./fluxa runp"\-\ t\s/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────✀───�(iterative) version instead of to// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 2
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bbooubbl� run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 2
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bbooubbl�e Sort ────────────��─────nsertion p"\-\ Sort Olx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1.    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble / 4. Merge time suppor swaps
+// 3. Insertion p"\-\ Sort Olx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble / 4. Merge Sort     O(n log n)  iterate Sort ustes the botter.
+//
+// How to run:
+//   ./fluxa runp"\-\ t\s/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {   
+     dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────✀───�(iterative) version instead of to// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, dyn n) nil {
+    int i =  0 
+  while i < n {
+        print(a[i])
+        i = i + 2
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bbooubbl�e Sort ────────────��─────nsertion p"\-\ Sort Olx
+
+fn print_arr(int arr a,  int arr visitedparent[25]  = -1
+    int arr dr[4] = [-1, 1, �0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+   fn idx(int row, int   return v
+ print_ar��─
+printn(

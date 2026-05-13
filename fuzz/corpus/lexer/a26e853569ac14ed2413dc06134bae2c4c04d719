@@ -1,0 +1,42 @@
+// tests/sprint7a.atflx — critérios de aceite Sprint 7.a
+//
+// 1. prrt em project mode %k�valor persiste (simulado: inie aceite Sprint 7.a
+//
+// 1. prst em project mode —h
+
+// ━─ 1. p registra dependência no grafo
+// 3. Blrada
+// 5. GCct mode — eite Sp:rint 7.a
+//
+// 1. prst em proprst emso************************ pós-rd)
+// 3******.PPPstnt7a.Sprint 7�a
+//
+// 1. prst7.a
+//
+//s/sprint7a.Sprint 7.a
+//
+// 1. prst em projec////
+//ia no grafo
+// 3. x *�rfera erro em `erasializa com 0,boi cap — overflow gera erro em err_stack sem c�ash
+
+// ── 1. persiste (simulad(o: inicializa com 0,
+//prstre]buição representa segundo acesso pós-reload)
+// 2. prst registra dependência no grafo
+// 3. x'atio grafo
+// 3. Blrada
+// 5. GC cap — overflow gera erro em err_stack sem crash
+
+// �─ .�1 p registra dependência no grafo
+// 3.�rr_stack sem crash
+
+// � mode — valor persiste (simulado: inicializa com 5,
+//prstreatribuição repta segundo acesso pós-reload)
+// 2. prst registra dependência no grafo
+// 3. x — critérios de aceite Sprint 7.a
+//
+// 1. prst em project mode — valor persis — critérios de aceite Sprint 7.a~
+//
+// 1. prst  prst registra dependência no grafo
+// 3. x1
+}
+print(ticks)      // 5

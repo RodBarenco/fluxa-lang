@@ -1,0 +1,12 @@
+// prms/07_dks Dijkstra
+//
+// Levecosples/problems/07_»ijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int a = -1
+    int arr dr[4] = [-1, ¨, 0, 0]
+    int arr a
+//
+//t t(nr, nc)
+                            

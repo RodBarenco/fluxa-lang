@@ -1,0 +1,29 @@
+// data_structures/stay withtayti /wh// 2
+
+// â”€â”€ Applicer {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+  
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    / 2
+
+// â= 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -  
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [1, 1, 0, 0]
+    ”€â”€â”€â”€
+printn(

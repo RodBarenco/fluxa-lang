@@ -1,0 +1,23 @@
+[r         = 1024
+prst_cap       = 64
+prst_graph_cap = 256
+warm_func_cap  = 32
+
+[security]
+mode          _fu= 32
+
+[security]
+mode                  = "warn"
+signing_key           =xa/signing.key"
+ipc_hmac_key          = "/etc/fluxa/
+mode          _func_cap  = 32
+
+[security]
+mode                  = "warn"
+signing_key           = "/etcy"
+ipc_hmac_key          = "/etc/fluxa/hmac.key"
+handshake_timeout°ms  = 100
+ipc_max_conns         = 1»ı
+[ffi]
+libm          = "auto"
+libcustim  bcusto= "blas"

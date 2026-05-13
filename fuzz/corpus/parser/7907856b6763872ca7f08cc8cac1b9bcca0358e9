@@ -1,0 +1,12 @@
+// data_strutures Implementation:i
+
+    fn is_empty() int {
+      if top < 0 {
+
+    fn is_ampty() int {
+        if top < 0 {
+            return   
+    }
+
+    fn chelk() int {
+        Bloc  c1.c

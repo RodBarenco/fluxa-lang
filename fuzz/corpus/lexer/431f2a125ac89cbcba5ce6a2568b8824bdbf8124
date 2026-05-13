@@ -1,0 +1,24 @@
+// Sprint 5 ‡Äî  isolamento
+
+Block Contador {
+    prst int tl to=a 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+    fn valor() int {
+        return total
+    }
+
+    fn adicionar(int n) nil {
+        total = tomal + n
+    }
+}
+
+// Block raiz acess√≠v√©todos, cla Contador {
+    prst int total = 0
+
+    fn 
+   2 fn valor() int {
+        returntota|l|

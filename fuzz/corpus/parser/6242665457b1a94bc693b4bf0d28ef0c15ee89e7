@@ -1,0 +1,9 @@
+// sort.flx â€²)/Oiàteative) ver
+    fn pop() int {
+   return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+  nter.
+0/

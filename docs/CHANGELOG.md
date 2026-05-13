@@ -1,6 +1,36 @@
 # Fluxa-lang Changelog
 
-## v0.14 — Performance Sprint (current)
+## v0.15 — Module System (current)
+
+**Zero warnings. All tests pass. Bench regression: zero.**
+
+### Module System
+
+- `import live <name>` and `import static <name>` — multi-file project support.
+- Modules are a **parse-time lens**, not a runtime concept. Zero changes to runtime.c, resolver.c, bytecode.c, or ast.h.
+- Namespace mangling: `sensor.fn()` → `NODE_FUNC_CALL "sensor__fn"`. The runtime sees a single flat program.
+- `Block` declarations in modules automatically namespaced: `Block Motor` in `live/devices.flx` → `devices__Motor`. `typeof devices.Motor` resolves correctly.
+- `parser_parse_module()` — new public API. Called by `main.c` before parsing main source. Inserts module declarations first, in import order.
+- Single-level imports only — modules cannot import other modules. Design decision: eliminates namespace hell and transitive dependencies. Complete dependency manifest visible at the top of `main.flx`.
+- `[project] module_root` in `fluxa.toml` — configures base directory for module path resolution. Default: CWD.
+- `-dev` watcher extended: watches main + all imported module files. File change in any module triggers reload.
+- 15 module tests in `tests/modules/` covering: static pure functions, live Block state, prst fields, multiple simultaneous modules, namespace isolation, module_root toml, watcher reload.
+- `ffi_list` test timeout increased 10s → 20s (flaky under load).
+
+### Spec
+
+- `docs/fluxa_spec_v13.md` renamed to `docs/fluxa_spec_v15.md`.
+- §4.0 added: Scope and Ownership — no global variables, unique ownership principle.
+- §9.1 updated: four import forms including live/static.
+- §9.5 added: Module System — full specification, design rationale, single-level defense.
+- §15 roadmap: Sprint 15 entry.
+- §16: `[project] module_root` added to fluxa.toml reference.
+- §17.6 / §17.7: `std.libv` and `std.libdsp` marked ✅ implemented (were incorrectly marked planned).
+
+---
+
+## v0.14 — Performance Sprint
+
 
 **Zero warnings. 73/75 tests (2 system-dep: httpc, sqlite). All examples pass.**
 

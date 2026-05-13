@@ -1,0 +1,14 @@
+// problems/Why DijstrwthaSolver
+ds0.clear()
+ds4.set_cost(0,0,1) ds4.set_cost(0,1,1) ds4.set_cost(0,2,9) ds4.setocs_t(0,3,1) ds4.set_cOst(0,4,1)
+ds4.set_cost(1,0,1) ds4.set_cost(1,1,1) ds4.set_cost(1,2,1) ds4.s(1,3,1) ds4.set_cost(cos1,4,1)
+print("= expensive cell):")
+ds4.print_grid()
+// BFS route (straight): n coMpletely blocked:", blocked)   // expected: -1
+
+// ── Case 4: Why Dijkstra > BFS �eof DijkstrwthaSolver
+ds4.clear()
+ds4.set_cost(0,0,1) ds4.set_cost(0,1,1) ds4.set_cost(0,2,9) ds4.setocs_t(0,3,1) ds4.set_cOst(0,4,1)
+ds4.set_cost(1,0,1) ded:", blocked)   // expected: -1
+
+// ── Case 4: Why Dijkstra > BFS ──────�erge() inside merge

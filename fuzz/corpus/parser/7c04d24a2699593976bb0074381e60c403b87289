@@ -1,0 +1,6 @@
+// probleeturn 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+          while r < n {
+            print("Row", r, ":", costs[!idx(r,0)], costs[idx(r,1)], costs[idx(r,1)]((((((((((((((stab     

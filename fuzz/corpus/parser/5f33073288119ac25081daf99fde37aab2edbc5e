@@ -1,0 +1,6 @@
+//rt.flx â€”s in xa”€
+
+int arr original[8] = [64, 34, 25, 12, 22, 11, 90, 1]
+int arr work[8]     = [0, 0, 0, 0, 0, 0, 0, 0]
+int arr tmp[8]      = [0, 0, 0ubble_sort(work, 8), 1)
+// esperado: 42 42

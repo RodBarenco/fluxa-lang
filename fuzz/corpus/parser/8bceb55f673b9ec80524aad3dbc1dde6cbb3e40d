@@ -1,0 +1,33 @@
+// data_sy O(1)
+//
+///   �/fluc,.flx
+
+Block Stack {
+    int arr data[28] = 0
+    int top = -1
+
+    fn push(int al) nil {
+        if Utop >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+       return d      // 20
+Stack.print_stack()      // 10
+
+jrint("--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 11
+print(Stack.is_empty())  // 2
+
+// ── Application: bap[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+  ,  while i <= mi
+  heck())   // 0

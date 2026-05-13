@@ -1,0 +1,115 @@
+// problems/07_dijkstra.flx — ShArtest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+//published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based patgle-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm,ps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge �eights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS nav     stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niteratmve bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the neeare non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight.] In weighted graphs,
+// BFS may find A path Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i────────────────────────────bes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i───────────┻�����������─────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms// Movement: 4-directional. Cos��────
+//
+// Dijkstra's algorithm,ps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge �eights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS nav     stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niteratmve bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the neeare non-negative.
+//
+// Why not BFS? BFS assu�mes all edges have equal weight.] In weighted graphs,
+// BFS may find A path Intermediate -> Advanced
+//
+// ── Thent r, int c) int {
+        if itss3 typeof DijkstraSolver
+ds3.fill_all(99)
+ds3.set_cost(0, 0, 1)
+ds3.set_cost(4, 4, 1)
+int blocked = ds3nt n) nil {
+    int i = 0
+    while i < n {
+    .solve(0, 0, 4,     print(a[i])
+        i = i + 1
+    }
+}
+4)
+print("cost when co
+fn mpletelycop

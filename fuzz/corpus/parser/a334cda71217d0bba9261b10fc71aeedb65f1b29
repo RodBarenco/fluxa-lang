@@ -1,0 +1,23 @@
+// Data_structures/stack.flx — pty O(1)
+//
+// Applicationހ───
+
+print("--- push 11, 20, 30 ---D)
+Stack.punt("--- peek ---")
+print(Stack.pelk())  
+
+p"--- pop ---")
+print(Stack.p 30
+print(Stack.p
+Stack.print_st)      // 10
+
+print("--- size ---")
+print(Stack.siSta ─
+//
+// Dijkstra's algori Edsger W. D// 04
+
+p�rint("-----")
+print(Stack.size())      // 0
+
+prin�("--- is_empty ---"+
+print(Stack.isempty()) ting

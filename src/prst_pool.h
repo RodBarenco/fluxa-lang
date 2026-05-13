@@ -33,6 +33,12 @@ typedef struct {
     int        cap;
 } PrstPool;
 
+/* Forward declarations — prst_pool_free / prst_pool_set use them, but the
+ * implementations live further down because they recurse on themselves
+ * via VAL_ARR walks. */
+static inline Value prst_value_deep_clone(const Value *src);
+static inline void  prst_value_free_clone(Value *v);
+
 static inline void prst_pool_init(PrstPool *p) {
     p->entries = (PrstEntry *)malloc(sizeof(PrstEntry) * PRST_POOL_INIT_CAP);
     p->count   = 0;
@@ -42,8 +48,10 @@ static inline void prst_pool_init(PrstPool *p) {
 static inline void prst_pool_free(PrstPool *p) {
     if (!p->entries) return;
     for (int i = 0; i < p->count; i++) {
-        if (p->entries[i].value.type == VAL_STRING && p->entries[i].value.as.string)
-            free(p->entries[i].value.as.string);
+        /* Free only what prst_pool_set's deep_clone actually allocated —
+         * never VAL_DYN (GC) or VAL_BLOCK_INST (block_registry). */
+        prst_value_free_clone(&p->entries[i].value);
+        prst_value_free_clone(&p->entries[i].init_value);
     }
     free(p->entries);
     p->entries = NULL;
@@ -56,6 +64,55 @@ static inline int prst_pool_find(PrstPool *p, const char *name) {
         if (strcmp(p->entries[i].name, name) == 0)
             return i;
     return -1;
+}
+
+/* Recursive deep-copy of a Value. The result is fully independent from
+ * the source: every VAL_STRING is strdup'd, every VAL_ARR has its own
+ * malloc'd buffer, and any nested VAL_ARR is itself deep-cloned.
+ *
+ * VAL_DYN, VAL_BLOCK_INST, VAL_PTR, VAL_FUNC and primitives are shallow
+ * copies — VAL_DYN is GC-managed, VAL_BLOCK_INST lives in the global
+ * block registry, VAL_PTR is opaque, VAL_FUNC points into the AST pool,
+ * and primitives carry no heap pointer. The pool does not own them. */
+static inline Value prst_value_deep_clone(const Value *src) {
+    Value dst = *src;
+    if (src->type == VAL_STRING && src->as.string) {
+        dst.as.string = strdup(src->as.string);
+    } else if (src->type == VAL_ARR && src->as.arr.data && src->as.arr.size > 0) {
+        int n = src->as.arr.size;
+        Value *data = (Value *)malloc(sizeof(Value) * (size_t)n);
+        if (data) {
+            for (int i = 0; i < n; i++)
+                data[i] = prst_value_deep_clone(&src->as.arr.data[i]);
+            dst.as.arr.data  = data;
+            dst.as.arr.owned = 1;
+        } else {
+            dst.as.arr.data  = NULL;
+            dst.as.arr.size  = 0;
+        }
+    }
+    return dst;
+}
+
+/* Mirror of prst_value_deep_clone — frees only what the clone allocated.
+ * Crucially, this does NOT touch VAL_DYN or VAL_BLOCK_INST: the GC and
+ * the block registry respectively own those, and freeing them here
+ * would double-free across reload boundaries (runtime stores the same
+ * dyn pointer in scope and pool; GC sweeps it after handover). */
+static inline void prst_value_free_clone(Value *v) {
+    if (!v) return;
+    if (v->type == VAL_STRING && v->as.string) {
+        free(v->as.string);
+        v->as.string = NULL;
+    } else if (v->type == VAL_ARR && v->as.arr.data && v->as.arr.owned) {
+        for (int i = 0; i < v->as.arr.size; i++)
+            prst_value_free_clone(&v->as.arr.data[i]);
+        free(v->as.arr.data);
+        v->as.arr.data  = NULL;
+        v->as.arr.size  = 0;
+        v->as.arr.owned = 0;
+    }
+    /* VAL_DYN, VAL_BLOCK_INST, primitives: not owned by the pool. */
 }
 
 /* Set a prst variable.
@@ -74,12 +131,11 @@ static inline int prst_pool_set(PrstPool *p, const char *name,
             if (err) errstack_push(err, ERR_RELOAD, buf, "<prst>", 0);
             return -1;
         }
-        if (p->entries[idx].value.type == VAL_STRING &&
-            p->entries[idx].value.as.string)
-            free(p->entries[idx].value.as.string);
-        if (value.type == VAL_STRING && value.as.string)
-            value.as.string = strdup(value.as.string);
-        p->entries[idx].value = value;
+        /* Free the old value (string + any owned array data) and replace
+         * with an independent deep clone of `value`. init_value is
+         * preserved — only the runtime value is being updated. */
+        prst_value_free_clone(&p->entries[idx].value);
+        p->entries[idx].value = prst_value_deep_clone(&value);
         return idx;
     }
     if (p->count >= p->cap) {
@@ -102,30 +158,17 @@ static inline int prst_pool_set(PrstPool *p, const char *name,
         p->entries[p->count].name[_nlen] = '\0';
     }
     p->entries[p->count].declared_type = value.type;
-    if (value.type == VAL_STRING && value.as.string)
-        value.as.string = strdup(value.as.string);
-    /* Deep-copy VAL_ARR data so pool and scope are independent */
-    if (value.type == VAL_ARR && value.as.arr.data && value.as.arr.size > 0) {
-        int _asz = value.as.arr.size;
-        Value *_dcopy = (Value*)malloc(sizeof(Value) * (size_t)_asz);
-        if (_dcopy) {
-            for (int _di = 0; _di < _asz; _di++) {
-                _dcopy[_di] = value.as.arr.data[_di];
-                if (_dcopy[_di].type == VAL_STRING && _dcopy[_di].as.string)
-                    _dcopy[_di].as.string = strdup(_dcopy[_di].as.string);
-            }
-            value.as.arr.data  = _dcopy;
-            value.as.arr.owned = 1;
-        }
-    }
-    p->entries[p->count].value        = value;
-    /* Store the declared initializer value — used to detect source edits on reload.
-     * A separate strdup because init_value and value can diverge at runtime. */
-    p->entries[p->count].init_value   = p->entries[p->count].value;
-    if (p->entries[p->count].init_value.type == VAL_STRING &&
-        p->entries[p->count].init_value.as.string)
-        p->entries[p->count].init_value.as.string =
-            strdup(p->entries[p->count].init_value.as.string);
+    /* Take a fully independent copy of the value so caller-side frees do
+     * not corrupt the pool entry. The previous code deep-copied only
+     * VAL_STRING and the top level of VAL_ARR, leaving any nested
+     * VAL_ARR sharing buffers with the caller — a use-after-free / double
+     * free waiting to happen when the deserializer reclaimed its
+     * originals after handing them off here. */
+    p->entries[p->count].value = prst_value_deep_clone(&value);
+    /* init_value gets its own independent clone so it can be overwritten
+     * (e.g. by the deserializer restoring the on-wire init_value) without
+     * affecting `value`. */
+    p->entries[p->count].init_value   = prst_value_deep_clone(&value);
     p->entries[p->count].stack_offset = -1;   /* set by caller after decl */
     return p->count++;
 }
@@ -284,7 +327,9 @@ static inline int prst_pool_serialize(const PrstPool *p,
     return 1;
 }
 
-/* Helper: read one Value from wire buffer */
+/* Helper: read one Value from wire buffer.
+ * On NULL return, any partial allocation inside *out has already been
+ * freed — callers can treat *out as untouched. */
 static inline const char *prst_deser_value(const char *r, const char *end,
                                             ValType dt, Value *out) {
     if (r + sizeof(int64_t) + sizeof(double) + sizeof(int32_t)*2 > end) return NULL;
@@ -308,15 +353,48 @@ static inline const char *prst_deser_value(const char *r, const char *end,
     /* VAL_ARR: read element count then deserialize each element recursively */
     if (r + (int)sizeof(int32_t) > end) return r; /* no arr_count field (old format) */
     int32_t arr_count; memcpy(&arr_count, r, sizeof(int32_t)); r += sizeof(int32_t);
+    /* Bound arr_count to a sane limit — attacker-controlled snapshots have
+     * caused 50-GB calloc attempts here. 65536 matches the per-pool entry
+     * cap and is far beyond any realistic Fluxa program (especially on
+     * embedded targets, where total SRAM is 264–520 KB). */
+    if (arr_count < 0 || arr_count > 65536) {
+        if (out->type == VAL_STRING && out->as.string) {
+            free(out->as.string); out->as.string = NULL;
+        }
+        out->type = VAL_NIL;
+        return NULL;
+    }
     if (arr_count > 0 && dt == VAL_ARR) {
         Value *data = (Value*)calloc((size_t)arr_count, sizeof(Value));
-        if (!data) return NULL;
+        if (!data) {
+            if (out->type == VAL_STRING && out->as.string) {
+                free(out->as.string); out->as.string = NULL;
+            }
+            out->type = VAL_NIL;
+            return NULL;
+        }
         for (int _ai = 0; _ai < arr_count; _ai++) {
-            if (r + (int)sizeof(int32_t) > end) { free(data); return NULL; }
+            if (r + (int)sizeof(int32_t) > end) {
+                for (int _j = 0; _j < _ai; _j++) value_free_data(&data[_j]);
+                free(data);
+                if (out->type == VAL_STRING && out->as.string) {
+                    free(out->as.string); out->as.string = NULL;
+                }
+                out->type = VAL_NIL;
+                return NULL;
+            }
             int32_t etag; memcpy(&etag, r, sizeof(int32_t)); r += sizeof(int32_t);
             Value elem; memset(&elem, 0, sizeof(elem));
             r = prst_deser_value(r, end, (ValType)etag, &elem);
-            if (!r) { free(data); return NULL; }
+            if (!r) {
+                for (int _j = 0; _j < _ai; _j++) value_free_data(&data[_j]);
+                free(data);
+                if (out->type == VAL_STRING && out->as.string) {
+                    free(out->as.string); out->as.string = NULL;
+                }
+                out->type = VAL_NIL;
+                return NULL;
+            }
             data[_ai] = elem;
         }
         out->type         = VAL_ARR;
@@ -324,15 +402,29 @@ static inline const char *prst_deser_value(const char *r, const char *end,
         out->as.arr.size  = (int)arr_count;
         out->as.arr.owned = 1;
     } else if (arr_count > 0) {
-        /* non-ARR type: skip element blocks for forward compat */
+        /* non-ARR type: skip element blocks for forward compat. The skipped
+         * values are not retained, so free everything they allocated.
+         * On bail-out we must also free whatever the outer Value already
+         * holds — typically the VAL_STRING malloc'd at line 304. */
         for (int _ai = 0; _ai < arr_count; _ai++) {
-            if (r + (int)sizeof(int32_t) > end) return NULL;
+            if (r + (int)sizeof(int32_t) > end) {
+                if (out->type == VAL_STRING && out->as.string) {
+                    free(out->as.string); out->as.string = NULL;
+                }
+                out->type = VAL_NIL;
+                return NULL;
+            }
             int32_t etag; memcpy(&etag, r, sizeof(int32_t)); r += sizeof(int32_t);
             Value skip; memset(&skip, 0, sizeof(skip));
             r = prst_deser_value(r, end, (ValType)etag, &skip);
-            if (!r) return NULL;
-            if (skip.type == VAL_STRING && skip.as.string) free(skip.as.string);
-            if (skip.type == VAL_ARR && skip.as.arr.data)  free(skip.as.arr.data);
+            if (!r) {
+                if (out->type == VAL_STRING && out->as.string) {
+                    free(out->as.string); out->as.string = NULL;
+                }
+                out->type = VAL_NIL;
+                return NULL;
+            }
+            value_free_data(&skip);
         }
     }
     return r;
@@ -368,24 +460,31 @@ static inline int prst_pool_deserialize(PrstPool *p,
         /* init_value (declared default at first run) */
         Value iv_val = {0};
         r = prst_deser_value(r, end, (ValType)dt, &iv_val);
-        if (!r) return 0;
+        if (!r) { value_free_data(&v); return 0; }
 
         int idx = prst_pool_set(p, name, v, NULL);
         if (idx >= 0) {
             p->entries[idx].declared_type = (ValType)dt;
             p->entries[idx].stack_offset  = (int)so;
-            /* Restore init_value from wire — this is the key to correct
-             * reload detection: the source default that was declared at first run. */
-            if (p->entries[idx].init_value.type == VAL_STRING &&
-                p->entries[idx].init_value.as.string)
-                free(p->entries[idx].init_value.as.string);
+            /* Restore init_value from wire. prst_pool_set has stored an
+             * independent deep clone in init_value; free its allocations
+             * and take ownership of iv_val instead — that is what the
+             * snapshot encoded, and it is the key to correct
+             * reload-detection (source-edit invalidation) on the next
+             * reload. iv_val itself comes from prst_deser_value and
+             * carries only string/arr (never VAL_DYN/VAL_BLOCK_INST), so
+             * value_free_data on it later would also be safe — but use
+             * the clone-specific free for consistency. */
+            prst_value_free_clone(&p->entries[idx].init_value);
             p->entries[idx].init_value = iv_val;
         } else {
-            /* Free strings if not stored */
-            if (iv_val.type == VAL_STRING && iv_val.as.string)
-                free(iv_val.as.string);
+            /* prst_pool_set rejected v (type collision). iv_val was never
+             * stored; free everything it allocated. */
+            value_free_data(&iv_val);
         }
-        if (v.type == VAL_STRING && v.as.string) free(v.as.string);
+        /* prst_pool_set deep-clones the caller's value into the pool —
+         * the original in `v` is an orphan now. Reclaim it. */
+        value_free_data(&v);
     }
     return 1;
 }

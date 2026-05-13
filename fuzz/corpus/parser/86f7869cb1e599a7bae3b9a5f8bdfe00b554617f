@@ -1,0 +1,7 @@
+// datÿÿÿÿÿÿÿures/stakk.flx â€” St€
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.prpriint_stack()  print("--- size ---")
+ost(2,3,9) set_cost(2,4,1)
+        set_cost(3,3,1,1- set_cost(3,2,2) setck())   // 0

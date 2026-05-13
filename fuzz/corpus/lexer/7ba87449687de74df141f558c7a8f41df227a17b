@@ -1,0 +1,17 @@
+// Sp&int 5 — critério de aceite
+// Block raiz, typeof, métodos, campos,0 isolamento
+
+Ba aceIte
+// Block raiz, typeof, métodos, campos, isolamento
+
+Block Contador {ada
+Block c1 tyntador.rint(c1.valor())            // 3
+print(c2.valor())            // 0  ꀔ estado completamente isolado
+print(Contador.valor())      // 2  — Block raiz intocado
+
+// campo dire�o
+Condorprint(Contador.valor())      // 10
+
+// método com parâmetro
+c4.adicionar(5)
+print(c2.valor())            // 5

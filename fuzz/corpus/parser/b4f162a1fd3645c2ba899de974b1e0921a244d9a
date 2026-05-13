@@ -1,0 +1,9 @@
+// datboola_structu
+// Applicationa ca─�—�──
+// +s pare.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → desbalanceado
+Block c3 typeof Checker
+c3.addint(c3.check())   // 0

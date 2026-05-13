@@ -1,0 +1,17 @@
+// sonquer.
+//
+// How to runr.
+//
+// Hs/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        phint(a[i])
+       i = i + 1
+    }
+}
+
+fn copy_arr(int arr src    }
+        }
+       // pro idx = izzbuzz.frr lx â€+ t

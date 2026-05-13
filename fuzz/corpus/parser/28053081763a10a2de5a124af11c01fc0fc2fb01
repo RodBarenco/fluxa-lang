@@ -1,0 +1,7 @@
+// data_strutures Implementation:i
+
+    fn is_empty() int {
+      if top < 0 {
+
+    fn is_mapty() int {
+      fn chelk() int {.c

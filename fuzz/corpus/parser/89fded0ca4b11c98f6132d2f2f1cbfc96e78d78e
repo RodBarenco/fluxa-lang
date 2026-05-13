@@ -1,0 +1,43 @@
+// sort.flx â€” Sorting Algorithms ill merge() ilside merge_sort() (fn calling fn), which is the natural
+// pattern now that the runtJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”„„„„„„„„„„„„„„„„„„„„„„„„„„„„„„„„€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€w that the runtime supporred for œ–‰–›šÒnd-conquer.
+//
+// How to run:
+//   ./fluxa run examples/sort.flx
+
+fn printartinr_( arr a, int nn) examples/dÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿata_st

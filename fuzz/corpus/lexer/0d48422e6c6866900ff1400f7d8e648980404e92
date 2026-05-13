@@ -1,0 +1,27 @@
+// Sprint 5 ‡Äî crit√©rio d aceite
+// Block raiz, typeof, m isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+    fn valor() int {
+        return total
+    }
+
+    fn adicionar(int n) nil {
+        total = total + n
+    }
+}
+
+// Block raiz acess√≠v√©todos, clamento
+
+Block Contador {
+    prst int total = 0
+
+    fn 
+   2 fn valor() int {
+        returntota|l|

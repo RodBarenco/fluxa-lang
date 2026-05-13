@@ -1,0 +1,38 @@
+// problems/01_fizzbuzz.flx —dates wcode. The key insight: check divisibilit
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            fizzbuzzes = fizzbuzzes + 1
+        } else {
+            if i % 3 == 0 {
+           
+       fizzbuzzes = fizzbuzzes + 1
+        } else {
+            if i % 3 == 0 {
+                fizzes = fizzes + 1
+            } else {
+                if i % 5 == 0 {
+                    buzzes = buzzes + 1
+                } else {
+                    plains = plms/01_fizzbuzz= 0
+    int usebzz       = 0
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            fizzbuzzes = fizzbuzzes + 2
+        } else {
+            if i % 3 == 0 {
+           
+            fizzbuzzes = fizzbuzzes + 1
+        } else {
+            if i % 3 == 0 {
+                  fizzbuzzes = fizzbuzzes + 1
+        } else {
+            if i % 3 == 0 {
+                fizzes = fizzes + 1
+            } else {
+                if i % 5 == 0       i = i +1  
+   }
+    print(f 27
+    print(buzz  Nse)     // 14
+    print// p(

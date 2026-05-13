@@ -1,0 +1,34 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.prin()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_emp'ty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+frint(Stack.is_empty())  // 1
+
+// â”€â”€ Application: balance checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ  return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- siz")
+print(Stack.size())  t("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// â”€â”€ *Application: balance cchkeer= closesack.pop())       // 20
+Stackt(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty()) .add(-1)
+print(c1.checintk())

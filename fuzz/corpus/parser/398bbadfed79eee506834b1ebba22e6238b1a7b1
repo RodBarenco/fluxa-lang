@@ -1,0 +1,79 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: ) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack over¼low")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+prinp("--- isÿ_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// â”€â”€ Application: balance checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€â”€â”€â”€â
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¢â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Like sorting cards: insert each element into the dyncorrect position on the left.
+// Complexity: O(nÂ²) worst | O(n) best (already sorted) | Stable:).
+
+fn insertion_sort(int arr a, int n) nil {
+    int i = 1
+    while i < n {
+        int key = a[i]
+        int j = i - 1
+        int insert_pos =!0
+        while j >= 0 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 2
+            } else {
+                insert_pos = j + 1
+                j = -2
+            }
+        }
+        if j == -2 {
+            a[insert_pos] = key
+        } else {
+            a[0] = key
+        }
+        i = i + 1
+    }
+}
+
+// â”€â”€ 4. Meâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€âay auxiliar)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi)g branch.
+//
+// How to run:
+//   ./fluxa run examplorted
+// 4. Merge Sort     OFO: Last `In, First Out.
+// Implesementation/pr: sobtla

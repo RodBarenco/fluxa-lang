@@ -14,9 +14,28 @@ typedef struct {
     Token    next;
     int      had_error;
     ASTPool *pool;
+    /* v0.15: module namespace support
+     * ns: active namespace for this parse pass ("sensor", or "" for main).
+     * imported: namespaces registered from `import live/static X` in main.
+     * imported_count: number of registered namespaces. */
+    char  ns[64];
+    char  imported[32][64];
+    int   imported_count;
+    /* Names declared at top-level in the current module parse pass.
+     * Used to mangle references inside fn bodies. */
+    char  module_decls[256][64];
+    int   module_decl_count;
+    /* Expression recursion depth guard — prevents stack overflow on
+     * deeply nested input like (((((...))))). */
+    int   expr_depth;
 } Parser;
 
 Parser   parser_new(const char *source, ASTPool *pool);
+/* v0.15: parse module source `source` under namespace `ns`, appending
+ * top-level declarations (mangled) into `program`.
+ * Returns 0 on success, -1 on parse error. */
+int      parser_parse_module(Parser *main_p, ASTNode *program,
+                              const char *ns, const char *source);
 ASTNode *parser_parse(Parser *p);
 void     parser_free(Parser *p);
 

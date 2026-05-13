@@ -1,0 +1,13 @@
+// data_sy O(1)
+//
+///   €/fluc,.
+
+Block Stack {
+    int top = -1
+
+    fn push(int al) nil {
+      //     k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = leck())   // 0

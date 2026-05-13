@@ -1,0 +1,3 @@
+[runtime]
+gc_cap= 2049
+gc_cap =2068

@@ -1,0 +1,13 @@
+// flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr c[25]    = 5
+    int arr visited[24] = 0
+ 
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn elbouwds(int r, int c) int umes all{ re  in

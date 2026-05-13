@@ -33,17 +33,23 @@ fi
 run_test() {
     local script="$1" label="$2"
     echo ""
-    local out
-    if out=$(bash "$script" $FAST 2>&1); then
-        echo "$out"
+    local out exit_code
+    out=$(bash "$script" $FAST 2>&1) && exit_code=0 || exit_code=$?
+    echo "$out"
+    if [ "$exit_code" -eq 0 ]; then
         local p f
         p=$(echo "$out" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
         f=$(echo "$out" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
         TOTAL_PASS=$((TOTAL_PASS + p))
         TOTAL_FAIL=$((TOTAL_FAIL + f))
     else
-        echo "$out"
-        TOTAL_FAIL=$((TOTAL_FAIL + 1))
+        local f
+        f=$(echo "$out" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
+        if [ "$f" -gt 0 ]; then
+            TOTAL_FAIL=$((TOTAL_FAIL + f))
+        else
+            TOTAL_FAIL=$((TOTAL_FAIL + 1))
+        fi
     fi
 }
 

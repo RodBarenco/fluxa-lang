@@ -286,4 +286,56 @@ static inline void ast_list_push(ASTNode *parent, ASTNode *child) {
     parent->as.list.children[parent->as.list.count - 1] = child;
 }
 
+/* Free heap arrays attached to one ASTNode. The node itself, and any
+ * string fields fed from pool_strdup, are owned by the ASTPool — only
+ * the realloc'd children/args/elements/members/params arrays are heap
+ * pointers that the parser does not register anywhere else.
+ *
+ * Called by pool_free for every node in the pool (including overflow
+ * heap-allocated nodes). Idempotent: nulls each pointer after free so
+ * a second call is a no-op. */
+static inline void ast_free_arrays(ASTNode *n) {
+    if (!n) return;
+    switch (n->type) {
+        case NODE_PROGRAM:
+        case NODE_FUNC_CALL:
+        case NODE_BLOCK_STMT:
+            free(n->as.list.children);
+            n->as.list.children = NULL;
+            break;
+        case NODE_ARR_DECL:
+            free(n->as.arr_decl.elements);
+            n->as.arr_decl.elements = NULL;
+            break;
+        case NODE_FUNC_DECL:
+            free(n->as.func_decl.param_names);
+            free(n->as.func_decl.param_types);
+            n->as.func_decl.param_names = NULL;
+            n->as.func_decl.param_types = NULL;
+            break;
+        case NODE_BLOCK_DECL:
+            free(n->as.block_decl.members);
+            n->as.block_decl.members = NULL;
+            break;
+        case NODE_MEMBER_CALL:
+            free(n->as.member_call.args);
+            n->as.member_call.args = NULL;
+            break;
+        case NODE_FFI_CALL:
+            free(n->as.ffi_call.args);
+            n->as.ffi_call.args = NULL;
+            break;
+        case NODE_DYN_LIT:
+            free(n->as.dyn_lit.elements);
+            n->as.dyn_lit.elements = NULL;
+            break;
+        case NODE_INDEXED_MEMBER_CALL:
+            free(n->as.indexed_member_call.args);
+            n->as.indexed_member_call.args = NULL;
+            break;
+        default:
+            break;
+    }
+}
+
 #endif /* FLUXA_AST_H */

@@ -12,6 +12,48 @@
 #define P_NODE()   pool_alloc_node(p->pool)
 #define P_STR(s)   pool_strdup(p->pool, s)
 
+/* ── v0.15: namespace/module helpers ─────────────────────────────────────── */
+
+static void mangle(const char *ns, const char *name, char *out, size_t outsz) {
+    snprintf(out, (outsz > 1 ? outsz : 1), "%.*s__%.*s",
+         (int)(outsz/2 - 2), ns, (int)(outsz/2 - 2), name);
+}
+
+static int is_imported_ns(Parser *p, const char *name) {
+    for (int i = 0; i < p->imported_count; i++)
+        if (strcmp(p->imported[i], name) == 0) return 1;
+    return 0;
+}
+
+static void register_ns(Parser *p, const char *name) {
+    if (p->imported_count >= 32) return;
+    strncpy(p->imported[p->imported_count++], name, 63);
+    p->imported[p->imported_count-1][63] = '\0';
+}
+
+/* Track top-level names declared inside a module parse pass so that
+ * references inside fn bodies get mangled automatically. */
+static void module_decl_add(Parser *p, const char *name) {
+    if (!p->ns[0] || p->module_decl_count >= 256) return;
+    char *slot = p->module_decls[p->module_decl_count++];
+    snprintf(slot, 64, "%.63s", name);
+}
+
+static int is_module_decl(Parser *p, const char *name) {
+    if (!p->ns[0]) return 0;
+    for (int i = 0; i < p->module_decl_count; i++)
+        if (strcmp(p->module_decls[i], name) == 0) return 1;
+    return 0;
+}
+
+/* Return pool-allocated mangled name if declared in module, else original */
+static char *maybe_mangle_str(Parser *p, const char *name) {
+    if (!is_module_decl(p, name)) return P_STR(name);
+    char buf[320];
+    mangle(p->ns, name, buf, sizeof(buf));
+    return P_STR(buf);
+}
+
 /* ── AST constructors ────────────────────────────────────────────────────── */
 static ASTNode *p_string(Parser *p, const char *v) {
     ASTNode *n = P_NODE(); n->type = NODE_STRING_LIT;
@@ -31,11 +73,14 @@ static ASTNode *p_bool(Parser *p, int v) {
 }
 static ASTNode *p_ident(Parser *p, const char *name) {
     ASTNode *n = P_NODE(); n->type = NODE_IDENTIFIER;
-    n->as.str.value = P_STR(name); return n;
+    /* v0.15: mangle if name was declared in this module */
+    n->as.str.value = maybe_mangle_str(p, name);
+    return n;
 }
 static ASTNode *p_func_call(Parser *p, const char *name) {
     ASTNode *n = P_NODE(); n->type = NODE_FUNC_CALL;
-    n->as.list.name = P_STR(name);
+    /* v0.15: mangle if name was declared in this module */
+    n->as.list.name = maybe_mangle_str(p, name);
     n->as.list.children = NULL; n->as.list.count = 0; return n;
 }
 static ASTNode *p_program(Parser *p) {
@@ -46,13 +91,22 @@ static ASTNode *p_var_decl(Parser *p, const char *type_name,
                             const char *var_name, ASTNode *init, int prst) {
     ASTNode *n = P_NODE(); n->type = NODE_VAR_DECL;
     n->as.var_decl.type_name   = P_STR(type_name);
-    n->as.var_decl.var_name    = P_STR(var_name);
+    /* v0.15: mangle variable name when inside a module parse pass */
+    if (p->ns[0]) {
+        char mangled[320];
+        mangle(p->ns, var_name, mangled, sizeof(mangled));
+        n->as.var_decl.var_name = P_STR(mangled);
+        module_decl_add(p, var_name); /* track original name for body refs */
+    } else {
+        n->as.var_decl.var_name = P_STR(var_name);
+    }
     n->as.var_decl.initializer = init;
     n->as.var_decl.persistent  = prst; return n;
 }
 static ASTNode *p_assign(Parser *p, const char *name, ASTNode *val) {
     ASTNode *n = P_NODE(); n->type = NODE_ASSIGN;
-    n->as.assign.var_name = P_STR(name);
+    /* v0.15: mangle if name was declared in this module */
+    n->as.assign.var_name = maybe_mangle_str(p, name);
     n->as.assign.value    = val; return n;
 }
 static ASTNode *p_binary(Parser *p, const char *op,
@@ -117,6 +171,14 @@ static void parse_args_into(Parser *p, ASTNode ***args_out, int *count_out) {
 
 /* ── Expression parsing ──────────────────────────────────────────────────── */
 static ASTNode *parse_primary(Parser *p) {
+    /* Depth guard: prevents stack overflow on deeply nested expressions
+     * like (((((...)))). 512 levels is more than any real Fluxa program
+     * needs and well within default stack limits. Found by fuzz_parser. */
+    if (p->expr_depth > 512) {
+        parse_error(p, "expression nested too deeply");
+        return NULL;
+    }
+    p->expr_depth++;
     int cur_line = p->current.line;   /* Sprint 8: linha do token atual */
     if (check(p, TOK_STRING)) {
         ASTNode *n = p_string(p, p->current.value);
@@ -200,7 +262,7 @@ static ASTNode *parse_primary(Parser *p) {
             return n;
         }
 
-        /* inst.field or inst.method(args) */
+        /* inst.field or inst.method(args) — or module namespace access */
         if (check(p, TOK_DOT)) {
             parser_advance(p);
             if (!check(p, TOK_IDENT)) {
@@ -211,6 +273,32 @@ static ASTNode *parse_primary(Parser *p) {
             strncpy(member, p->current.value, sizeof(member)-1);
             member[sizeof(member)-1] = '\0';
             parser_advance(p);
+
+            /* v0.15: if `name` is a registered module namespace, emit
+             * mangled calls/identifiers instead of NODE_MEMBER_CALL.
+             * This keeps the runtime path identical to plain fn calls. */
+            if (is_imported_ns(p, name)) {
+                char mangled_name[320];
+                mangle(name, member, mangled_name, sizeof(mangled_name));
+
+                if (check(p, TOK_LPAREN)) {
+                    /* sensor.fn(args) → NODE_FUNC_CALL "sensor__fn" */
+                    parser_advance(p);
+                    ASTNode *call = p_func_call(p, mangled_name);
+                    while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+                        ASTNode *arg = parse_expr(p);
+                        if (!arg) return NULL;
+                        ast_list_push(call, arg);
+                        if (!match(p, TOK_COMMA)) break;
+                    }
+                    if (!expect(p, TOK_RPAREN, "after module function arguments"))
+                        return NULL;
+                    return call;
+                } else {
+                    /* sensor.x → NODE_IDENTIFIER "sensor__x" */
+                    return p_ident(p, mangled_name);
+                }
+            }
 
             if (check(p, TOK_LPAREN)) {
                 /* inst.method(args) */
@@ -368,17 +456,31 @@ static ASTNode *parse_block_decl(Parser *p) {
     block_name[sizeof(block_name)-1] = '\0';
     parser_advance(p);
 
-    /* 'typeof' branch: Block b1 typeof Foo */
+    /* 'typeof' branch: Block b1 typeof Foo  or  Block b1 typeof ns.Foo */
     if (check(p, TOK_TYPEOF)) {
         parser_advance(p);
         if (!check(p, TOK_IDENT)) {
             parse_error(p, "expected Block name after 'typeof'");
             return NULL;
         }
-        char origin[256];
+        char origin[320];
         strncpy(origin, p->current.value, sizeof(origin)-1);
         origin[sizeof(origin)-1] = '\0';
         parser_advance(p);
+
+        /* v0.15: typeof ns.BlockName — resolve to mangled name */
+        if (check(p, TOK_DOT) && is_imported_ns(p, origin)) {
+            parser_advance(p); /* consume '.' */
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected Block name after '.'");
+                return NULL;
+            }
+            char mangled[320];
+            mangle(origin, p->current.value, mangled, sizeof(mangled));
+            strncpy(origin, mangled, sizeof(origin)-1);
+            origin[sizeof(origin)-1] = '\0';
+            parser_advance(p);
+        }
 
         ASTNode *n = P_NODE();
         n->type                        = NODE_TYPEOF_INST;
@@ -391,8 +493,16 @@ static ASTNode *parse_block_decl(Parser *p) {
     if (!expect(p, TOK_LBRACE, "after Block name")) return NULL;
 
     ASTNode *n = P_NODE();
-    n->type                    = NODE_BLOCK_DECL;
-    n->as.block_decl.name      = P_STR(block_name);
+    n->type = NODE_BLOCK_DECL;
+    /* v0.15: mangle Block name when inside a module parse pass */
+    if (p->ns[0]) {
+        char mangled[320];
+        mangle(p->ns, block_name, mangled, sizeof(mangled));
+        n->as.block_decl.name = P_STR(mangled);
+        module_decl_add(p, block_name); /* track for typeof resolution */
+    } else {
+        n->as.block_decl.name = P_STR(block_name);
+    }
     n->as.block_decl.members   = NULL;
     n->as.block_decl.count     = 0;
 
@@ -605,6 +715,7 @@ static ASTNode *parse_body(Parser *p) {
 static ASTNode *parse_statement(Parser *p) {
     int persistent = 0;
     int stmt_line = p->current.line;   /* Sprint 8: captura linha do statement */
+    p->expr_depth = 0;   /* reset per statement — depth only guards within one expression */
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); stmt_line = p->current.line; }
 
     /* Sprint 6.b: import c libname [as alias] */
@@ -613,8 +724,24 @@ static ASTNode *parse_statement(Parser *p) {
             if (!check(p, TOK_IDENT) &&
                 !check(p, TOK_TYPE_STR) && !check(p, TOK_TYPE_INT) &&
                 !check(p, TOK_TYPE_FLOAT) && !check(p, TOK_TYPE_BOOL)) {
-            parse_error(p, "expected 'c' or 'std' after 'import'");
+            parse_error(p, "expected 'c', 'std', 'live', or 'static' after 'import'");
             return NULL;
+        }
+
+        /* v0.15: import live/static <name> — module namespace
+         * The module source is loaded and parsed by main.c before this
+         * parse pass. Here we just register the namespace so that
+         * `name.fn()` emits mangled calls, and consume the statement. */
+        if (strcmp(p->current.value, "live") == 0 ||
+            strcmp(p->current.value, "static") == 0) {
+            parser_advance(p); /* skip live/static */
+            if (!check(p, TOK_IDENT)) {
+                parse_error(p, "expected module name after 'import live/static'");
+                return NULL;
+            }
+            register_ns(p, p->current.value);
+            parser_advance(p); /* skip module name */
+            return NULL;       /* no AST node — module was pre-parsed by main.c */
         }
 
         /* import std <lib> — standard library opt-in */
@@ -769,7 +896,15 @@ static ASTNode *parse_statement(Parser *p) {
         ASTNode *n = P_NODE();
         n->type = NODE_FUNC_DECL;
         n->line = stmt_line;
-        n->as.func_decl.name        = P_STR(fn_name);
+        /* v0.15: mangle name when inside a module parse pass */
+        if (p->ns[0]) {
+            char mangled[320];
+            mangle(p->ns, fn_name, mangled, sizeof(mangled));
+            n->as.func_decl.name = P_STR(mangled);
+            module_decl_add(p, fn_name); /* track original name for body refs */
+        } else {
+            n->as.func_decl.name = P_STR(fn_name);
+        }
         n->as.func_decl.param_names = param_names;
         n->as.func_decl.param_types = param_types;
         n->as.func_decl.param_count = param_count;
@@ -1099,6 +1234,39 @@ static ASTNode *parse_statement(Parser *p) {
             member[sizeof(member)-1] = '\0';
             parser_advance(p);
 
+            /* v0.15: module namespace — emit mangled FUNC_CALL as statement */
+            if (is_imported_ns(p, name)) {
+                char mangled_name[320];
+                mangle(name, member, mangled_name, sizeof(mangled_name));
+
+                if (check(p, TOK_LPAREN)) {
+                    parser_advance(p);
+                    ASTNode *call = p_func_call(p, mangled_name);
+                    while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+                        ASTNode *arg = parse_expr(p);
+                        if (!arg) return NULL;
+                        ast_list_push(call, arg);
+                        if (!match(p, TOK_COMMA)) break;
+                    }
+                    if (!expect(p, TOK_RPAREN, "after module function arguments"))
+                        return NULL;
+                    return call;
+                }
+                /* module.var = val — module variable assignment */
+                if (check(p, TOK_EQ)) {
+                    parser_advance(p);
+                    ASTNode *val = parse_expr(p);
+                    if (!val) return NULL;
+                    ASTNode *n = P_NODE();
+                    n->type               = NODE_ASSIGN;
+                    n->as.assign.var_name = P_STR(mangled_name);
+                    n->as.assign.value    = val;
+                    return n;
+                }
+                parse_error(p, "expected '(' or '=' after module member name");
+                return NULL;
+            }
+
             if (check(p, TOK_LPAREN)) {
                 /* inst.method(args) as statement */
                 parser_advance(p);
@@ -1172,6 +1340,10 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.pool      = pool;
     p.current   = lexer_next(&p.lexer);
     p.next      = lexer_next(&p.lexer);
+    p.ns[0]             = '\0';
+    p.imported_count    = 0;
+    p.module_decl_count = 0;
+    p.expr_depth        = 0;
     return p;
 }
 
@@ -1183,6 +1355,34 @@ ASTNode *parser_parse(Parser *p) {
     }
     if (p->had_error) return NULL;
     return program;
+}
+
+/* v0.15: parse a module source under namespace `ns`, appending its top-level
+ * declarations into `program` (the main program node) before the main body.
+ * The parser's imported namespace list is also propagated to the caller's
+ * parser so that sensor.fn() resolves correctly in main.
+ * Returns 0 on success, -1 on parse error. */
+int parser_parse_module(Parser *main_p, ASTNode *program,
+                        const char *ns, const char *source) {
+    Parser mp = parser_new(source, main_p->pool);
+    strncpy(mp.ns, ns, sizeof(mp.ns) - 1);
+    mp.ns[sizeof(mp.ns) - 1] = '\0';
+    /* Propagate already-known namespaces so module can reference them */
+    mp.imported_count = main_p->imported_count;
+    for (int i = 0; i < main_p->imported_count; i++)
+        strncpy(mp.imported[i], main_p->imported[i], 63);
+
+    /* Register the current module's namespace in both mp and main_p */
+    register_ns(&mp, ns);
+    register_ns(main_p, ns);
+
+    while (!check(&mp, TOK_EOF) && !mp.had_error) {
+        ASTNode *stmt = parse_statement(&mp);
+        if (stmt) ast_list_push(program, stmt);
+    }
+    parser_free(&mp);
+    if (mp.had_error) return -1;
+    return 0;
 }
 
 void parser_free(Parser *p) {

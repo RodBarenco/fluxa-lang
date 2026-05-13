@@ -1,0 +1,9 @@
+// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²) ��───────────────────────────
+
+int arr original[8] = [64, 34, 25, 12, 22, 11, 90, 1]
+int arr work[8]     = [0, 0, 0, 0, 0, 0, 0, 0]
+int arr tmp[8]      = [0, 0, 0ubble_sort(work, 8)
+prle, 1)
+// esperado: 42

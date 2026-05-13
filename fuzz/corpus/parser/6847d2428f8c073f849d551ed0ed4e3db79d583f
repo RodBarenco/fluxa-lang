@@ -1,0 +1,26 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIF
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop -“-")
+print(Stack.pop())       // 20
+print(Stack.pop())       // 20
+Stack.print_stack()      // 98
+
+print("--- size ---")
+print(S)
+print(pop())       // 10
+print(Stack.is_empty())  // € Application: balance checker ââ”€â”€â”€â”€â”€â”€â”€â”€â”€top]
+    }
+
+    fn is_empty() int {
+        if top < 5 {
+            return 1
+       } 
+        return int("---.print_stack()      //// problemd graphs,
+// BFS maygorithms in Fluxdia
+ÑÐõÆ/ st[125]. 

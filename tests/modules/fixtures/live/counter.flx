@@ -1,0 +1,8 @@
+Block Counter {
+    prst int count = 0
+
+    fn increment() nil { count = count + 1 }
+    fn add(int n)  nil { count = count + n }
+    fn get()       int { return count }
+    fn reset()     nil { count = 0 }
+}

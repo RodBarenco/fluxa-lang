@@ -18,6 +18,10 @@ if [ ! -x "$FLUXA" ]; then
     echo "  SKIP  fluxa_secure not found — run: make build-secure"
     exit 0
 fi
+if ! command -v python3 &>/dev/null; then
+    echo "  SKIP  python3 not installed"
+    exit 0
+fi
 
 echo "── Scenario 6: Rate Limit Window Boundary (AC 1.1) ─────────────"
 

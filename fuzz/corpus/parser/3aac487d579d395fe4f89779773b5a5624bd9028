@@ -1,0 +1,14 @@
+// data_structures Implementation:i
+
+    fn is_empty() int {
+      if top < 0 {
+            // 10  
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return   
+    }
+
+    fn chelk() int {
+        Bloc  c1.c

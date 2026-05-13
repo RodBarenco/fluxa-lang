@@ -249,19 +249,7 @@ build:
 	@echo "✓ build ok → ./$(TARGET)"
 
 
-build-dis:
-	$(CC) $(CFLAGS) \
-	    src/dis_main.c \
-	    src/lexer.c    \
-	    src/parser.c   \
-	    src/scope.c    \
-	    src/resolver.c \
-	    src/bytecode.c \
-	    src/builtins.c \
-	    src/block.c    \
-	    -o fluxa_dis   \
-	    -lm
-	@echo "✓ build ok → ./fluxa_dis"
+# build-dis removed — fluxa dis <file> is a runtime subcommand since v0.14
 
 
 # Hardened prod binary — FLUXA_SECURE=1 enables:
@@ -613,6 +601,7 @@ test-torture: build
 # to continue to sim tests regardless.
 test-all: build build-sim-rp2040 build-sim-esp32
 	@./tests/run_tests.sh ./$(TARGET) || true
+	@bash tests/modules/modules.sh --fluxa ./$(TARGET)
 	@bash tests/suite2/run_suite2.sh --fluxa ./$(TARGET)
 	@bash tests/libs/math.sh --fluxa ./$(TARGET)
 	@bash tests/libs/csv.sh --fluxa ./$(TARGET)
@@ -679,6 +668,107 @@ examples: build
 	@./$(TARGET) run examples/problems/07_dijkstra.flx
 	@./$(TARGET) run examples/problems/08_pagerank.flx
 	@echo "── all examples ok ─────────────────────────────────────────────────"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fuzz
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# libFuzzer + ASan + UBSan harnesses for every parser worth fuzzing:
+# lexer, full parser, fluxa.toml loader, std.csv field parser, std.json
+# streaming primitives, std.json2 full DOM parser.
+#
+# Requires clang. The default build still uses gcc — fuzz targets opt in.
+#
+#   make fuzz-build       compile all harnesses
+#   make fuzz-<target>    build then run one (e.g. make fuzz-parser)
+#   make fuzz             build then run every target for $(FUZZ_TIME) seconds
+#                          each (default 60s; override on the command line)
+#   make fuzz-clean       remove fuzz/build artefacts and crash files
+#
+# Time budget (seconds) per target. Override: make fuzz FUZZ_TIME=300
+FUZZ_TIME ?= 60
+FUZZ_CC    = clang
+# rss_limit: 1 GB. lexer/parser allocate large pool buffers, but ASan
+# triples reservations — 2 GB default is fine, 1 GB is the libFuzzer cap.
+FUZZ_FLAGS = -g -O1 -std=c99                                            \
+             -fsanitize=fuzzer,address,undefined                         \
+             -fno-sanitize-recover=undefined                             \
+             -fno-omit-frame-pointer                                     \
+             -D_POSIX_C_SOURCE=200809L                                   \
+             -DFLUXA_HAS_FFI=0                                           \
+             -Isrc -Ivendor
+FUZZ_DIR   = fuzz
+FUZZ_BUILD = $(FUZZ_DIR)/build
+
+# Each target lists its src deps. Header-only stdlib libs need scope.c
+# because their dispatch can hand back VAL_STRING / VAL_DYN that we free
+# via value_free_data.
+FUZZ_LEXER_SRCS    = src/lexer.c
+FUZZ_PARSER_SRCS   = src/lexer.c src/parser.c
+FUZZ_TOML_SRCS     =
+FUZZ_CSV_SRCS      = src/scope.c
+FUZZ_JSON_SRCS     =
+FUZZ_JSON2_SRCS    =
+FUZZ_SNAPSHOT_SRCS = src/scope.c
+
+FUZZ_TARGETS = lexer parser toml csv json json2 snapshot
+
+.PHONY: fuzz fuzz-build fuzz-clean $(addprefix fuzz-,$(FUZZ_TARGETS))
+
+$(FUZZ_BUILD):
+	@mkdir -p $@
+
+$(FUZZ_BUILD)/fuzz_lexer: $(FUZZ_DIR)/fuzz_lexer.c $(FUZZ_LEXER_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_LEXER_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_parser: $(FUZZ_DIR)/fuzz_parser.c $(FUZZ_PARSER_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_PARSER_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_toml: $(FUZZ_DIR)/fuzz_toml.c $(FUZZ_TOML_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_TOML_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_csv: $(FUZZ_DIR)/fuzz_csv.c $(FUZZ_CSV_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_CSV_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_json: $(FUZZ_DIR)/fuzz_json.c $(FUZZ_JSON_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_JSON_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_json2: $(FUZZ_DIR)/fuzz_json2.c $(FUZZ_JSON2_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_JSON2_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_snapshot: $(FUZZ_DIR)/fuzz_snapshot.c $(FUZZ_SNAPSHOT_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_SNAPSHOT_SRCS) $< -o $@
+
+fuzz-build: $(FUZZ_BUILD)/fuzz_lexer  $(FUZZ_BUILD)/fuzz_parser   \
+            $(FUZZ_BUILD)/fuzz_toml   $(FUZZ_BUILD)/fuzz_csv      \
+            $(FUZZ_BUILD)/fuzz_json   $(FUZZ_BUILD)/fuzz_json2    \
+            $(FUZZ_BUILD)/fuzz_snapshot
+	@echo "✓ fuzz build ok → $(FUZZ_BUILD)/fuzz_*"
+
+# Per-target run target. Each fuzzer writes its findings under
+# fuzz/findings/<target>/ and reuses corpus/<target>/ as its seed pool.
+define FUZZ_RUN_template
+fuzz-$(1): $$(FUZZ_BUILD)/fuzz_$(1)
+	@mkdir -p $$(FUZZ_DIR)/findings/$(1) $$(FUZZ_DIR)/corpus/$(1)
+	@echo "── fuzz: $(1) ($$(FUZZ_TIME)s) ──────────────────────────────"
+	@cd $$(FUZZ_DIR) && ASAN_OPTIONS=detect_leaks=1:abort_on_error=0    \
+	    UBSAN_OPTIONS=print_stacktrace=1                                 \
+	    ./build/fuzz_$(1) -max_total_time=$$(FUZZ_TIME)                  \
+	                       -artifact_prefix=findings/$(1)/                \
+	                       corpus/$(1)
+endef
+
+$(foreach t,$(FUZZ_TARGETS),$(eval $(call FUZZ_RUN_template,$(t))))
+
+fuzz: fuzz-build
+	@for t in $(FUZZ_TARGETS); do \
+	    $(MAKE) -s fuzz-$$t FUZZ_TIME=$(FUZZ_TIME) || exit 1; \
+	done
+	@echo "✓ all fuzz targets clean for $(FUZZ_TIME)s each"
+
+fuzz-clean:
+	rm -rf $(FUZZ_BUILD) $(FUZZ_DIR)/findings
 
 
 # ─────────────────────────────────────────────────────────────────────────────

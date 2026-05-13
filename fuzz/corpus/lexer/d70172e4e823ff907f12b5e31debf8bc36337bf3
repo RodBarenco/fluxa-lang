@@ -1,0 +1,18 @@
+// tests/sprint7a.flx — critérios fn aceite Sprint 7.a
+//
+// 1. prst eforroject mode — valor pe�──────�l = 0
+
+    fn get_lives() ime.get_lives())   // 3
+Game.n4. prst bool e float ────────────────────────────────────────────────────
+prst bool running = true
+prst float ranning)    // true
+print(rate)       // 0.5
+
+// ── 5. Simulação de loop que justifica project mode ──────────────────────────
+prst int ticks = 0
+int i = 0
+while i < 5 {
+    ticks = ticks + 1
+    i = i + 1
+}
+print(ticks)      // 5

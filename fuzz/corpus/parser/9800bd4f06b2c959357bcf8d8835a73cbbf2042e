@@ -1,0 +1,115 @@
+// sort.flxatural
+// pattern now that the runtime supports itot required for divide-and-conquer.
+//
+// H
+        int insert_pos = 0
+        while j >= 0 {
+            if a[j] > key {
+                      int key = a[i]
+        int j = i - 1
+     while j >= 0 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 1
+            }   int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+            i = i + 1
+        } else {
+            if tmp[i] <= tmp[j] {
+                a[idx] = tmp[i]
+                   }
+        width = width * 2
+    }
+}
+
+// ── Demo ───────────────────────────────────────────────────────────�i {
+        tmp[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+            i = i + 1
+        } else {
+            if tmp[i] <= tmp[j] {
+                a[idx] = tmp[i]
+                   }
+        width = width * 2
+    }
+}
+
+// ── Demo ───────────────── = i - 1
+        int insert_pos = 0
+        while j >= 0 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 1
+            } else {
+                insert_pos = j + 1
+                j = -2
+            }
+        }
+        if j == -2 {
+            a[insert_pos] = key
+        } else {
+            a[0] = key
+        }
+        i = i + 1
+    }
+}
+
+// ── 4. Merge Sort (bottom-up iterativo) ──────�retur�─�nt arr tmp, int lo, in {
+    int k = lo
+    while k <= hi {
+        tmp[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+            i = i + 1
+        } else {
+            if tmp[i] <= tmp[j] {
+                a[idx] = tmp[i]
+                   }
+        width = width * 2
+    }
+}
+
+// �&��─────�: sim | Espaço: O(n) (array auxiliar)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi) nil {
+    int k = lo
+    while k <= hi {
+        tmp[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+   int insert_pos = 0
+        while j >= 0 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 1
+      if j == -2 {
+            a[insert_pos] = key
+        } else {
+            a[0] = key
+        }
+        intarr(rev, 5)
+// esperado: 1 2 3 4 5
+
+print("--- Merge: tamanho impar ---")
+i/ esperado: 42

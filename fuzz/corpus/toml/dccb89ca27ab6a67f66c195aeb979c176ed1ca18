@@ -1,0 +1,15 @@
+#runtime]i]
+libm          custom.so"
+str_buf_size 2048
+
+[ffi.libm.signaturruntime]i]
+libm          custom.so"
+str_buf_size 2048
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+pow   =r_buf_size  = 2048
+
+[ffi.libm.signatures]
+sqrt  = "esta caps rfrlow detectionunt
+im

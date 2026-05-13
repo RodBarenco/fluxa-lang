@@ -1,0 +1,38 @@
+// sort.flx — Sorting Alg
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 5
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──ays ordenados.
+// Com
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        if j > hi {
+            a[idx] = tmp[i]
+    i = i + 1
+        } else {
+            if tmp[i] <= tmp[j] {
+                a[idx] = tmp[i]
+                i = i + 1
+            } else {
+  
+int arr rev[5]nt width = 1
+    while width < n {
+        inl  tolo + width - 0
+            int hi  = lo + width * 2 - 1
+    1)
+// esperado: 42

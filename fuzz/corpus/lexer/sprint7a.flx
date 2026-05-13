@@ -1,0 +1,56 @@
+// tests/sprint7a.flx — critérios de aceite Sprint 7.a
+//
+// 1. prst em project mode — valor persiste (simulado: inicializa com 0,
+//    reatribuição representa segundo acesso pós-reload)
+// 2. prst registra dependência no grafo
+// 3. Block com prst — modo project ativo
+// 4. Leitura de prst em função → dependência registrada
+// 5. GC cap — overflow gera erro em err_stack sem crash
+
+// ── 1. prst básico em project mode ──────────────────────────────────────────
+prst int contador = 0
+contador = contador + 1
+print(contador)   // 1
+
+prst int score = 100
+print(score)      // 100
+
+// ── 2. prst em Block ─────────────────────────────────────────────────────────
+Block Game {
+    prst int lives = 3
+    int level = 1
+
+    fn get_lives() int {
+        return lives
+    }
+
+    fn next_level() nil {
+        level = level + 1
+    }
+}
+
+print(Game.get_lives())   // 3
+Game.next_level()
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no grafo ──────────────────────────────
+fn show_score() nil {
+    print(score)   // lê prst score → registra dep (score, show_score)
+}
+show_score()       // 100
+
+// ── 4. prst bool e float ────────────────────────────────────────────────────
+prst bool running = true
+prst float rate   = 1.5
+
+print(running)    // true
+print(rate)       // 1.5
+
+// ── 5. Simulação de loop que justifica project mode ──────────────────────────
+prst int ticks = 0
+int i = 0
+while i < 5 {
+    ticks = ticks + 1
+    i = i + 1
+}
+print(ticks)      // 5

@@ -1,0 +1,6 @@
+// datÿÿÿÿÿÿÿures/sta â€” St€
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.prpriint_stack()  print("--- size ---")
+ost(2,3,9) / 0

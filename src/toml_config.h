@@ -114,6 +114,9 @@ typedef struct {
     char         libdsp_backend[16]; /* [libs.libdsp] backend = "native"|"fftw"  */
     char         libv_backend[16];   /* [libs.libv]   backend = "native"|"blas"  */
     FluxaSecurityConfig security; /* [security] — key paths + enforcement mode */
+    char  module_root[512];       /* [project] module_root — base dir for
+                                   * import live/static resolution.
+                                   * Empty = CWD (default). */
 } FluxaConfig;
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -175,6 +178,7 @@ static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
 
     /* params: between ( and last ) before -> */
     const char *open  = strchr(sig_str, '(');
+    if (!open) return;
     /* find the ) that closes the param list — search backwards from arrow or end */
     const char *close = NULL;
     {
@@ -183,7 +187,7 @@ static inline void cfg_parse_sig(const char *sig_str, FfiSigEntry *out) {
             if (*p == ')') { close = p; break; }
         }
     }
-    if (!open || !close || close <= open) return;
+    if (!close || close <= open) return;
 
     char inner[512];
     int inner_len = (int)(close - open - 1);
@@ -231,6 +235,7 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
     int  in_runtime  = 0;
     int  in_ffi_root = 0;   /* [ffi] */
     int  in_security = 0;   /* [security] */
+    int  in_project  = 0;   /* [project] */
     char sig_lib[128] = ""; /* "libm" when in [ffi.libm.signatures] */
 
     while (fgets(line, sizeof(line), f)) {
@@ -242,12 +247,15 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
             in_runtime  = 0;
             in_ffi_root = 0;
             in_security = 0;
+            in_project  = 0;
             sig_lib[0]  = '\0';
 
             if (strcmp(l, "[runtime]") == 0) {
                 in_runtime = 1;
             } else if (strcmp(l, "[security]") == 0) {
                 in_security = 1;
+            } else if (strcmp(l, "[project]") == 0) {
+                in_project = 1;
             } else if (strcmp(l, "[ffi]") == 0) {
                 in_ffi_root = 1;
             } else if (strncmp(l, "[ffi.", 5) == 0) {
@@ -283,6 +291,27 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
         char *hash = strchr(val, '#');
         if (hash) { *hash = '\0'; cfg_trim(val); }
 
+        /* ── [project] keys ── */
+        if (in_project) {
+            if (strcmp(key, "module_root") == 0) {
+                char clean[512];
+                strncpy(clean, val, sizeof(clean)-1);
+                clean[sizeof(clean)-1] = '\0';
+                int len = (int)strlen(clean);
+                if (len >= 2 && clean[0] == '"' && clean[len-1] == '"') {
+                    clean[len-1] = '\0';
+                    memmove(clean, clean+1, len-1);
+                }
+                /* trim trailing slash */
+                int clen = (int)strlen(clean);
+                while (clen > 0 && (clean[clen-1]=='/'||clean[clen-1]=='\\'))
+                    clean[--clen] = '\0';
+                strncpy(cfg.module_root, clean, sizeof(cfg.module_root)-1);
+                cfg.module_root[sizeof(cfg.module_root)-1] = '\0';
+            }
+            continue;
+        }
+
         /* ── [runtime] keys ── */
         if (in_runtime) {
             int v = atoi(val);
@@ -297,11 +326,14 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 if (v > 0 && v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
             } else if (strcmp(key, "warm_func_cap") == 0) {
                 /* Initial hash table capacity — grows automatically via realloc.
-                 * Any positive value accepted; rounded up to next power of 2. */
-                if (v > 0) {
-                    int p = 4;
-                    while (p < v) p *= 2;
-                    cfg.warm_func_cap = p;
+                 * Any positive value accepted; rounded up to next power of 2.
+                 * Cap at 1<<20 (1M entries) to prevent overflow in p*=2 loop. */
+                if (v > 0 && v <= (1 << 20)) {
+                    int p2 = 4;
+                    while (p2 < v) p2 *= 2;
+                    cfg.warm_func_cap = p2;
+                } else if (v > (1 << 20)) {
+                    cfg.warm_func_cap = (1 << 20);
                 }
             }
             continue;

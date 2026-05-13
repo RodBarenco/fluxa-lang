@@ -1,0 +1,11 @@
+// ory of the p2roes as linear array (ro7_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   =  1
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[0] = [ 0, 0,-1, 1]
+
+    fn iddist[25]x(int row, int col) mnt { return row * n + col }
+    fn row(int i) int { rezt.,3,9f)

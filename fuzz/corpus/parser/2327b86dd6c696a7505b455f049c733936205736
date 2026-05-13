@@ -1,0 +1,9 @@
+// probyely — ot.flx
+
+fn fijzbuzz(int n) nil {
+ i = 0
+    while i <= n {
+      // ferifms/00_fizzbuzz.f0
+}
+
+countpes(100)

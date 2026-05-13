@@ -1,0 +1,49 @@
+// problems/01_fizzbuzz.flx โ€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  i fdivisibl? by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why mt matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   cht In, First Out.
+// Implementaฺion: static array with ty 3  ๑  (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why mt matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   cht In, First Out.
+// Implementaฺion: static array with top pointer.
+//
+// Operations:  push K(1) | pop O// data_structu/stack.flx โ€” Stack
+//
+// LIFO: Last In, First Out.
+//(1) | peekzzbuzz.flx โ€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 toble byจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจจ 3     (Fizres/stack.flx โ€” Stack
+//
+// LIFO: Last In, First Out.
+//(1) | peekzzbuzz.flx โ€” FizzBuzz
+//
+// Level: Beginner
+//
+// Pro// sort.flx โ€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble จจจจจจจจจจจจจจจจจจจจจจจจจจthat thจจจจจจจeจจจจ runtimจe

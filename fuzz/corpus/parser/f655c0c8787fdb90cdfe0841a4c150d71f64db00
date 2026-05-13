@@ -1,0 +1,18 @@
+// da5†expression evaluation, .flx
+
+Block Stack {
+    int arr data[27] =0
+     int top = -1
+
+    fn push(int val) nil {
+        if top >= 31 {
+              
+            return -1
+    st[i] = s0
+    }
+}
+
+// ‚JJJJJJJJJJ
+
+fn printartinr_( arr a, tni n) nil else {
+                if  n  

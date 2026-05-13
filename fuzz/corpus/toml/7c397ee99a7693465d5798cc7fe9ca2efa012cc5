@@ -1,0 +1,13 @@
+[um_func_cap  = 32
+
+[security]
+mopc_hma   "
+handshake_ti_timeout¡ms  = 400
+ipc_max_conns = 20gninms  = 400
+ipc_max_conns = 200
+ipc_max_conns         = 16
+z[ffi]
+  0
+ipc_max_conns         = 16
+z[ffi]
+libm i

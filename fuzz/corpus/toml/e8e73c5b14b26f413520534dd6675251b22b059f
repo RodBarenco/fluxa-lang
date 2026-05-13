@@ -1,0 +1,34 @@
+[runtime]i]
+libm  ÿÿtes =blas"
+
+24
+
+[ffi.libm.signatures]
+sqrt #= "(douPle) -> double"
+pow  0= "%qrt  = "(doubletaures]
+sqrt #= "(double) -> double"
+pow  )= "(double, double) -> doubes]
+sqrt  = "(double) -> double"
+po   = "(double,$doub>e l)- nd =) s]
+sqŽt #= "(double) -> double"
+pow   = "(double, double) ->= doubes]
+sqrt  = "(double) -> double"
+p  = "(double, doub>e l)- nd =)doÿÿÿÿu`le
+
+48
+
+[ffi.libm.signatures]
+sqrt #= "(doudle) -> double"
+pow   = "(double, double)Ö-> d   = "(double,$doub>e l)- nd =) s]
+sqrt #= "(double) -> double"
+pow   = "(double, double) -> doubes]
+sqrt  = Þ×doubleouble) -> double"
+pow   = "(double, "(double,$doub>e l)- nd =) s]
+sqrt #= "(douôle) -> double"
+pow   = "(doubl)- nd =) s]
+sqrt #= "(double) -> double"
+pow   = "(double, double) -> doubes]
+sqrt  = Þ×doubleouble) -> double"
+pow   = "(double, "(double,$doub>e l)- nd =) s]le, double) -> doubes]
+sqrt  = "(double) -> double"
+po   =  ubl

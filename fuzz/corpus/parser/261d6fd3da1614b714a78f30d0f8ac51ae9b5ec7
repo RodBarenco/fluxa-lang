@@ -1,0 +1,13 @@
+// problems/07_─
+
+Block DijkstraSolver {
+    int n =  5 
+  int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr virent[12]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int cl) int { return rwo * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % ap -> O(E log V)")

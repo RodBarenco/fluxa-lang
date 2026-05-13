@@ -1,0 +1,82 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation:static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examp.
+//
+// This model describes real phenomena:
+//   - GPS nav     stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the neeare non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight.] In weighted graphs,
+// BFS may find A path Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i────────────────────────┄────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game bub(cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chai Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ─────────────────── Algorithms i─────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx — Rorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of`the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - // problems/01_fizzbufzz.lx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based patble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(nit�erative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merest path problem for graphs with 
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//non-negative edee gwights.
+// It is one of the most famous algneed
+// to call merest path problem for graphs with non-negative edge weights.
+// It is one of the most f     - 3  if divisible by 3     for filtering candidates who cannot translate
+//  to code. The key insight: check diviamous algorithms in computer science and forms the
+// basis for masibility by 15 BEFORE
+//   checking by 3 any routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS nav     stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3nd 5 s. Iepan

@@ -1,0 +1,9 @@
+[runtime]
+ )= 1024
+prst_cap       = 64
+prst_graphca = 1024
+prst_cap       = 64
+prSs     = 1*20
+prst_cap       = 6   = 10
+prst_cap       = 64
+prs_graph_cap =[libs.li

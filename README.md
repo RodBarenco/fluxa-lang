@@ -1,8 +1,8 @@
 # Fluxa-lang
 
-**v0.14 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.15 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
-Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 26 standard library modules. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
+Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 26 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 
 ---
 
@@ -40,7 +40,7 @@ Pure C99. Configurable via `fluxa.toml`. Cross-compiles to Linux, macOS, RP2040,
 make build
 fluxa init myproject
 cd myproject
-fluxa run main.flx -dev
+fluxa run main.flx -dev      # watch + auto-reload (includes module files)
 ```
 
 ---
@@ -63,6 +63,14 @@ danger {
     print(httpc.status(r))
 }
 if err != nil { print(err[0]) }
+
+// Modules — organize code across files (v0.15)
+// main.flx
+import live sensor      // loads live/sensor.flx
+import static utils     // loads static/utils.flx
+Block s typeof sensor.Sensor
+s.set(3.14)
+print(utils.double(7))
 
 // Blocks — lightweight objects with methods
 Block Sensor {
@@ -220,7 +228,7 @@ fluxa/
 │   ├── mongoose.h/.c      — mongoose 7.21 (vendored)
 │   └── uthash.h           — hash table (vendored)
 ├── docs/
-│   ├── fluxa_spec_v13.md  — language specification
+│   ├── fluxa_spec_v15.md  — language specification
 │   ├── STDLIB.md          — standard library reference
 │   ├── CHANGELOG.md       — version history
 │   ├── CREATING_LIBS.md   — guide for adding libs
@@ -231,7 +239,7 @@ fluxa/
 
 ---
 
-## Status — v0.14
+## Status — v0.15
 
 | Component | Status |
 |---|---|
@@ -244,6 +252,7 @@ fluxa/
 | Prod mode + FLUXA_SECURE | ✅ stable |
 | Runtime Update Protocol | ✅ stable |
 | Standard library (26 libs) | ✅ stable |
+| Module system (import live/static) | ✅ stable |
 | Hardware simulation (RP2040/ESP32) | ✅ stable |
 | Docker torture testing | ✅ stable |
 | Huge Pages (`FLUXA_HUGEPAGES=1`) | ✅ opt-in |

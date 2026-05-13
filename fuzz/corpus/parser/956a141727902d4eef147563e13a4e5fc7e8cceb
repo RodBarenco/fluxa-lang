@@ -1,0 +1,36 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+//fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 2 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+print("(0=FizzBuzz 1=Fizz 5=Buzz)")
+fizzbuzz(20)
+// espe
+
+print("--- contagem em 1..100 ---")
+fn count_types(int n) nil {
+    int fizzbuzzes = 0
+    int fizzes     = 0
+    int buzzes     = 0
+    int plains     = 0
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+        buzzes = fizzbuzzes + 1
+        } else {
+           if i % 5 == dange0 {
+                    buzzes = buzzes + 1
+                } else {
+           Stack.pop())   // 10
+print(Stack.is_// dempty()ata_

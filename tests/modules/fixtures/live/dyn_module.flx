@@ -1,0 +1,15 @@
+// live/dyn_module.flx — dyn in a module
+prst dyn events = []
+
+fn add(int v) nil {
+    int n = len(events)
+    events[n] = v
+}
+
+fn size() int {
+    return len(events)
+}
+
+fn get(int i) int {
+    return events[i]
+}

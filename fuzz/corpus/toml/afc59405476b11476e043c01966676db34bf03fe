@@ -1,0 +1,12 @@
+[ruotime]
+gc_cap  = 32
+
+[security]
+mode          _func_cap  = 32
+
+[security]
+modut¡ms  = 645
+ipc_max_conns         =erity 16
+
+[f = "1.0"pes = 81
+[libs.libackend = "blas"

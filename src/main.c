@@ -101,26 +101,115 @@ static void usage(void) {
 }
 
 /* Parse a .flx file and return the program AST.
- * pool must be initialized by the caller. Returns NULL on parse error. */
-static ASTNode *parse_file(const char *path, ASTPool *pool) {
-    char *source = load_file(path);
-    if (!source) return NULL;
+ * v0.15: pre-scans for `import live/static X`, loads and parses each module
+ * first (with namespace mangling), then parses the main file. The result is
+ * a single ASTNode *program with module declarations first, in import order.
+ * mod_root: value of [project] module_root from config, or NULL for CWD.
+ * pool must be zero-initialized by the caller. Returns NULL on error. */
+static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
+                               const char *mod_root) {
+    char *main_src = load_file(path);
+    if (!main_src) return NULL;
+
     pool_init(pool);
-    Parser   parser  = parser_new(source, pool);
-    ASTNode *program = parser_parse(&parser);
-    free(source);
-    parser_free(&parser);
-    if (!program) {
-        fprintf(stderr, "[fluxa] aborting due to parse errors.\n");
-        pool_free(pool);
+
+    typedef struct { char ns[64]; char *src; } ModEntry;
+    ModEntry mods[32];
+    int mod_count = 0;
+
+    /* Pass 1: scan for imports and load module sources */
+    const char *scan = main_src;
+    while (*scan && mod_count < 32) {
+        while (*scan == ' ' || *scan == '\t') scan++;
+        if (strncmp(scan, "import", 6) == 0) {
+            const char *s = scan + 6;
+            while (*s == ' ' || *s == '\t') s++;
+            int is_live   = (strncmp(s, "live",   4) == 0 &&
+                             (s[4]==' '||s[4]=='\t'));
+            int is_static = (strncmp(s, "static", 6) == 0 &&
+                             (s[6]==' '||s[6]=='\t'));
+            if (is_live || is_static) {
+                s += is_live ? 4 : 6;
+                while (*s == ' ' || *s == '\t') s++;
+                char ns[64] = {0};
+                int ni = 0;
+                while (*s && *s != ' ' && *s != '\t' &&
+                       *s != '\n' && *s != '\r' && ni < 63)
+                    ns[ni++] = *s++;
+                if (ni > 0) {
+                    const char *kind = is_live ? "live" : "static";
+                    char fpath[640];
+                    if (mod_root)
+                        snprintf(fpath, sizeof(fpath), "%s/%s/%s.flx",
+                                 mod_root, kind, ns);
+                    else
+                        snprintf(fpath, sizeof(fpath), "%s/%s.flx", kind, ns);
+
+                    char *mod_src = load_file(fpath);
+                    if (!mod_src) {
+                        for (int i = 0; i < mod_count; i++) free(mods[i].src);
+                        free(main_src); pool_free(pool);
+                        return NULL;
+                    }
+                    snprintf(mods[mod_count].ns, sizeof(mods[mod_count].ns),
+                             "%.63s", ns);
+                    mods[mod_count].src = mod_src;
+                    mod_count++;
+                }
+            }
+        }
+        while (*scan && *scan != '\n') scan++;
+        if (*scan == '\n') scan++;
     }
+
+    /* Pass 2: parse all modules then main into a single program node */
+    Parser main_p = parser_new(main_src, pool);
+
+    ASTNode *program = pool_alloc_node(pool);
+    program->type             = NODE_PROGRAM;
+    program->as.list.children = NULL;
+    program->as.list.count    = 0;
+
+    for (int i = 0; i < mod_count; i++) {
+        int err = parser_parse_module(&main_p, program,
+                                       mods[i].ns, mods[i].src);
+        free(mods[i].src);
+        if (err != 0) {
+            fprintf(stderr, "[fluxa] error in module '%s'\n", mods[i].ns);
+            for (int j = i+1; j < mod_count; j++) free(mods[j].src);
+            free(main_src);
+            parser_free(&main_p);
+            pool_free(pool);
+            return NULL;
+        }
+    }
+
+    ASTNode *main_prog = parser_parse(&main_p);
+    free(main_src);
+    if (!main_prog) {
+        fprintf(stderr, "[fluxa] aborting due to parse errors.\n");
+        parser_free(&main_p);
+        pool_free(pool);
+        return NULL;
+    }
+
+    for (int i = 0; i < main_prog->as.list.count; i++)
+        ast_list_push(program, main_prog->as.list.children[i]);
+
+    parser_free(&main_p);
     return program;
+}
+
+static ASTNode *parse_file(const char *path, ASTPool *pool) {
+    return parse_file_ex(path, pool, NULL);
 }
 
 /* Single run — no watcher */
 static int run_once(const char *path, int explain) {
     static ASTPool pool;
-    ASTNode *program = parse_file(path, &pool);
+    FluxaConfig cfg = fluxa_config_find_and_load();
+    ASTNode *program = parse_file_ex(path, &pool,
+        cfg.module_root[0] ? cfg.module_root : NULL);
     if (!program) return 1;
     int result = explain ? runtime_exec_explain(program) : runtime_exec(program);
     pool_free(&pool);
@@ -143,7 +232,9 @@ typedef struct {
 static void *dev_exec_thread(void *arg) {
     DevCtx *ctx = (DevCtx *)arg;
 
-    ASTNode *program = parse_file(ctx->path, ctx->ast_pool);
+    FluxaConfig _cfg = fluxa_config_find_and_load();
+    ASTNode *program = parse_file_ex(ctx->path, ctx->ast_pool,
+        _cfg.module_root[0] ? _cfg.module_root : NULL);
     if (!program) {
         fprintf(stderr, "[fluxa] -dev: parse error — waiting for fix...\n");
         ctx->exit_code = 1;

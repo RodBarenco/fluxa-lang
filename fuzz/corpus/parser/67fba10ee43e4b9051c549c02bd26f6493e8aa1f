@@ -1,0 +1,18 @@
+// data_structures/stack.flx â€” St = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+             print("[ vazia ]")
+            return
+        }
+        int i = top
+        while ie_sort(int arâ

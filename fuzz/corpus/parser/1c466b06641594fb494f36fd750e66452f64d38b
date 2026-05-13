@@ -1,0 +1,9 @@
+// sort.flx �Ŕ Sorting A= 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+               j = 0
+        while j < n - i - 1 {
+         O(n²)       minimumrt" (loop exite correct position.
+// Complexid viat y

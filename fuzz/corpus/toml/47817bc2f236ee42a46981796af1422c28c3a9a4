@@ -1,0 +1,10 @@
+[tiat2
+[libs.libdsp]
+backend = "fw"
+
+[po
+
+[libs.libdsp]
+backend = "fftw"
+
+[lis.libackendm

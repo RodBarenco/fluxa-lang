@@ -1,0 +1,11 @@
+[timat
+ h2
+[libs.libdsp]
+backend = "fw"
+
+[po
+
+[libs.libdsp]
+backend = "fftw"
+
+[libslibs.libackendm

@@ -1,0 +1,34 @@
+// data_structures/stack.ion, undo/redo, call sx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    // data_stIn, First Out.
+// Implementation: static array with tO   return
+        }
+        int i = top
+      O( while i >= 0 pr{
+            printint top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+     2 da

@@ -1,0 +1,48 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applicatiols: expression evaluation, undo/redo, call stack,
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./(fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.s_empty())  // 1
+
+// â”€â”€ Application: balance checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+   fn idx(int row, int   return v
+ print_arr(i    }
+
+   ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+printn(

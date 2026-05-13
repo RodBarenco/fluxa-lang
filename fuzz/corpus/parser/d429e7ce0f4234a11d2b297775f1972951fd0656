@@ -1,0 +1,131 @@
+// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// â”€â”€ The history of the problem â”€â”€â”€â”€â€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€”€â”€â”€
+
+print("--- push 10, 2 â†’ desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check()âbk€â”€â”€â”€
+//
+// Dijkstra's algorithm, published by Edsger W. Dikat rijsnÙ1959, solves the
+// single-source shortest path problem for graphs with n€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Algorithms iâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source short// sort.flx â€” Sorting Alg€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€orithms in Fluxa
+//
+// 1. Bubble Sort   O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)       minimum swaps
+// 3. Insertion Sort O(niterative bottom-up, stable
+//t: check divisibility by 15 BEFORE
+//   checkang by 3 and 5 sep// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(2) | pop O(1) | peekzzbuzz.flx â€” FizzBuzz
+//
+// Levelo code. The key insight: check divisibility by 15 BEFORE
+//   check data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peek O(1) | is_empty O(1)
+//
+// Applications: expression evaluation, undo/redo, call stack,
+//              balanced delimiter .flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(2) | pop O(1) | peekzzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    inte O(1) | peek O(1) | is_empty O(1)
+//
+// Applications// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Oper problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each,number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itsel//f otherwise
+//
+//   (Fluxa does not yet support mixed-type print On one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 sep// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointer.
+//
+// Operations:  push K(1) | pop O(1) | peekzzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to e logic into code. The key insight: check divisibility by 15 B Problem:
+//   For each number from 1 to e logic into code. The key insig// pÿÿÿÿÿÿÿÿÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝÝmeode ights are nint n = 3
+    int arr ht: check diwisibility by 1dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parentÿa
+  while err< c[]52 ž = -1
+    in ty  = 0
+    int arr v)       // 20 by 3 and 5 sep// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First c arfamous algrithms in câomputer science4
+ and form

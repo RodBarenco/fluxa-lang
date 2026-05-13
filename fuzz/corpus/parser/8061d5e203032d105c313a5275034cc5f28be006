@@ -1,0 +1,22 @@
+// sorados.
+// Complexidade:y auxilia�)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi) nil {
+    int k = lo
+    while k <= hi {
+        tmp[k] = a[k]
+        k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+    while i <= mid {
+        
+}
+
+// ── Demo ─────────────�────────� (array auxiliar)
+
+fn merge_pass(int arr a, int arr tmp, int lo, int mid, int hi) nil {
+    int k = lo
+    while k <= hi {
+        tmp[k] = a[k]

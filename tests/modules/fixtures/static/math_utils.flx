@@ -1,0 +1,9 @@
+fn double(int n)              int  { return n + n }
+fn square(int n)              int  { return n * n }
+fn clamp(int v, int lo, int hi) int {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+fn is_even(int n)             bool { return n - (n/2)*2 == 0 }
+fn max(int a, int b)          int  { if a > b { return a } return b }

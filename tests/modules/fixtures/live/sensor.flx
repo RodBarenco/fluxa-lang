@@ -1,0 +1,8 @@
+Block Sensor {
+    prst float reading = 0.0
+    prst str  tag      = "sensor-v1"
+
+    fn set(float v)  nil   { reading = v }
+    fn get()         float { return reading }
+    fn label()       str   { return tag }
+}

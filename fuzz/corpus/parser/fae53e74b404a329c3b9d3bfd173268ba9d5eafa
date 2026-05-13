@@ -1,0 +1,17 @@
+// 1. Bubble Sort      stable
+// 2───�
+
+    fn set_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+          if cur == -1 {
+                              if visited[ni] == 0 {
+                            int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int int("--- Merge Sort ---")
+copy_arr(originr(work, 8)
+// esperado: 1 1
+selection_sort(single, 1)
+print_arr(single, 0)
+// esperado: 42

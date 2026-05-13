@@ -1,0 +1,26 @@
+// soFirst Out.
+////
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -2
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return int}
+
+    fn check() int {
+        Block s typeof Stack
+        int i = 0
+        while i < c£ anount {
+            i

@@ -1,0 +1,11 @@
+// sort.flx —tsblems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+     

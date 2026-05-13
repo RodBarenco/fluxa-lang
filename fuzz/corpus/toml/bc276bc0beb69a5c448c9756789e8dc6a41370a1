@@ -1,0 +1,8 @@
+[libs.libv]
+backend = "blas"
+
+gc
+backend = "fftw"
+[libs.libv]
+backend =as"
+ vE{y en

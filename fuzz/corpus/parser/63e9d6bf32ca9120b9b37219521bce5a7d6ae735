@@ -1,0 +1,14 @@
+// problems/01_fizzbuzz.fint buzze{
+        if i % 15 == 0 {
+         fizzbuzzes = fizzbuzzes + 1
+    } else {
+            if i % 3 == 0 {
+                fizzes = fizzes + 1
+    } else {
+                if i % 5 == 0 {
+       buzzes = buzzes + 1
+                } else {
+           plains = plains +1
+     }
+            }
+      flo es)   00)

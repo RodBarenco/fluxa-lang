@@ -1,0 +1,12 @@
+// problems/01_fizzbufzz.lx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 2 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     for filtering candidates plain 53
+    // verificacao: 6+27+14+53 = 100
+}
+
+count_types(100)

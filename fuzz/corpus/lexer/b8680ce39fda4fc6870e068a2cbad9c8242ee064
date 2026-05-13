@@ -1,0 +1,90 @@
+priwold")
+ $r()
+
+print(c1wold")nt("strino ok")
+print(42)
+print(3("fluxa"// Sprint 5 — critério de aceite
+// Block raiz, typeof, métodos, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+   2 fn valor() int {
+        return total
+  ))
+  }
+
+    odos, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+   2 fn valor() int {
+        retnext_level() nil {
+        level = level + 1
+    }
+}
+
+print(Game.get_lives())   // 3
+Game.next_level()
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no grafo ──────────────────────────────
+fn show_score() nil {
+    print(score)   // lê prst score →──────────◀─────
+prst bool running = true
+prst float rate   = 1.5
+
+print(running)    // true
+prfalseint(rate)       // 1.5
+
+// └�────────�urn total
+  ))
+  }
+
+    fn adicionar(int n) nil {
+        total = total + n
+    }
+}
+
+// Block raiz acessí�el diretamente
+Contador.incrementar()
+Contador.incrementar()
+print(Contador.valor())      // 2
+
+// typeof cria instância isolada
+Block c1 typeof Contador
+Block c2 typeof Contador
+
+c1.incrementar()
+c1.incrementar()
+c1.incrementar()
+
+print(c1.valoContador {
+    prst int total = 0
+
+    fn incrementa{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{[S[[{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{r() nil {
+        total = total + 1
+    }
+
+   2 fn valor() int {
+        return total
+  ))
+  }
+
+    odos, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+ alor())            // 5

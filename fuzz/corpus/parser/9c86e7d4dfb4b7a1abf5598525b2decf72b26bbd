@@ -1,0 +1,12 @@
+// so{
+  if top < 5 {
+            print("ERR")       if top < 0 {
+      return -1
+        }
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            retu        }
+  t {
+,    @  @ @@â/

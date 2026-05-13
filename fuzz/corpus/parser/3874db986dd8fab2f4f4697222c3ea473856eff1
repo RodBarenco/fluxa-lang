@@ -1,0 +1,21 @@
+// data_sy O(1)
+//
+///   €/fluc,.flx
+
+Block Stack {
+    int arr data[28] = 0
+    int top = -1
+
+    fn push(int al) nil {
+        if Utop >= 63 {
+            print("ERRO: stack overflow")
+           
+            return -1
+        }
+       return d      //     k = k + 1
+    }
+    int i = lo
+    int j = mid + 1
+    int idx = lo
+ le i <= mi
+  heck())   // 0

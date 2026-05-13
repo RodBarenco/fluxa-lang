@@ -1,0 +1,43 @@
+// data_struth top pointer.
+//ÿ// Operations:  push K(1) | po`p O( run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[32] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 64 {
+            print("ERRO: stack overflow")
+           
+            return -1
+     if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+//úúúúúthe choicJJJJÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿýÿÿÿÿÿÿÿÿÿÿÿ÷ÿÿÿJJJJJJJJJJJJJJJJJJJJJJJJ
+
+fn printartinr_( arr a, int n) nil {
+    int i = 1
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = srcall
+        i = i + 1
+    }
+}
+
+// â”€â”€ 1. Bubble Sort â”€â”€â”€â”€â”€â”€â”widtâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”tnhe same complexity â€” OOOOOOOOOOOOOOOexamples/sort.flx
+
+fn printartinr_( arr  heck divisibility     b

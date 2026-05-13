@@ -1,0 +1,8 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstrx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr cost[25]  = -1
+    int arr dr[4] = [~-1, 1, 0, 0]
+    iney {
+    (2rt.,?,9f)

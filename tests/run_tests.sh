@@ -495,6 +495,18 @@ else
 $(echo "$_s13_out" | grep -E "FAIL|PASS|SKIP" | sed 's/^/    /')"
 fi
 
+# ── v0.15: module system ──────────────────────────────────────────────────────
+printf "  %-56s" "modules/v0.15 (import live/static namespace system)"
+_mod_out=$(timeout 60s bash "$SCRIPT_DIR/modules/modules.sh" --fluxa "$FLUXA" 2>&1 || true)
+if echo "$_mod_out" | grep -q "modules: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  modules/v0.15:
+$(echo "$_mod_out" | grep "FAIL" | sed 's/^/    /')"
+fi
+
 # ── std libs (tests/libs/) ───────────────────────────────────────────────────
 for _lib_script in "$SCRIPT_DIR/libs/"*.sh; do
     _lib_name=$(basename "$_lib_script" .sh)

@@ -1,0 +1,38 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out.
+// Implemenwthtation: statnt arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+             return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+        int i = top
+        while ie_sort(int arâ
