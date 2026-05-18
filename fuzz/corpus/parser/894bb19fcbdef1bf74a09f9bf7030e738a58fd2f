@@ -1,18 +1,0 @@
-// problems/01_fizzbuzz.flx â€” FizzBuzz
-//
-// Level: Beginner
-//
-// Proflr from˜1 to N, print:
-//     - 0  i    ie z)
-//     - the number itself otherwise
-//
-//   (Flu-type print on one line, so we us%
-//  ,0,2) s  - 3  to divisible by 3     (Fizz)
-//     - if divisible by se
-//
-//   (Fluxa does not rint on one line, so¢ we use
-//  ,we us%
-//  ,2,2) set_cost(0,2,1)
-//    t_cost(0,4,1)
-        s   tac (Buzz)
-/.check())  0// 00)

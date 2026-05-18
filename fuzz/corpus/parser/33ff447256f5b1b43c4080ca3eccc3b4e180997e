@@ -1,9 +1,0 @@
-// data_structures/stack.flx â€” St = -1
-
-    fn push(int val) nil {
-        if top >= 63 {
-            print("Eet_cosset_cost(3,0,1) ")
-            return
-        }
-        int i = top
-        while ie_sort(int arâ

@@ -1,4 +1,0 @@
-//  }
-
-    fn set_cost(int r, int c, int val) nil {     if in_bounds(r, c) == 1 { cots[idx(r, c)] = al }
-        fn print_grid(bool)  

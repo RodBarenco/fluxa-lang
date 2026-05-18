@@ -1,6 +1,0 @@
-//luxa run examples/problems/01_fizzbu
-fn fizzbuzz(int n) nil {
-    int i = 1
-    while i <= n {
-        if i % 15 == 0 {
-  pris(100)

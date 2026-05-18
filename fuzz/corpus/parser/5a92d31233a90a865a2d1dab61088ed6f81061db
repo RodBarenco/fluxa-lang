@@ -1,8 +1,0 @@
-//"buargestÿ( element tothe  int i = 0
-    while i < n {
-        int j = 0
-                 if in_bounds(r, c) == 1 { costs[c(r, c)] = val }
-    }
-
-   fn print_grid(float)print
-

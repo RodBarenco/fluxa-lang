@@ -1,5 +1,0 @@
-_size  = 2048
-
-[ffi.libm.signatures]
-= "() -i.e"
-p  = "() -dm"*po

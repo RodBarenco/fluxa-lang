@@ -1,9 +1,0 @@
-// trucﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂülx
-
-Block Stack {
-   int typ = -1
-
-    fn push(int val) nil {
-}
-
-    fn is_emp() int {

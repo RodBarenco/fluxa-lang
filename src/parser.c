@@ -170,11 +170,10 @@ static void parse_args_into(Parser *p, ASTNode ***args_out, int *count_out) {
 }
 
 /* ── Expression parsing ──────────────────────────────────────────────────── */
+#define FLUXA_MAX_EXPR_DEPTH 200
+
 static ASTNode *parse_primary(Parser *p) {
-    /* Depth guard: prevents stack overflow on deeply nested expressions
-     * like (((((...)))). 512 levels is more than any real Fluxa program
-     * needs and well within default stack limits. Found by fuzz_parser. */
-    if (p->expr_depth > 512) {
+    if (p->expr_depth > FLUXA_MAX_EXPR_DEPTH) {
         parse_error(p, "expression nested too deeply");
         return NULL;
     }
@@ -434,6 +433,10 @@ static ASTNode *parse_logic_and(Parser *p) {
     return left;
 }
 static ASTNode *parse_expr(Parser *p) {
+    if (p->expr_depth > FLUXA_MAX_EXPR_DEPTH) {
+        parse_error(p, "expression nested too deeply");
+        return NULL;
+    }
     ASTNode *left = parse_logic_and(p);
     while (left && p->current.type == TOK_OR) {
         parser_advance(p);
@@ -692,13 +695,27 @@ static ASTNode *parse_block_decl(Parser *p) {
             n->as.block_decl.members[n->as.block_decl.count-1] = member;
         }
     }
-    if (!expect(p, TOK_RBRACE, "expected '}' to close Block")) return NULL;
+    if (!expect(p, TOK_RBRACE, "expected '}' to close Block")) {
+        p->stmt_depth--;
+        return NULL;
+    }
+    p->stmt_depth--;
     return n;
 }
 
 /* ── Block body for if/while/for/fn ─────────────────────────────────────── */
+#define FLUXA_MAX_STMT_DEPTH 200
+
 static ASTNode *parse_body(Parser *p) {
-    if (!expect(p, TOK_LBRACE, "expected '{' to open block")) return NULL;
+    if (p->stmt_depth > FLUXA_MAX_STMT_DEPTH) {
+        parse_error(p, "block nested too deeply");
+        return NULL;
+    }
+    p->stmt_depth++;
+    if (!expect(p, TOK_LBRACE, "expected '{' to open block")) {
+        p->stmt_depth--;
+        return NULL;
+    }
     ASTNode *block = P_NODE();
     block->type = NODE_BLOCK_STMT;
     block->as.list.children = NULL;
@@ -707,15 +724,19 @@ static ASTNode *parse_body(Parser *p) {
         ASTNode *stmt = parse_statement(p);
         if (stmt) ast_list_push(block, stmt);
     }
-    if (!expect(p, TOK_RBRACE, "expected '}' to close block")) return NULL;
+    if (!expect(p, TOK_RBRACE, "expected '}' to close block")) {
+        p->stmt_depth--;
+        return NULL;
+    }
+    p->stmt_depth--;
     return block;
 }
 
 /* ── Statement parsing ───────────────────────────────────────────────────── */
 static ASTNode *parse_statement(Parser *p) {
+    p->expr_depth = 0;  /* reset depth counter at each new statement */
     int persistent = 0;
     int stmt_line = p->current.line;   /* Sprint 8: captura linha do statement */
-    p->expr_depth = 0;   /* reset per statement — depth only guards within one expression */
     if (check(p, TOK_PRST)) { persistent = 1; parser_advance(p); stmt_line = p->current.line; }
 
     /* Sprint 6.b: import c libname [as alias] */
@@ -1340,10 +1361,11 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.pool      = pool;
     p.current   = lexer_next(&p.lexer);
     p.next      = lexer_next(&p.lexer);
-    p.ns[0]             = '\0';
-    p.imported_count    = 0;
+    p.ns[0]           = '\0';
+    p.imported_count  = 0;
     p.module_decl_count = 0;
-    p.expr_depth        = 0;
+    p.expr_depth = 0;
+    p.stmt_depth = 0;
     return p;
 }
 

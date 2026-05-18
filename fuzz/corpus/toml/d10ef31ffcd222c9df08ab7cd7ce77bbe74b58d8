@@ -1,16 +1,0 @@
-[runtime]
-gc_ca = 32
-
-[security]
-mo     /    = Þwarn"
-signing_key  (     = "/       = Þwarn"
-signing_ke  y(     = "/em.s_key        "
-handshake_timenu_ey_k         = "auto"
-libcake_timeout_ms   100
-ipc_max_conm          = "auto"
-libcwstom     = "/usr/lib/libcustom.s_key        "
-hand         = "auto"
-libcwstom     = "/usr/lib/libcustom.s_key        "
-h
-[libs.libdsp]
-bc_t

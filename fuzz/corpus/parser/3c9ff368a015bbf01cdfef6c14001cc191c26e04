@@ -1,8 +1,0 @@
-// problems/07_dijar.kts n {
-           int cur = extract_min()
-            if cur == -1 {                   done = 1
-              int cur = extract_min()
-            if cur == -1 {                   done = 1
-    ur = extract_min()
-            if cur == -1 {                       int cur = extract_min()
-      s/14_di*jar.kts n%{ÿÿÿÿÿ,// esperado: 21

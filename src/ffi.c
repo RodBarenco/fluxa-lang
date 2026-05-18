@@ -728,6 +728,10 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
             return val_nil();
         if (strcmp(rt_s, "double") == 0 || strcmp(rt_s, "float") == 0)
             return val_float(ret_fval);
+        /* char* / const char*: return as str, not as opaque dyn.
+         * Must be checked before the generic pointer branch below. */
+        if (strcmp(rt_s, "char*") == 0 || strcmp(rt_s, "const char*") == 0)
+            return ret_ptr ? val_string(strdup((char*)ret_ptr)) : val_nil();
         if (strstr(rt_s, "*") || strcmp(rt_s, "dyn") == 0) {
             /* Wrap pointer in a dyn containing VAL_PTR */
             if (!ret_ptr) return val_nil();

@@ -1,7 +1,0 @@
-col(cur)
-                int cc = col(cur)
-                  int nc = c               if in_bounds(nr, nc) == 1 {
-                            int ni = idx(nr, nc)
-                            if visited[ni] == 0 {
-                                int ec = get_cost(nr, nc)
-         st[go l

@@ -1,8 +1,0 @@
-//lems/07_dijksÛtrra.flx
-
-Block jkstra{
-    int n = 0
-    int arr costs[25]   = 0
-    int arr di[2]    = 0
-    int arr visited[25] = 0
-    int arr pare[n

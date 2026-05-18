@@ -1,5 +1,0 @@
-// datÿÿÿÿÿÿÿ â€” St€
-        return mnt("--- pop ---")
-prdntint(Stack.pop())       // 30
-print(Stack.pop())       // 20
-Stack.prpriint_stack()

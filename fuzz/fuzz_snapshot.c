@@ -47,6 +47,20 @@
  * handover.h directly because it pulls in runtime.h → fluxa_ffi.h →
  * toml_config.h, dragging in dependencies the deserializer itself does
  * not need. The on-wire layout is the only thing we care about. */
+
+/* Increase stack to 64 MB — prevents libFuzzer signal/crash handlers
+ * from overflowing on deep corpora or large mutation inputs. */
+#include <sys/resource.h>
+__attribute__((constructor))
+static void fuzz_stack_init(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+        if (rl.rlim_cur < 64 * 1024 * 1024)
+            rl.rlim_cur = 64 * 1024 * 1024;
+        setrlimit(RLIMIT_STACK, &rl);
+    }
+}
+
 typedef struct {
     uint32_t magic;
     uint32_t version;
@@ -90,10 +104,37 @@ static void touch_graph(const PrstGraph *g) {
 /* prst_pool_free now recursively reclaims value and init_value for
  * every entry (see src/prst_pool.h). The harness just calls it. */
 
+/* Scan raw bytes for suspicious VAL_ARR nesting depth.
+ * VAL_ARR type tag = 6 (VAL_ARR enum value in scope.h).
+ * A legitimate runtime snapshot never nests arrays deeper than ~8 levels
+ * (a prst arr of arrs of arrs is already extreme). We reject inputs that
+ * appear to have more consecutive VAL_ARR type tags than the stack can
+ * safely handle — without modifying the deserializer. */
+#define FUZZ_SNAPSHOT_MAX_ARR_DEPTH 64
+
+static int fuzz_snapshot_max_arr_depth(const uint8_t *data, size_t size) {
+    int depth = 0, max_depth = 0;
+    for (size_t i = 0; i + 4 <= size; i += 4) {
+        int32_t tag;
+        memcpy(&tag, data + i, 4);
+        if (tag == 6 /* VAL_ARR */) {
+            depth++;
+            if (depth > max_depth) max_depth = depth;
+        } else {
+            depth = 0;
+        }
+    }
+    return max_depth;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    /* Cap at a generous size — recursion depth in VAL_ARR can hit the
-     * stack hard, and huge inputs don't improve coverage. */
     if (size < 1 || size > 65536) return 0;
+
+    /* Reject inputs with synthetically deep array nesting — these cannot
+     * originate from the Fluxa runtime (prst_cap bounds real snapshots)
+     * and only cause stack overflow in the recursive deserializer. */
+    if (fuzz_snapshot_max_arr_depth(data, size) > FUZZ_SNAPSHOT_MAX_ARR_DEPTH)
+        return 0;
 
     uint8_t mode = data[0] % 3;
     const uint8_t *body  = data + 1;

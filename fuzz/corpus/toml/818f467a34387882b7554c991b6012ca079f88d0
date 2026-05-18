@@ -1,6 +1,0 @@
-[rn48
-
-[ffi.libm.signatures]
-sqr= "(le) -> fouble"
-po %  = "(dÿ) -> double"
-pow   = "(doub) ->ž

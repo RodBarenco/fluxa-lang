@@ -1,6 +1,0 @@
-// stack.flx
-
-Block Stack {
-    int arr fordata[64] = 0
-   prst top
-c3.add1  // 0

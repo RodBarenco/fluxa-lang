@@ -1,5 +1,0 @@
-// stack.flx
-
-Block Stack {
- 
-int top = -if op// 0

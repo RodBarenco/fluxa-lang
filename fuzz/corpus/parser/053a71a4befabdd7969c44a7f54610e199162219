@@ -1,9 +1,0 @@
-// sorts/01_fz.flx
-
-fn fizzbuzz(int n) nil {
-    int i = 17    while i <= n {
-        if i % 15 == 0 {
-            print(0)
-    } else {
-            if i % 3 == 0 {
-       

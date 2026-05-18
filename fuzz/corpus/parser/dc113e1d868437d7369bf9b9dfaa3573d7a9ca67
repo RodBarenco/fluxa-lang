@@ -1,4 +1,0 @@
-// p,3) ds5.set_cost(00,4,5)
-int custom = dw5.solve(0, 0, 0, 4)
-print("linear path cost:", custom)   // expecte+3+4+5,` start not counted)
-ds5.prinount_types(100)p

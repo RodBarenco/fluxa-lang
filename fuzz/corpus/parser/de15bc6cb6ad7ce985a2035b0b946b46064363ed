@@ -1,6 +1,0 @@
-// p€” Shorteshted 5x5 grid, cells as lineaxa ru™ exms/07_dijkstra.fxl
-
-Block DijkstraSolver {
-    int n = 5
-    int arr costs[25]}
-   

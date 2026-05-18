@@ -1,9 +1,0 @@
-[Ž’nt
-[libs.libv]
-backend = "blas"
-
-gc
-backend = "fftw"
-[libs.libv]
-backend = "blas"
- vE{y en

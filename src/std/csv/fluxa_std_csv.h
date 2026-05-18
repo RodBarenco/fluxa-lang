@@ -127,7 +127,7 @@ static inline FluxaDyn *csv_read_chunk(FILE *fp, int chunk_size,
     char linebuf[FLUXA_CSV_MAX_LINE];
     int  lines_read = 0;
 
-    while (lines_read < chunk_size && fgets(linebuf, sizeof(linebuf), fp)) {
+    while ((chunk_size <= 0 || lines_read < chunk_size) && fgets(linebuf, sizeof(linebuf), fp)) {
         /* Strip trailing newline */
         size_t len = strlen(linebuf);
         while (len > 0 && (linebuf[len-1] == '\n' || linebuf[len-1] == '\r'))
@@ -306,8 +306,9 @@ static inline Value fluxa_std_csv_call(const char *fn_name,
         FILE *fp = fopen(path, "r");
         if (!fp) { CSV_ERR("cannot open file for load (check path)"); }
 
-        /* Read entire file — use a large chunk_size */
-        FluxaDyn *all = csv_read_chunk(fp, 1<<30, err, had_error, line);
+        /* Read entire file — pass 0 so csv_read_chunk starts at cap=64
+         * and grows via realloc. Passing 1<<30 would pre-allocate ~32 GB. */
+        FluxaDyn *all = csv_read_chunk(fp, 0, err, had_error, line);
         fclose(fp);
         if (!all) return csv_nil();
 

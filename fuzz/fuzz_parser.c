@@ -17,6 +17,20 @@
 
 /* The pool is large (~half a MB with strings) — keep one static so libFuzzer
  * doesn't blow its default 2 GB rss_limit on a many-iteration run. */
+
+/* Increase stack to 64 MB — prevents libFuzzer signal/crash handlers
+ * from overflowing on deep corpora or large mutation inputs. */
+#include <sys/resource.h>
+__attribute__((constructor))
+static void fuzz_stack_init(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+        if (rl.rlim_cur < 64 * 1024 * 1024)
+            rl.rlim_cur = 64 * 1024 * 1024;
+        setrlimit(RLIMIT_STACK, &rl);
+    }
+}
+
 static ASTPool g_pool;
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {

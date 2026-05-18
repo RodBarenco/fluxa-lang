@@ -1,6 +1,92 @@
 # Fluxa-lang Changelog
 
-## v0.15 — Module System (current)
+## v0.16 — std.wserver + std.pg + Design Corrections (current)
+
+**Zero warnings. All tests pass.**
+
+### API redesign — opaque int handles (pg + wserver)
+
+`std.pg` and `std.wserver` were reworked from `dyn` cursors to opaque `int` handles. This change enforces Fluxa's ownership model: connection state lives entirely inside the lib's C layer; Fluxa code holds only an integer identifier.
+
+**std.pg — before/after:**
+- `dyn db = pg.connect(...)` → `int db = pg.connect(...)`
+- `dyn res = pg.query(db, sql)` → `int res = pg.query(db, sql)`
+- `dyn params = [...]` / `pg.query_params(db, sql, params)` → `str arr params[N] = [...]` / `pg.query_params(db, sql, params, N)`
+- `pg.close`, `pg.free_result` are now no-ops on invalid handles (safe to call unconditionally)
+
+**std.wserver — before/after:**
+- `dyn srv = wserver.serve(port)` → `int srv = wserver.serve(port)`
+- `dyn req = wserver.accept(srv, ms)` → `int req = wserver.accept(srv, ms)`
+- `req != nil` → `req != 0`
+- `wserver.reply_headers` now takes `str arr headers, int n` instead of a JSON string
+- `wserver.stop` is now a no-op on invalid handles
+
+**Config:** `fluxa.toml` gains `[libs.pg]` and `[libs.wserver]` sections with per-field limits enforced at the C boundary (not just validated).
+
+### New feature — std.wserver auto-scaling pool
+
+`wserver.serve(port, true)` activates an internal MHD thread pool managed by the lib:
+- Starts with `min_threads` MHD daemons accepting connections
+- Monitor thread scales up (adds daemon) when queue depth ≥ `scale_up_queue`
+- Scales down (removes idle daemon) after `scale_down_idle` seconds of inactivity
+- Never exceeds `max_threads`
+
+With `auto=false` (or no second arg) behavior is unchanged — single daemon, user manages workers via `ft`.
+
+New toml keys: `min_threads`, `max_threads`, `scale_up_queue`, `scale_down_idle` under `[libs.wserver]`.
+
+### New feature — FFI str_buf_size
+
+`[ffi] str_buf_size` controls the writable `char*` buffer allocated per pointer arg in FFI calls. Previously hardcoded, now configurable (default 1024, range 64–65536).
+
+### Design documentation
+
+`docs/fluxa_spec_v15.md` Section 7 now explicitly documents Block field restrictions:
+- `dyn` is not a valid Block field type — use typed fields and pass cursors as arguments
+- `danger` is not permitted inside Block methods — handle fallible operations in functions outside the Block
+
+`docs/STDLIB.md` rewritten with correct API for all 28 libs. Key corrections:
+- `std.pg` and `std.wserver` fully updated to int handle API
+- `std.http` (mongoose-backed) documented separately — retains `dyn` cursors by design
+- Design principles updated: `dyn` cursor semantics, int handle semantics, Block field rules
+
+New guide: `docs/FLUXA_GUIDE.md` — step-by-step reference for writing correct Fluxa programs.
+
+### Tests and tooling
+
+- `tests/libs/wserver.sh` — updated to int handle API (21 tests, 0 failed)
+- `tests/libs/pg.sh` — updated to int handle API (28 tests, 0 failed)
+- `tests/integration/pg/` — Docker-based integration test with real PostgreSQL (`make test-integration-pg`)
+- `fuzz/fuzz_pg.c`, `fuzz/fuzz_wserver.c` — new libFuzzer harnesses; `make fuzz-build` includes both
+- `fuzz/corpus/pg/`, `fuzz/corpus/wserver/` — seed corpora for handle bounds, overflow, type mismatch
+
+### New Libraries
+
+- **`std.wserver`** — Resilient HTTP server via libmicrohttpd. Thread-per-connection pool (`MHD_USE_THREAD_PER_CONNECTION`). Thread-safe request queue with mutex/condvar — designed for `std.flxthread` worker pattern. API: `serve`, `accept`, `req_method`, `req_path`, `req_body`, `req_header`, `reply`, `reply_json`, `reply_headers`, `connections`, `stop`, `version`. Dual-backend: libmicrohttpd when available via `pkg-config`, stub with clear error otherwise. Dep: `apt install libmicrohttpd-dev`.
+- **`std.pg`** — PostgreSQL client via libpq. Full CRUD with parameterized queries (`query_params` with `$1`, `$2`, ...` — SQL injection safe). Typed accessors: `get`, `get_int`, `get_float`, `get_bool`, `is_null`. Connection health: `ping` (no full connect). Dual-backend: libpq when available, stub otherwise. Dep: `apt install libpq-dev`.
+
+### Bug Fixes
+
+- **`prst arr` double free** (`src/runtime.c`): `prst_pool_set` already deep-clones the array into `.value` and `.init_value`. The code immediately following overwrote `.init_value` with the original `arr` value — creating aliasing between the scope buffer and the pool entry. When both were freed (scope cleanup + pool cleanup), the same data buffer was freed twice. Fixed by removing the spurious overwrite — the clone already in place is correct.
+- **`prst arr` handover** (consequence of above): With the double free resolved, Runtime B correctly initializes from the deserialized pool. Array values (`prst int arr readings[5]`) now survive `fluxa handover` identically to `prst int` and `prst float`.
+- **`csv.load` OOM** (`src/std/csv/fluxa_std_csv.h`): `csv_read_chunk(fp, 1<<30, ...)` pre-allocated `cap = 1073741824` `Value` slots (~32 GB) before reading a single line, causing OOM on any call. Fixed by passing `chunk_size=0` as a sentinel for "read all" and updating the loop condition to `chunk_size <= 0 || lines_read < chunk_size`.
+
+### Tests
+
+- `tests/libs/wserver.sh` — 14 tests covering: import guard, cursor validation for all functions, stub/real detection, serve+stop round-trip, version string. 4 tests skipped (round-trip with curl) when libmicrohttpd not compiled in.
+- `tests/libs/pg.sh` — 15 stub tests + 13 real-DB tests (activated via `FLUXA_PG_TEST_DSN`). Stub tests use `danger` for reliable error capture (stub has no `Runtime*` access for `rt_error`). Real-DB tests: connect/close, DDL/DML, query rows/cols, typed getters, `is_null`, `col_name`, `query_params`, bad query capture, `version`, `ping`.
+
+### Docs
+
+- `docs/STDLIB.md` — `std.wserver` and `std.pg` sections added with full function reference, examples, and design notes.
+- `docs/fluxa_spec_v15.md` — stdlib catalogue updated; sprint 16 entry added to roadmap.
+- `docs/CHANGELOG.md` — this entry.
+- `README.md` — lib count updated (26 → 28); `std.wserver` and `std.pg` added to list and optional backends table.
+
+---
+
+## v0.15 — Module System
+
 
 **Zero warnings. All tests pass. Bench regression: zero.**
 

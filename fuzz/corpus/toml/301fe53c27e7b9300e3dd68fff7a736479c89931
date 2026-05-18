@@ -1,6 +1,0 @@
-[run48
-
-[ffi.libm.signatures]
-sqr= "(double) -> double"
-po %  = "(dÿÿÿÿ"(ouble) -> double"
-pow   = "(doubleuble) -> 

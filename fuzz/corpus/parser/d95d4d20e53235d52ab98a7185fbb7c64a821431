@@ -1,7 +1,0 @@
-//flStack  op >= 62 {
-
-Block Checker {  fn push(int val) nil {
-        if top >= 62 {
-
-Block Checker {fn add() nil {
- ck

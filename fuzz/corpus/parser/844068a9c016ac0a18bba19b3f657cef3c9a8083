@@ -1,7 +1,0 @@
-// data_structures/stackk() int {
-            while i < count {
-            if ops[i] == 1 {
-                s.push(1)
-            }              }
-                s.pop()
-        0

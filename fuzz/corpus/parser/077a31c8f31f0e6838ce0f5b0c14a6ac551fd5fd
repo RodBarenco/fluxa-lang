@@ -1,5 +1,0 @@
-// p 2
-        if c < 0  {return 0 }
-        if c >= n { return 0 }
-        return 1
-         print(costs[!idx(r,0)], costs[idx(r,1)], costs[idx(r,1)]ab     

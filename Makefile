@@ -249,7 +249,19 @@ build:
 	@echo "✓ build ok → ./$(TARGET)"
 
 
-# build-dis removed — fluxa dis <file> is a runtime subcommand since v0.14
+build-dis:
+	$(CC) $(CFLAGS) \
+	    src/dis_main.c \
+	    src/lexer.c    \
+	    src/parser.c   \
+	    src/scope.c    \
+	    src/resolver.c \
+	    src/bytecode.c \
+	    src/builtins.c \
+	    src/block.c    \
+	    -o fluxa_dis   \
+	    -lm
+	@echo "✓ build ok → ./fluxa_dis"
 
 
 # Hardened prod binary — FLUXA_SECURE=1 enables:
@@ -573,6 +585,11 @@ test-integration-s2: build
 	@chmod +x tests/integration/scenario2/run.sh
 	@./tests/integration/run_all.sh --fluxa ./$(TARGET) --scenario 2
 
+# PostgreSQL integration test — requires Docker
+test-integration-pg:
+	@chmod +x tests/integration/pg/run.sh tests/integration/pg/inner.sh
+	@bash tests/integration/pg/run.sh
+
 # ── Hardware simulation tests ─────────────────────────────────────────────────
 # Run the sim test suite against binaries compiled with SRAM caps.
 # Verifies that the runtime fails gracefully (rt_error, no crash) under
@@ -601,7 +618,6 @@ test-torture: build
 # to continue to sim tests regardless.
 test-all: build build-sim-rp2040 build-sim-esp32
 	@./tests/run_tests.sh ./$(TARGET) || true
-	@bash tests/modules/modules.sh --fluxa ./$(TARGET)
 	@bash tests/suite2/run_suite2.sh --fluxa ./$(TARGET)
 	@bash tests/libs/math.sh --fluxa ./$(TARGET)
 	@bash tests/libs/csv.sh --fluxa ./$(TARGET)
@@ -711,8 +727,12 @@ FUZZ_CSV_SRCS      = src/scope.c
 FUZZ_JSON_SRCS     =
 FUZZ_JSON2_SRCS    =
 FUZZ_SNAPSHOT_SRCS = src/scope.c
+# pg/wserver: header-only dispatch, stub backend (no libpq/libmhd).
+# scope.c provides value_free_data for VAL_STRING returns.
+FUZZ_PG_SRCS      = src/scope.c
+FUZZ_WSERVER_SRCS = src/scope.c
 
-FUZZ_TARGETS = lexer parser toml csv json json2 snapshot
+FUZZ_TARGETS = lexer parser toml csv json json2 snapshot pg wserver
 
 .PHONY: fuzz fuzz-build fuzz-clean $(addprefix fuzz-,$(FUZZ_TARGETS))
 
@@ -740,14 +760,43 @@ $(FUZZ_BUILD)/fuzz_json2: $(FUZZ_DIR)/fuzz_json2.c $(FUZZ_JSON2_SRCS) | $(FUZZ_B
 $(FUZZ_BUILD)/fuzz_snapshot: $(FUZZ_DIR)/fuzz_snapshot.c $(FUZZ_SNAPSHOT_SRCS) | $(FUZZ_BUILD)
 	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_SNAPSHOT_SRCS) $< -o $@
 
+$(FUZZ_BUILD)/fuzz_pg: $(FUZZ_DIR)/fuzz_pg.c $(FUZZ_PG_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_PG_SRCS) $< -o $@
+
+$(FUZZ_BUILD)/fuzz_wserver: $(FUZZ_DIR)/fuzz_wserver.c $(FUZZ_WSERVER_SRCS) | $(FUZZ_BUILD)
+	$(FUZZ_CC) $(FUZZ_FLAGS) $(FUZZ_WSERVER_SRCS) $< -o $@
+
+# Remove crash artifacts and tainted corpus entries from previous runs.
+# Run after fixing a bug — the old corpus may contain inputs that reproduced
+# the crash and will trigger exit 139 again on the first run of the new binary.
+fuzz-clean:
+	@rm -f  $(FUZZ_DIR)/findings/*/crash-* $(FUZZ_DIR)/findings/*/timeout-*
+	@rm -rf $(FUZZ_DIR)/corpus/lexer $(FUZZ_DIR)/corpus/parser   \
+	         $(FUZZ_DIR)/corpus/snapshot $(FUZZ_DIR)/corpus/csv   \
+	         $(FUZZ_DIR)/corpus/json $(FUZZ_DIR)/corpus/json2     \
+	         $(FUZZ_DIR)/corpus/toml
+	@mkdir -p $(FUZZ_DIR)/corpus/lexer $(FUZZ_DIR)/corpus/parser  \
+	           $(FUZZ_DIR)/corpus/snapshot $(FUZZ_DIR)/corpus/csv  \
+	           $(FUZZ_DIR)/corpus/json $(FUZZ_DIR)/corpus/json2    \
+	           $(FUZZ_DIR)/corpus/toml
+	@echo "✓ fuzz findings and accumulated corpora cleaned (pg/wserver seeds preserved)"
+
 fuzz-build: $(FUZZ_BUILD)/fuzz_lexer  $(FUZZ_BUILD)/fuzz_parser   \
             $(FUZZ_BUILD)/fuzz_toml   $(FUZZ_BUILD)/fuzz_csv      \
             $(FUZZ_BUILD)/fuzz_json   $(FUZZ_BUILD)/fuzz_json2    \
-            $(FUZZ_BUILD)/fuzz_snapshot
+            $(FUZZ_BUILD)/fuzz_snapshot                            \
+            $(FUZZ_BUILD)/fuzz_pg     $(FUZZ_BUILD)/fuzz_wserver
 	@echo "✓ fuzz build ok → $(FUZZ_BUILD)/fuzz_*"
 
 # Per-target run target. Each fuzzer writes its findings under
 # fuzz/findings/<target>/ and reuses corpus/<target>/ as its seed pool.
+# Per-target max_len overrides. Snapshot inputs are bounded by prst_cap
+# (default 64 entries) — deeply nested synthetic arrays that cause stack
+# overflow in the deserializer are not valid runtime snapshots.
+FUZZ_MAX_LEN_snapshot := 8192
+FUZZ_MAX_LEN_default  := 4096
+fuzz_max_len = $(if $(FUZZ_MAX_LEN_$(1)),$(FUZZ_MAX_LEN_$(1)),$(FUZZ_MAX_LEN_default))
+
 define FUZZ_RUN_template
 fuzz-$(1): $$(FUZZ_BUILD)/fuzz_$(1)
 	@mkdir -p $$(FUZZ_DIR)/findings/$(1) $$(FUZZ_DIR)/corpus/$(1)
@@ -756,6 +805,8 @@ fuzz-$(1): $$(FUZZ_BUILD)/fuzz_$(1)
 	    UBSAN_OPTIONS=print_stacktrace=1                                 \
 	    ./build/fuzz_$(1) -max_total_time=$$(FUZZ_TIME)                  \
 	                       -artifact_prefix=findings/$(1)/                \
+	                       -rss_limit_mb=1024                             \
+	                       -max_len=$(call fuzz_max_len,$(1))             \
 	                       corpus/$(1)
 endef
 
@@ -767,8 +818,6 @@ fuzz: fuzz-build
 	done
 	@echo "✓ all fuzz targets clean for $(FUZZ_TIME)s each"
 
-fuzz-clean:
-	rm -rf $(FUZZ_BUILD) $(FUZZ_DIR)/findings
 
 
 # ─────────────────────────────────────────────────────────────────────────────

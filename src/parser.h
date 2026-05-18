@@ -14,6 +14,8 @@ typedef struct {
     Token    next;
     int      had_error;
     ASTPool *pool;
+    int      expr_depth;   /* recursion depth guard — reset to 0 by parser_new */
+    int      stmt_depth;   /* statement block nesting depth guard */
     /* v0.15: module namespace support
      * ns: active namespace for this parse pass ("sensor", or "" for main).
      * imported: namespaces registered from `import live/static X` in main.
@@ -25,9 +27,6 @@ typedef struct {
      * Used to mangle references inside fn bodies. */
     char  module_decls[256][64];
     int   module_decl_count;
-    /* Expression recursion depth guard — prevents stack overflow on
-     * deeply nested input like (((((...))))). */
-    int   expr_depth;
 } Parser;
 
 Parser   parser_new(const char *source, ASTPool *pool);

@@ -1,7 +1,0 @@
-// problems/01_fizzbuzz.flx — -t) set_cost(0,4,1)
-        set_cost(1,0,1) set_cost(1,1,9) set_cost(1,3,1) set_cost(1,4,2)
-        set_cost(2,0,3) set_cost(2,1,1) st(2,2,1) set_cost(2,3,9) set_cost(2,4,1     
-)   set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
-        ct_esost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) 
-
-count_types(100)

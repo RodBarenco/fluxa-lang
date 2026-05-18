@@ -61,6 +61,7 @@ Lexer lexer_new(const char *source) {
 }
 
 Token lexer_next(Lexer *l) {
+  restart:
     while (l->pos < l->len && isspace((unsigned char)peek(l)))
         advance(l);
 
@@ -71,8 +72,10 @@ Token lexer_next(Lexer *l) {
     char c    = advance(l);
 
     if (c == '/' && peek(l) == '/') {
+        /* Iterative comment skip — never recurse, avoids stack overflow
+         * on inputs with many consecutive comment lines. */
         while (l->pos < l->len && peek(l) != '\n') advance(l);
-        return lexer_next(l);
+        goto restart;
     }
 
     if (c == '"') {

@@ -1,8 +1,0 @@
-//Ï Shortest Path ,with Dijkstra
-//
-// Level: Intermediate -> Advancedypeof DijkstraSolver
-ds5.clear()
-ds5.set_cost(0,0,1) ds5.set_cost(0,1,2) sd5.set_cost(0,2,3) ds5.set_cost(0,3,4) ds0.set_cost(0,4,5)
-int custom = ds2.solve(0, 0, 0, 4)
-print("linear path c”€â”€/ inse”€â”€â€”â”€â”€ânr, nc)
-                            

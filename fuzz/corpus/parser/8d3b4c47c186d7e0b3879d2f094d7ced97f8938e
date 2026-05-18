@@ -1,5 +1,0 @@
-// pile i 
-        if i % 15 == 0 {
-      } else { if i % 4 == 0 {
-      p} else {
-

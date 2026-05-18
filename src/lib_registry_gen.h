@@ -70,6 +70,9 @@
 #ifdef FLUXA_STD_MQTT
 #  include "std/mqtt/fluxa_std_mqtt.h"
 #endif
+#ifdef FLUXA_STD_PG
+#  include "std/pg/fluxa_std_pg.h"
+#endif
 #ifdef FLUXA_STD_PID
 #  include "std/pid/fluxa_std_pid.h"
 #endif
@@ -87,6 +90,9 @@
 #endif
 #ifdef FLUXA_STD_WEBSOCKET
 #  include "std/websocket/fluxa_std_websocket.h"
+#endif
+#ifdef FLUXA_STD_WSERVER
+#  include "std/wserver/fluxa_std_wserver.h"
 #endif
 #ifdef FLUXA_STD_ZLIB
 #  include "std/zlib/fluxa_std_zlib.h"
@@ -219,6 +225,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "mqtt", "std.mqtt", "mqtt", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_PG
+    { "pg", "std.pg", "pg", NULL, NULL, fluxa_std_pg_call, 0, 1, 1 },
+#else
+    { "pg", "std.pg", "pg", NULL, NULL, NULL, 0, 1, 0 },
+#endif
 #ifdef FLUXA_STD_PID
     { "pid", "std.pid", "pid", fluxa_std_pid_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -249,6 +260,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "websocket", "std.websocket", "websocket", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_WSERVER
+    { "wserver", "std.wserver", "wserver", NULL, NULL, fluxa_std_wserver_call, 0, 1, 1 },
+#else
+    { "wserver", "std.wserver", "wserver", NULL, NULL, NULL, 0, 1, 0 },
+#endif
 #ifdef FLUXA_STD_ZLIB
     { "zlib", "std.zlib", "zlib", fluxa_std_zlib_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -256,7 +272,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 26
+#define FLUXA_LIB_COUNT 28
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

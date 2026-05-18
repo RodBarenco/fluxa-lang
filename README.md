@@ -1,8 +1,8 @@
 # Fluxa-lang
 
-**v0.15 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.16 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
-Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 26 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
+Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 28 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 
 ---
 
@@ -40,7 +40,7 @@ Pure C99. Configurable via `fluxa.toml`. Cross-compiles to Linux, macOS, RP2040,
 make build
 fluxa init myproject
 cd myproject
-fluxa run main.flx -dev      # watch + auto-reload (includes module files)
+fluxa run main.flx -dev      # watch + auto-reload
 ```
 
 ---
@@ -58,36 +58,45 @@ prst int counter = 0
 counter = counter + 1
 
 // danger — explicit error containment
+int conn = 0
 danger {
-    dyn r = httpc.get("http://api.example.com/temp")
-    print(httpc.status(r))
+    conn = pg.connect("host=localhost dbname=mydb user=fluxa password=secret")
 }
 if err != nil { print(err[0]) }
 
-// Modules — organize code across files (v0.15)
-// main.flx
-import live sensor      // loads live/sensor.flx
-import static utils     // loads static/utils.flx
-Block s typeof sensor.Sensor
-s.set(3.14)
-print(utils.double(7))
-
-// Blocks — lightweight objects with methods
+// Block — encapsulated state + behavior
+// Fields can be prst (survives reload) or plain (lives for execution)
 Block Sensor {
-    float temp = 0.0
-    fn read() nil { temp = 22.5 }
-    fn get() float { return temp }
+    prst float reading = 0.0   // survives reload
+    float   last_raw   = 0.0   // does not survive reload — also valid
+    fn set(float v) nil { reading = v; last_raw = v }
+    fn get() float { return reading }
 }
 Block s typeof Sensor
-s.read()
+s.set(22.5)
 print(s.get())
+
+// Modules — organize code across files
+import live sensor       // loads live/sensor.flx
+import static utils      // loads static/utils.flx
+Block s2 typeof sensor.Sensor
+s2.set(3.14)
+print(utils.double(7))
 ```
+
+**Key rules — read this before writing Fluxa code:**
+
+- No global variables. Everything has exactly one owner.
+- No `dyn` as a Block field. Pass `dyn` cursors as arguments to methods.
+- No `danger` inside Block methods. Handle fallible operations in functions.
+- No Block declaration inside a Block.
+- `prst` only marks variables for persistence across reloads — it does not change ownership.
 
 ---
 
 ## Execution model (v0.14)
 
-Fluxa uses a three-tier system. Every function starts cold and promotes automatically:
+Three-tier system. Every function starts cold and promotes automatically:
 
 ```
 Tier 0 — AST tree-walker      all functions, first 2 calls
@@ -99,11 +108,9 @@ Tier 2 — Compiled fn bodies   vm_run_fn with isolated register file
            └─ fn with return expr compiled to OP_RETURN_VAL chunk
 ```
 
-No configuration required. Promotion is automatic and transparent.
-
 ---
 
-## Standard library — 26 libs
+## Standard library — 28 libs
 
 ```toml
 # fluxa.toml — runtime selection
@@ -130,10 +137,12 @@ std.mqtt       = "1.0"   # MQTT client (libmosquitto)
 std.mcpc       = "1.0"   # MCP client (libcurl)
 std.mcps       = "1.0"   # MCP client, HTTPS enforced (libcurl)
 std.websocket  = "1.0"   # WebSocket client (pure C99 or libwebsockets)
-std.http       = "1.0"   # HTTP server + client (mongoose 7.21)
+std.http       = "1.0"   # HTTP server + client (mongoose 7.21, dyn cursors)
 std.mcp        = "1.0"   # Fluxa as MCP server (JSON-RPC 2.0)
 std.graph      = "1.0"   # 2D/3D graphics (stub or Raylib)
 std.infer      = "1.0"   # local LLM inference (stub or llama.cpp)
+std.wserver    = "1.0"   # resilient HTTP server — int handles, auto-scaling pool
+std.pg         = "1.0"   # PostgreSQL client — int handles (libpq)
 ```
 
 **Optional backends:**
@@ -145,6 +154,8 @@ std.infer      = "1.0"   # local LLM inference (stub or llama.cpp)
 | `std.libv` | pure C99 linear algebra | `[libs.libv] backend = "blas"` → OpenBLAS |
 | `std.graph` | stub (zero deps) | `make FLUXA_GRAPH_RAYLIB=1` → Raylib |
 | `std.infer` | stub (placeholder) | `make FLUXA_INFER_LLAMA=1` → llama.cpp |
+| `std.wserver` | stub (clear error) | `apt install libmicrohttpd-dev` → real backend |
+| `std.pg` | stub (clear error) | `apt install libpq-dev` → real backend |
 
 ---
 
@@ -186,8 +197,10 @@ fluxa keygen                      generate Ed25519 + HMAC keys
 ```bash
 make test-all                    # full suite: unit + suite2 + integration + sim
 make test-torture                # Docker: runtime under 0.1 CPU + 128 MB RAM
-make test-integration            # Atomic Handover scenarios only
+make test-integration            # Atomic Handover scenarios
+make test-integration-pg         # PostgreSQL integration (requires Docker)
 make test-sim                    # hardware simulation (RP2040 + ESP32)
+make fuzz-build                  # build all libFuzzer harnesses
 make bench                       # benchmark: loop, Block methods, field access
 ```
 
@@ -204,42 +217,37 @@ fluxa/
 │   ├── resolver.c         — symbol resolution, scope offsets
 │   ├── runtime.c          — tree-walker + bytecode VM orchestration
 │   ├── bytecode.c         — VM compiler + vm_run + vm_run_fn
-│   ├── bytecode.h         — opcodes, Chunk, vm_run signature
 │   ├── handover.c         — Atomic Handover (5-step protocol)
 │   ├── ipc_server.c       — Unix socket IPC server
-│   ├── fluxa_alloc.h      — hardware simulation allocator (RP2040/ESP32)
+│   ├── fluxa_alloc.h      — hardware simulation allocator
 │   ├── warm_profile.h     — WarmProfile: dynamic heap, WHT + QJL
 │   ├── prst_pool.h        — persistent variable pool + serialization
 │   ├── scope.h            — value types, FluxaArr, FluxaDyn
-│   ├── fluxa_ipc.h        — IPC wire format
-│   ├── pool.h             — ASTPool arena (FLUXA_HUGEPAGES opt-in)
-│   └── std/               — 26 standard library modules
+│   └── std/               — 28 standard library modules
 ├── tests/
-│   ├── run_tests.sh       — master runner (73 tests)
+│   ├── run_tests.sh       — master runner
 │   ├── libs/              — one script per stdlib lib
 │   ├── suite2/            — edge cases + integration
 │   ├── security/          — FLUXA_SECURE hardening tests
-│   ├── integration/       — Atomic Handover + serial Docker tests
+│   ├── integration/       — Atomic Handover + serial + pg Docker tests
 │   ├── torture/           — IoT runtime simulation (Docker)
-│   ├── bench.flx          — 10M loop benchmark
-│   ├── bench_block.flx    — 1M Block method call benchmark
-│   └── bench_field.flx    — 1M direct Block field access benchmark
-├── vendor/
-│   ├── mongoose.h/.c      — mongoose 7.21 (vendored)
-│   └── uthash.h           — hash table (vendored)
+│   └── fuzz/              — libFuzzer harnesses (pg, wserver, json, csv, ...)
 ├── docs/
 │   ├── fluxa_spec_v15.md  — language specification
 │   ├── STDLIB.md          — standard library reference
+│   ├── FLUXA_GUIDE.md     — step-by-step programming guide
 │   ├── CHANGELOG.md       — version history
 │   ├── CREATING_LIBS.md   — guide for adding libs
 │   └── FLUXA_DIS.md       — disassembler reference
-├── fluxa.libs             — build-time library enable/disable
+├── vendor/
+│   ├── mongoose.h/.c      — mongoose 7.21 (vendored)
+│   └── uthash.h           — hash table (vendored)
 └── Makefile
 ```
 
 ---
 
-## Status — v0.15
+## Status — v0.16
 
 | Component | Status |
 |---|---|
@@ -251,7 +259,7 @@ fluxa/
 | IPC server | ✅ stable |
 | Prod mode + FLUXA_SECURE | ✅ stable |
 | Runtime Update Protocol | ✅ stable |
-| Standard library (26 libs) | ✅ stable |
+| Standard library (28 libs) | ✅ stable |
 | Module system (import live/static) | ✅ stable |
 | Hardware simulation (RP2040/ESP32) | ✅ stable |
 | Docker torture testing | ✅ stable |

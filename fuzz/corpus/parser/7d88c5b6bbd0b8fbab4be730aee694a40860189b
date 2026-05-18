@@ -1,4 +1,0 @@
-// datÿÿÿÿÿÿÿ â€” Stp ---")
-prdntint(Stack.pop())       // 30
-print(Stack.pop())       // 20
-Stack.prpriint_stack()

@@ -17,6 +17,20 @@
 
 /* Per-process tempfile. libFuzzer is single-threaded, so a fixed path is
  * fine and we avoid mkstemp churn on every iteration. */
+
+/* Increase stack to 64 MB — prevents libFuzzer signal/crash handlers
+ * from overflowing on deep corpora or large mutation inputs. */
+#include <sys/resource.h>
+__attribute__((constructor))
+static void fuzz_stack_init(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+        if (rl.rlim_cur < 64 * 1024 * 1024)
+            rl.rlim_cur = 64 * 1024 * 1024;
+        setrlimit(RLIMIT_STACK, &rl);
+    }
+}
+
 static char g_path[64];
 
 __attribute__((constructor))

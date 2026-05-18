@@ -1,4 +1,0 @@
-//lux/01_fizzbu
-fn fizzbuzz(int n) nil {while i <= n {
-        if i % 1{
-  p(100)

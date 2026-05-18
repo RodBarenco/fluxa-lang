@@ -111,6 +111,24 @@ typedef struct {
     int          json_max_str;    /* [libs.json] max_str_bytes, default 4096  */
     int          ffi_str_buf_size; /* [ffi] str_buf_size — writable char* buffer
                                    * allocated per pointer arg, default 1024   */
+    /* [libs.pg] — PostgreSQL client limits */
+    int          pg_max_conns;    /* max simultaneous PGconn*,   default 16  */
+    int          pg_max_results;  /* max simultaneous PGresult*, default 64  */
+    int          pg_max_cell;     /* max bytes per pg.get cell,  default 4096 */
+    int          pg_max_param;    /* max bytes per query param,  default 1024 */
+    int          pg_max_params;   /* max params in query_params, default 16  */
+    /* [libs.wserver] — HTTP server limits */
+    int          wserver_max_servers;      /* max MHD daemons,          default 4    */
+    int          wserver_max_requests;     /* max live request handles, default 128  */
+    int          wserver_max_body_bytes;   /* max request body,         default 64KB */
+    int          wserver_max_header_pairs; /* max pairs in reply_headers, default 16 */
+    int          wserver_max_header_bytes; /* max bytes per hdr key+val, default 4096 */
+    int          wserver_queue_depth;      /* per-server accept queue,  default 256  */
+    /* [libs.wserver] auto-scaling pool (serve with true) */
+    int          wserver_min_threads;      /* min pool threads,         default 2    */
+    int          wserver_max_threads;      /* max pool threads,         default 16   */
+    int          wserver_scale_up_queue;   /* queue depth to trigger scale-up, def 4 */
+    int          wserver_scale_down_idle;  /* idle seconds to scale down,      def 10*/
     char         libdsp_backend[16]; /* [libs.libdsp] backend = "native"|"fftw"  */
     char         libv_backend[16];   /* [libs.libv]   backend = "native"|"blas"  */
     FluxaSecurityConfig security; /* [security] — key paths + enforcement mode */
@@ -314,27 +332,33 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
 
         /* ── [runtime] keys ── */
         if (in_runtime) {
-            int v = atoi(val);
+            /* Use strtol so arbitrarily large toml values don't invoke UB.
+             * Clamp to INT_MAX before any int arithmetic. */
+            char *endp = NULL;
+            long lv = strtol(val, &endp, 10);
+            /* Reject non-numeric, negative, or absurdly large values.
+             * 0x40000000 = 1073741824 — safe ceiling for any int field here. */
+            if (!endp || endp == val || lv <= 0 || lv > (long)0x7FFFFFFF) {
+                continue; /* silently ignore bad value */
+            }
+            int v = (int)lv;
+
             if (strcmp(key, "gc_cap") == 0) {
-                if (v > 0 && v <= GC_TABLE_CAP) cfg.gc_cap = v;
-                else if (v > GC_TABLE_CAP)
-                    fprintf(stderr, "[fluxa] toml: gc_cap %d > max %d\n",
-                            v, GC_TABLE_CAP);
+                if (v <= GC_TABLE_CAP) cfg.gc_cap = v;
+                else fprintf(stderr, "[fluxa] toml: gc_cap %d > max %d\n",
+                             v, GC_TABLE_CAP);
             } else if (strcmp(key, "prst_cap") == 0) {
-                if (v > 0) cfg.prst_cap = v;
+                cfg.prst_cap = v;
             } else if (strcmp(key, "prst_graph_cap") == 0) {
-                if (v > 0 && v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
+                if (v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
             } else if (strcmp(key, "warm_func_cap") == 0) {
-                /* Initial hash table capacity — grows automatically via realloc.
-                 * Any positive value accepted; rounded up to next power of 2.
-                 * Cap at 1<<20 (1M entries) to prevent overflow in p*=2 loop. */
-                if (v > 0 && v <= (1 << 20)) {
-                    int p2 = 4;
-                    while (p2 < v) p2 *= 2;
-                    cfg.warm_func_cap = p2;
-                } else if (v > (1 << 20)) {
-                    cfg.warm_func_cap = (1 << 20);
-                }
+                /* Round up to next power of 2.
+                 * Hard cap at 65536 — any higher initial slot count is
+                 * unreasonable and keeps p*=2 safely below INT_MAX. */
+                if (v > 65536) v = 65536;
+                int p = 4;
+                while (p < v) p *= 2;
+                cfg.warm_func_cap = p;
             }
             continue;
         }
@@ -365,21 +389,21 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 snprintf(cfg.security.ipc_hmac_key_path,
                          sizeof(cfg.security.ipc_hmac_key_path), "%s", cv);
             } else if (strcmp(key, "handshake_timeout_ms") == 0) {
-                int v = atoi(cv);
-                if (v >= 10 && v <= 5000)
-                    cfg.security.handshake_timeout_ms = v;
+                long lv2 = strtol(cv, NULL, 10);
+                if (lv2 >= 10 && lv2 <= 5000)
+                    cfg.security.handshake_timeout_ms = (int)lv2;
                 else
                     fprintf(stderr,
-                        "[fluxa] toml: security.handshake_timeout_ms %d "
-                        "out of range [10, 5000] — using default 50\n", v);
+                        "[fluxa] toml: security.handshake_timeout_ms %ld "
+                        "out of range [10, 5000] — using default 50\n", lv2);
             } else if (strcmp(key, "ipc_max_conns") == 0) {
-                int v = atoi(cv);
-                if (v >= 1 && v <= 256)
-                    cfg.security.ipc_max_conns = v;
+                long lv2 = strtol(cv, NULL, 10);
+                if (lv2 >= 1 && lv2 <= 256)
+                    cfg.security.ipc_max_conns = (int)lv2;
                 else
                     fprintf(stderr,
-                        "[fluxa] toml: security.ipc_max_conns %d "
-                        "out of range [1, 256] — using default 16\n", v);
+                        "[fluxa] toml: security.ipc_max_conns %ld "
+                        "out of range [1, 256] — using default 16\n", lv2);
             } else if (strcmp(key, "mode") == 0) {
                 if (strcmp(cv, "strict") == 0)
                     cfg.security.mode = FLUXA_SEC_MODE_STRICT;
@@ -399,11 +423,11 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
         if (in_ffi_root) {
             /* str_buf_size is a special scalar key, not a lib alias */
             if (strcmp(key, "str_buf_size") == 0) {
-                int v = atoi(val);
-                if (v >= 64 && v <= 65536) cfg.ffi_str_buf_size = v;
+                long lv2 = strtol(val, NULL, 10);
+                if (lv2 >= 64 && lv2 <= 65536) cfg.ffi_str_buf_size = (int)lv2;
                 else fprintf(stderr,
-                    "[fluxa] toml: ffi.str_buf_size %d out of range [64..65536],"
-                    " keeping default %d\n", v, cfg.ffi_str_buf_size);
+                    "[fluxa] toml: ffi.str_buf_size %ld out of range [64..65536],"
+                    " keeping default %d\n", lv2, cfg.ffi_str_buf_size);
                 continue;
             }
             char resolved[128];
@@ -444,20 +468,24 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
     FILE *f = fopen(toml_path, "r");
     if (!f) return;
     char line[512];
-    int in_libs      = 0;
-    int in_libs_json = 0;
-    int in_libs_libdsp = 0;
-    int in_libs_libv   = 0;
+    int in_libs         = 0;
+    int in_libs_json    = 0;
+    int in_libs_pg      = 0;
+    int in_libs_wserver = 0;
+    int in_libs_libdsp  = 0;
+    int in_libs_libv    = 0;
     while (fgets(line, sizeof(line), f)) {
         /* Strip leading whitespace */
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
         /* Section header */
         if (*p == '[') {
-            in_libs        = (strncmp(p, "[libs]",        6) == 0);
-            in_libs_json   = (strncmp(p, "[libs.json]",  11) == 0);
-            in_libs_libdsp = (strncmp(p, "[libs.libdsp]",13) == 0);
-            in_libs_libv   = (strncmp(p, "[libs.libv]",  11) == 0);
+            in_libs         = (strncmp(p, "[libs]",           6) == 0);
+            in_libs_json    = (strncmp(p, "[libs.json]",     11) == 0);
+            in_libs_pg      = (strncmp(p, "[libs.pg]",        9) == 0);
+            in_libs_wserver = (strncmp(p, "[libs.wserver]",  14) == 0);
+            in_libs_libdsp  = (strncmp(p, "[libs.libdsp]",   13) == 0);
+            in_libs_libv    = (strncmp(p, "[libs.libv]",     11) == 0);
             continue;
         }
         if (in_libs) {
@@ -492,6 +520,37 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
                 if (eq) {
                     int v = (int)strtol(eq + 1, NULL, 10);
                     if (v > 0) cfg->json_max_str = v;
+                }
+            }
+        }
+        if (in_libs_pg) {
+            char *eq = strchr(p, '=');
+            if (eq) {
+                int v = (int)strtol(eq + 1, NULL, 10);
+                if (v > 0) {
+                    if      (strncmp(p, "max_connections",  15) == 0) cfg->pg_max_conns   = v;
+                    else if (strncmp(p, "max_results",      11) == 0) cfg->pg_max_results = v;
+                    else if (strncmp(p, "max_cell_bytes",   14) == 0) cfg->pg_max_cell    = v;
+                    else if (strncmp(p, "max_param_bytes",  15) == 0) cfg->pg_max_param   = v;
+                    else if (strncmp(p, "max_params",       10) == 0) cfg->pg_max_params  = v;
+                }
+            }
+        }
+        if (in_libs_wserver) {
+            char *eq = strchr(p, '=');
+            if (eq) {
+                int v = (int)strtol(eq + 1, NULL, 10);
+                if (v > 0) {
+                    if      (strncmp(p, "max_servers",       11) == 0) cfg->wserver_max_servers      = v;
+                    else if (strncmp(p, "max_requests",      12) == 0) cfg->wserver_max_requests     = v;
+                    else if (strncmp(p, "max_body_bytes",    14) == 0) cfg->wserver_max_body_bytes   = v;
+                    else if (strncmp(p, "max_header_pairs",  16) == 0) cfg->wserver_max_header_pairs = v;
+                    else if (strncmp(p, "max_header_bytes",  16) == 0) cfg->wserver_max_header_bytes = v;
+                    else if (strncmp(p, "queue_depth",       11) == 0) cfg->wserver_queue_depth      = v;
+                    else if (strncmp(p, "min_threads",       11) == 0) cfg->wserver_min_threads      = v;
+                    else if (strncmp(p, "max_threads",       11) == 0) cfg->wserver_max_threads      = v;
+                    else if (strncmp(p, "scale_up_queue",    14) == 0) cfg->wserver_scale_up_queue   = v;
+                    else if (strncmp(p, "scale_down_idle",   15) == 0) cfg->wserver_scale_down_idle  = v;
                 }
             }
         }

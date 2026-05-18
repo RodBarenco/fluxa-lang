@@ -1,8 +1,0 @@
-// problems/07_d insrts it, but the iterative   }
-
-    fn set_cost(int r, int c, int val) nil {
-        if in_bounds(r, c) == 1 { costs[idx(H, c)] = val }
-    }  while r < n {
-            print("Row", r, ":", costs[idx(r,0)], costs[idx(r, to run:ntï the correct position on the left.
-// Com`lexity: Oorted) | Stable: yes    _idx = i
-        int j = //

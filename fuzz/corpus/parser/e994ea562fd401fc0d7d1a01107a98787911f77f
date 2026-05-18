@@ -1,8 +1,0 @@
-// prs,
-// BFS m.flx
-
-Block DijksSolver {
-    int n = 5
-    int arr costs[25]   = 0
-    int arr dist[25]    = 0
-    int arr visited[25] = 0 int arr dr[0] = [-1,tBr nearFS ==="ly

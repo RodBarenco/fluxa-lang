@@ -1,8 +1,0 @@
-[libs.libv]
-backend = "blas"
-
-gc
-backend = "fftw"
-[libs.libv]
-backend =as"
- vEy en

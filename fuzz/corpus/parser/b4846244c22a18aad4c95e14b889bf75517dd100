@@ -1,7 +1,0 @@
-// data_structure   int arr ~ata[64] = 0
-    int top = -1
-
-    fn push(int val) nil {
-        if top >= 63 {
-            pr(55555555555555555555555555555555555555555555555555555555555555555555z5555555555555555555tack overflow App(int v63 {
-     ( da

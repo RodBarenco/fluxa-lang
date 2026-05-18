@@ -1,7 +1,7 @@
 # Fluxa Standard Library
-**v0.15**
+**v0.16**
 
-Reference documentation for all stdlib libs implemented: `std.math`, `std.csv`, `std.json`, `std.strings`, `std.time`, `std.flxthread`.
+Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`.
 
 ---
 
@@ -9,15 +9,19 @@ Reference documentation for all stdlib libs implemented: `std.math`, `std.csv`, 
 
 All stdlib libs share the same design contract:
 
-**Opt-in by declaration.** A lib only exists at runtime if it is declared in `[libs]` of `fluxa.toml`. Without declaration, `import std <lib>` produces a clear error. No lib adds any overhead to programs that don't use it.
+**Opt-in by declaration.** A lib only exists at runtime if declared in `[libs]` of `fluxa.toml`. Without declaration, `import std <lib>` produces a clear error. No lib adds overhead to programs that don't use it.
 
-**No `danger` required (unlike `import c`).** Stdlib functions are written in safe C and vetted for embedded use. File I/O functions are the exception — they require `danger {}` because file operations can fail. Pure computation functions (math, field parsing, JSON extraction) work outside `danger`.
+**No `danger` required for pure computation.** Stdlib functions written in safe C and vetted for embedded use work outside `danger`. File I/O, network, and database calls require `danger {}` because they can fail for external reasons.
 
-**Errors follow the standard model.** Outside `danger`: runtime error with line number, execution aborts. Inside `danger`: error captured in `err_stack`, execution continues. No special error handling API.
+**Errors follow the standard model.** Outside `danger`: runtime error with line number, execution aborts. Inside `danger`: error captured in `err_stack`, execution continues.
 
 **Buffers are bounded.** Every lib that touches external data has configurable buffer limits in `fluxa.toml`. No silent truncation — exceeding a limit produces a clear error.
 
-**All data is `str` or `dyn` of `str`.** No intermediate parse trees, no hidden heap allocations, no complex ownership chains. JSON and CSV data flows through the runtime as plain strings.
+**External resources use opaque int handles.** Libs that manage external resources (connections, servers, files) return `int` handles — positive integers that index into a fixed table inside the lib's C layer. Zero is always invalid. Handles are not pointers and carry no type information visible to Fluxa code.
+
+**`dyn` cursors for in-process state.** Libs that manage state entirely within the Fluxa process (file cursors, DB result sets from SQLite, JSON documents, PID controllers) use `dyn` cursors — opaque `VAL_PTR` wrappers. Use `prst dyn cursor` to keep these alive across hot reloads. `dyn` cursors are valid in the main program scope. They are **never** valid as Block fields.
+
+**No `dyn` inside Block.** Block fields must have a declared type (`int`, `float`, `str`, `bool`, `arr`). `dyn` is not a valid Block field type. Pass `dyn` cursors as arguments to Block methods if needed.
 
 ---
 
@@ -36,8 +40,6 @@ import std math
 import std csv
 import std json
 ```
-
-The `import std <lib>` statement validates at runtime that the lib was declared in `[libs]`. It does not load anything — registration is implicit through the config flags. The statement is idiomatic documentation: it makes it clear to any reader which libs a file depends on.
 
 ---
 
@@ -130,28 +132,11 @@ float nan = math.nan()  // NaN
 | `math.is_nan(x)` | float or int | bool | True if x is NaN |
 | `math.is_inf(x)` | float or int | bool | True if x is ±∞ |
 
-### Error handling
-
-Domain errors produce a runtime error at the offending line:
-
-```fluxa
-// outside danger — aborts
-float bad = math.sqrt(-1.0)
-// [fluxa] Runtime error (line 2): math.sqrt (line 2): sqrt of negative number
-
-// inside danger — captured in err_stack
-danger {
-    float bad = math.sqrt(-1.0)
-}
-// execution continues, err[0] has the message
-```
-
 ### Approximate equality
 
 ```fluxa
 bool ok = math.approx(0.1 + 0.2, 0.3)         // true (default epsilon 1e-9)
 bool ok = math.approx(1.0, 1.001, 0.01)        // true (custom epsilon)
-bool ok = math.approx(1.0, 2.0)                // false
 ```
 
 | Function | Arguments | Returns | Notes |
@@ -159,31 +144,27 @@ bool ok = math.approx(1.0, 2.0)                // false
 | `math.approx(a, b)` | float or int | bool | `\|a - b\| < 1e-9` |
 | `math.approx(a, b, epsilon)` | float or int | bool | `\|a - b\| < epsilon`. Error if epsilon < 0 |
 
-Use this instead of `==` for all float comparisons. `0.1 + 0.2 == 0.3` is false in floating point arithmetic on every platform.
+Use this instead of `==` for all float comparisons.
 
 ### Example
 
 ```fluxa
 import std math
 
-// PID output calculation
 float kp     = 2.5
 float signal = 4.0
 float output = math.clamp(kp * signal, -100.0, 100.0)
-print(output)  // 10.0 (within clamp range)
+print(output)  // 10.0
 
-// Angle conversion
-float angle_deg = 45.0
-float angle_rad = math.deg_to_rad(angle_deg)
-float sine      = math.sin(angle_rad)
-print(sine)    // ~0.707
+float angle_rad = math.deg_to_rad(45.0)
+print(math.sin(angle_rad))  // ~0.707
 ```
 
 ---
 
 ## std.csv
 
-CSV file processing. Three usage modes for different memory profiles. All file I/O requires `danger {}`. Pure string operations (`csv.field`, `csv.field_count`) work outside `danger`.
+CSV file processing. All file I/O requires `danger {}`. Pure string operations work outside `danger`.
 
 **Enable:**
 ```toml
@@ -192,24 +173,23 @@ std.csv = "1.0"
 
 [libs.csv]
 max_line_bytes = 1024   # max bytes per line (default 1024)
-max_fields     = 64     # max fields for csv.field (default 64)
+max_fields     = 64     # max fields per row (default 64)
 ```
 
 ### Data model
 
-All functions return `dyn` of `str` — each element is one raw CSV line as a string. Fields are extracted with `csv.field(row, idx)`. Lines are returned as-is (no unquoting in v1.0).
+All functions return `dyn` of `str` — each element is one raw CSV line. Fields are extracted with `csv.field(row, idx)`.
 
 ```fluxa
 dyn rows   = csv.load("data.csv")
-str row    = rows[0]                    // "sensor_id,temp,humidity"
-str field0 = csv.field(row, 0)         // "sensor_id"
-str field1 = csv.field(row, 1)         // "temp"
-int n      = csv.field_count(row)      // 3
+str row    = rows[0]
+str field0 = csv.field(row, 0)
+int n      = csv.field_count(row)
 ```
 
 ### Mode A — Cursor (recommended for large files)
 
-The cursor is a `VAL_PTR` wrapping a `FILE*`. It survives hot reload as `prst dyn`. In `HANDOVER_MODE_FLASH` (RP2040 reboot) the file pointer is invalid after restart — close and reopen after reload.
+The cursor is a `dyn` wrapping a `FILE*`. Use `prst dyn cursor` in the main program scope to survive hot reloads. **Never use `dyn` cursor as a Block field.**
 
 ```fluxa
 import std csv
@@ -219,7 +199,7 @@ prst dyn cursor = csv.open("data.csv")
 danger {
     dyn chunk = csv.next(cursor, 1000)
     while len(chunk) > 0 {
-        dyn data = csv.skip(chunk, 1)   // skip header on first chunk
+        dyn data = csv.skip(chunk, 1)
         for row in data {
             str id   = csv.field(row, 0)
             str temp = csv.field(row, 1)
@@ -230,9 +210,7 @@ danger {
 }
 ```
 
-### Mode B — Chunk direct (small to medium files)
-
-Reopens the file on each call. Simple, predictable, O(n) per call. Best for files where you process one chunk at a time and don't need to resume.
+### Mode B — Chunk direct
 
 ```fluxa
 import std csv
@@ -245,37 +223,16 @@ danger {
 }
 ```
 
-### Mode C — Load all (files that fit in memory)
+### Mode C — Load all
 
 ```fluxa
 import std csv
 
 danger {
     dyn all  = csv.load("config.csv")
-    dyn data = csv.skip(all, 1)        // skip header
+    dyn data = csv.skip(all, 1)
     print(len(data))
 }
-```
-
-### Field parsing — FSM with quoted field support
-
-`csv.field` uses a finite state machine that correctly handles:
-- Fields containing the delimiter inside double quotes: `"hello, world"`
-- Escaped quotes inside quoted fields: `"say ""hello"""`
-- Custom delimiters via the optional third argument
-
-```fluxa
-// Standard comma-separated
-str f = csv.field("a,b,c", 1)                  // "b"
-
-// TSV (tab-separated)
-str f = csv.field("a	b	c", 1, "	")          // "b"
-
-// Semicolon (European Excel)
-str f = csv.field("a;b;c", 1, ";")             // "b"
-
-// Quoted field with embedded comma
-str f = csv.field('a,"hello, world",c', 1)     // "hello, world"
 ```
 
 ### Function reference
@@ -284,12 +241,12 @@ str f = csv.field('a,"hello, world",c', 1)     // "hello, world"
 
 | Function | Returns | Description |
 |---|---|---|
-| `csv.open(str path)` | dyn cursor | Open file with default delimiter (`,`). Keep as `prst dyn`. |
-| `csv.open(str path, str delim)` | dyn cursor | Open file with custom delimiter (`"\t"`, `";"`, etc.). |
+| `csv.open(str path)` | dyn cursor | Open file. Keep as `prst dyn` in main scope. |
+| `csv.open(str path, str delim)` | dyn cursor | Open with custom delimiter. |
 | `csv.next(dyn cursor, int n)` | dyn | Read next n lines. Empty dyn = EOF. |
-| `csv.close(dyn cursor)` | nil | Close file and free cursor memory. |
-| `csv.chunk(str path, int n)` | dyn | Reopen file, read n lines from start. |
-| `csv.chunk(str path, int n, int offset)` | dyn | Read n lines starting at byte offset. |
+| `csv.close(dyn cursor)` | nil | Close file and free cursor. |
+| `csv.chunk(str path, int n)` | dyn | Open, read n lines from start, close. |
+| `csv.chunk(str path, int n, int offset)` | dyn | Read n lines at byte offset. |
 | `csv.load(str path)` | dyn | Load entire file as dyn of str. |
 | `csv.save(dyn data, str path)` | nil | Write each element as a line. |
 
@@ -297,12 +254,12 @@ str f = csv.field('a,"hello, world",c', 1)     // "hello, world"
 
 | Function | Returns | Description |
 |---|---|---|
-| `csv.field(str row, int idx)` | str | Extract field at index (0-based). |
+| `csv.field(str row, int idx)` | str | Extract field (0-based). |
 | `csv.field(str row, int idx, str delim)` | str | Extract with custom delimiter. |
 | `csv.field_count(str row)` | int | Count fields in row. |
 | `csv.field_count(str row, str delim)` | int | Count with custom delimiter. |
 | `csv.skip(dyn chunk, int n)` | dyn | Return chunk without first n rows. |
-| `csv.is_eof(dyn cursor)` | bool | True if cursor reached end of file. |
+| `csv.is_eof(dyn cursor)` | bool | True if cursor reached EOF. |
 
 ### IoT sensor loop pattern
 
@@ -322,13 +279,14 @@ Block SensorLog {
 Block log typeof SensorLog
 prst dyn cur = csv.open("sensors.csv")
 
-danger {
-    dyn chunk = csv.next(cur, 100)
-    dyn data  = csv.skip(chunk, 1)     // skip header
-    for row in data {
-        str raw_temp = csv.field(row, 1)
-        // convert str to float via math — not shown, use prst accumulation
-        log.readings = log.readings + 1
+fn process_chunk() nil {
+    danger {
+        dyn chunk = csv.next(cur, 100)
+        dyn data  = csv.skip(chunk, 1)
+        for row in data {
+            str raw = csv.field(row, 1)
+            log.readings = log.readings + 1
+        }
     }
 }
 ```
@@ -337,7 +295,7 @@ danger {
 
 ## std.json
 
-JSON as strings — no parse tree, no intermediate data structures. Build JSON objects with `json.set()`. Extract values with `json.get_*()`. Entire JSON lives as a Fluxa `str`.
+JSON as strings — no parse tree, no intermediate data structures.
 
 **Enable:**
 ```toml
@@ -345,82 +303,50 @@ JSON as strings — no parse tree, no intermediate data structures. Build JSON o
 std.json = "1.0"
 
 [libs.json]
-max_str_bytes = 4096    # max JSON string size (default 4096)
+max_str_bytes = 4096
 ```
-
-### Data model
-
-JSON is always `str`. The only compound structure Fluxa exposes from JSON is `dyn` of `str` (from `json.parse_array`), where each element is one JSON object or value as a string.
-
-This means:
-- Flat JSON objects: use `json.get_*` directly on the string
-- JSON arrays: use `json.parse_array` to get a `dyn` of `str`, then extract from each element
-- Nested JSON: extract the nested object as a `str`, then `json.get_*` on that string
 
 ### Building JSON objects
 
 ```fluxa
 import std json
 
-str obj = json.object()                        // "{}"
+str obj = json.object()
 obj = json.set(obj, "sensor_id", json.from_str("s001"))
 obj = json.set(obj, "temp",      json.from_float(23.5))
 obj = json.set(obj, "active",    json.from_bool(true))
 obj = json.set(obj, "count",     json.from_int(42))
 // {"sensor_id":"s001","temp":23.5,"active":true,"count":42}
-print(obj)
 ```
 
 ### Extracting from JSON strings
 
 ```fluxa
-import std json
-
 str raw = "{\"temp\":23.5,\"unit\":\"celsius\",\"active\":true}"
 
-float temp   = json.get_float(raw, "temp")    // 23.5
-str   unit   = json.get_str(raw,   "unit")    // "celsius"
-bool  active = json.get_bool(raw,  "active")  // true
-bool  exists = json.has(raw, "temp")          // true
-bool  valid  = json.valid(raw)                // true
+float temp   = json.get_float(raw, "temp")
+str   unit   = json.get_str(raw,   "unit")
+bool  active = json.get_bool(raw,  "active")
+bool  exists = json.has(raw, "temp")
 ```
 
 ### JSON arrays
 
 ```fluxa
-import std json
-
 str raw   = "[{\"id\":1},{\"id\":2},{\"id\":3}]"
-dyn items = json.parse_array(raw)       // dyn of 3 str elements
-print(len(items))                       // 3
-
-int first_id = json.get_int(items[0], "id")   // 1
-int last_id  = json.get_int(items[2], "id")   // 3
+dyn items = json.parse_array(raw)
+int first_id = json.get_int(items[0], "id")
 ```
 
-### Serializing dyn to JSON array
+### File operations — cursor (require `danger {}`)
+
+Use `prst dyn cur` in main scope. **Never as a Block field.**
 
 ```fluxa
-import std json
-
-str a = json.from_int(1)
-str b = json.from_str("hello")
-str c = json.from_bool(true)
-dyn d = [a, b, c]
-str out = json.stringify(d)             // [1,"hello",true]
-```
-
-### File operations (require `danger {}`)
-
-#### Mode A — cursor (large JSON array files)
-
-```fluxa
-import std json
-
 prst dyn cur = json.open("readings.json")
 
 danger {
-    dyn chunk = json.next(cur, 200)     // 200 JSON objects per chunk
+    dyn chunk = json.next(cur, 200)
     while len(chunk) > 0 {
         for item in chunk {
             float t = json.get_float(item, "temp")
@@ -431,94 +357,30 @@ danger {
 }
 ```
 
-#### Mode B/C — load
-
-```fluxa
-import std json
-
-danger {
-    str raw   = json.load("config.json")
-    float kp  = json.get_float(raw, "kp")
-    float ki  = json.get_float(raw, "ki")
-}
-```
-
 ### Function reference
-
-**Object construction:**
 
 | Function | Returns | Description |
 |---|---|---|
 | `json.object()` | str | Returns `"{}"` |
 | `json.array()` | str | Returns `"[]"` |
-| `json.set(str obj, str key, str val)` | str | Add or replace key. val must be a valid JSON value string. |
-
-**Type conversion (Fluxa → JSON string):**
-
-| Function | Returns | Description |
-|---|---|---|
-| `json.from_str(str s)` | str | `"hello"` → `"\"hello\""` |
-| `json.from_float(float f)` | str | `23.5` → `"23.5"` |
-| `json.from_int(int n)` | str | `42` → `"42"` |
-| `json.from_bool(bool b)` | str | `true` → `"true"` |
-
-**Extraction (JSON string → Fluxa value):**
-
-| Function | Returns | Description |
-|---|---|---|
+| `json.set(str obj, str key, str val)` | str | Add or replace key |
+| `json.from_str(str s)` | str | Fluxa str → JSON string literal |
+| `json.from_float(float f)` | str | float → JSON number |
+| `json.from_int(int n)` | str | int → JSON number |
+| `json.from_bool(bool b)` | str | bool → JSON bool |
 | `json.get_str(str json, str key)` | str | Extract string field |
 | `json.get_float(str json, str key)` | float | Extract number as float |
 | `json.get_int(str json, str key)` | int | Extract number as int |
 | `json.get_bool(str json, str key)` | bool | Extract boolean |
 | `json.has(str json, str key)` | bool | True if key exists |
-
-**Parse and serialize:**
-
-| Function | Returns | Description |
-|---|---|---|
-| `json.parse_array(str raw)` | dyn | JSON array → dyn of str elements |
-| `json.stringify(dyn data)` | str | dyn of str → JSON array string |
+| `json.parse_array(str raw)` | dyn | JSON array → dyn of str |
+| `json.stringify(dyn data)` | str | dyn of str → JSON array |
 | `json.valid(str raw)` | bool | Quick structural validation |
-
-**File operations (require `danger {}`):**
-
-| Function | Returns | Description |
-|---|---|---|
-| `json.open(str path)` | dyn cursor | Open file, return cursor |
-| `json.next(dyn cursor, int n)` | dyn | Read next n JSON objects. Empty = EOF. |
-| `json.close(dyn cursor)` | nil | Close file and free cursor |
-| `json.load(str path)` | str | Load entire file as one str |
-| `json.is_eof(dyn cursor)` | bool | True if cursor reached EOF |
-
-### MQTT telemetry pattern
-
-```fluxa
-import std json
-
-Block Sensor {
-    prst float temp     = 0.0
-    prst float humidity = 0.0
-    prst int   tick     = 0
-    fn read(float t, float h) nil {
-        temp     = t
-        humidity = h
-        tick     = tick + 1
-    }
-    fn payload() str {
-        str obj = json.object()
-        obj = json.set(obj, "temp",     json.from_float(temp))
-        obj = json.set(obj, "humidity", json.from_float(humidity))
-        obj = json.set(obj, "tick",     json.from_int(tick))
-        return obj
-    }
-}
-
-Block s typeof Sensor
-s.read(23.5, 60.0)
-str msg = s.payload()
-// {"temp":23.5,"humidity":60,"tick":1}
-print(msg)
-```
+| `json.open(str path)` | dyn cursor | Open JSON array file |
+| `json.next(dyn cursor, int n)` | dyn | Read next n objects |
+| `json.close(dyn cursor)` | nil | Close file |
+| `json.load(str path)` | str | Load entire file as str |
+| `json.is_eof(dyn cursor)` | bool | True if EOF |
 
 ---
 
@@ -526,83 +388,54 @@ print(msg)
 
 Unlike `std.json` (streaming, no tree), `std.json2` parses the entire document into an in-memory tree and lets you navigate it with dot-path and array-index notation.
 
-Zero external dependencies — pure C99.
-
 ```toml
 [libs]
 std.json2 = "1.0"
 ```
 
-**Navigation paths:** `"user.address.city"`, `"items[0].name"`, `"config.items[2].value"` — combinable arbitrarily.
+Use `prst dyn doc` in main scope to keep the document across hot reloads. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
 | `json2.parse(str)` | `dyn` | Parse JSON string → document cursor |
 | `json2.load(path)` | `dyn` | Parse JSON file → document cursor |
-| `json2.stringify(doc)` | `str` | Serialize document back to JSON string |
+| `json2.stringify(doc)` | `str` | Serialize document back to JSON |
 | `json2.get(doc, path)` | `str` | Get value as string |
 | `json2.get_int(doc, path)` | `int` | Get value as int |
 | `json2.get_float(doc, path)` | `float` | Get value as float |
 | `json2.get_bool(doc, path)` | `bool` | Get value as bool |
 | `json2.has(doc, path)` | `bool` | Path exists in document |
-| `json2.type(doc, path)` | `str` | Type at path: `"null"`, `"bool"`, `"int"`, `"float"`, `"str"`, `"array"`, `"object"` |
-| `json2.length(doc, path)` | `int` | Element count at path (array or object) |
+| `json2.type(doc, path)` | `str` | Type: `"null"`, `"bool"`, `"int"`, `"float"`, `"str"`, `"array"`, `"object"` |
+| `json2.length(doc, path)` | `int` | Element count at path |
 | `json2.key(doc, path, i)` | `str` | i-th key of object at path |
-| `json2.set(doc, path, val)` | `nil` | Set string value at path |
-| `json2.set_int(doc, path, n)` | `nil` | Set int value at path |
-| `json2.set_float(doc, path, f)` | `nil` | Set float value at path |
-| `json2.set_bool(doc, path, b)` | `nil` | Set bool value at path |
-| `json2.delete(doc, path)` | `nil` | Delete node at path |
+| `json2.set(doc, path, val)` | `nil` | Set string value |
+| `json2.set_int(doc, path, n)` | `nil` | Set int value |
+| `json2.set_float(doc, path, f)` | `nil` | Set float value |
+| `json2.set_bool(doc, path, b)` | `nil` | Set bool value |
+| `json2.delete(doc, path)` | `nil` | Delete node |
 | `json2.valid(doc)` | `bool` | Document parsed without error |
-| `json2.error(doc)` | `str` | Parse error message (if `valid` is false) |
+| `json2.error(doc)` | `str` | Parse error message |
 | `json2.free(doc)` | `nil` | Release document memory |
 
 ```fluxa
 import std json2
 
-// Parse and navigate
 danger {
-    dyn doc = json2.parse("{"sensor":{"temp":22.5,"unit":"C"},"readings":[1,2,3]}")
-
+    dyn doc = json2.parse("{\"sensor\":{\"temp\":22.5},\"readings\":[1,2,3]}")
     float temp = json2.get_float(doc, "sensor.temp")
-    str unit   = json2.get(doc, "sensor.unit")
     int first  = json2.get_int(doc, "readings[0]")
     int count  = json2.length(doc, "readings")
-
-    print(temp)    // 22.5
-    print(unit)    // C
-    print(first)   // 1
-    print(count)   // 3
-
-    // Mutate and re-serialize
     json2.set_float(doc, "sensor.temp", 23.1)
     str updated = json2.stringify(doc)
-    print(updated)
-
     json2.free(doc)
 }
-
-// Load from file
-danger {
-    dyn cfg = json2.load("/mnt/sd/config.json")
-    if json2.valid(cfg) {
-        str mode = json2.get(cfg, "mode")
-        int cap  = json2.get_int(cfg, "runtime.gc_cap")
-        print(mode)
-        print(cap)
-    }
-    json2.free(cfg)
-}
-
-// prst dyn cursor survives hot reloads
-prst dyn config = json2.parse("{"ready":false}")
 ```
 
 ---
 
 ## std.strings
 
-String manipulation functions. No `danger` required — all operations are pure computation. No regex, no Unicode-aware indexing — all operations work on byte offsets.
+String manipulation. No `danger` required. All operations work on byte offsets.
 
 **Enable:**
 ```toml
@@ -610,80 +443,33 @@ String manipulation functions. No `danger` required — all operations are pure 
 std.strings = "1.0"
 
 [libs.strings]
-max_out_bytes = 8192    # max output string size (default 8192)
+max_out_bytes = 8192
 ```
-
-**Note:** `import std strings` uses `str` as the namespace prefix — `strings.split(...)`, `strings.upper(...)` etc. `str` is a built-in type keyword in Fluxa, but it is also valid as a namespace prefix in expressions.
-
-### Function reference
 
 | Function | Returns | Description |
 |---|---|---|
-| `strings.split(str s, str delim)` | dyn | Split `s` on `delim`. Returns dyn of str. Empty delim splits into individual bytes. |
-| `strings.join(dyn parts, str glue)` | str | Join elements of dyn with `glue` between each. |
-| `strings.concat(a, b, ...)` | str | Concatenate any number of values (int, float, bool, str) into one string. |
-| `strings.slice(str s, int start, int end)` | str | Byte substring. Negative indices count from end. `end` is exclusive. |
-| `strings.trim(str s)` | str | Remove leading and trailing whitespace. |
-| `strings.find(str s, str sub)` | int | Byte offset of first occurrence of `sub`, or `-1` if not found. |
-| `strings.replace(str s, str old, str new)` | str | Replace all occurrences of `old` with `new`. |
-| `strings.starts_with(str s, str prefix)` | bool | True if `s` begins with `prefix`. |
-| `strings.ends_with(str s, str suffix)` | bool | True if `s` ends with `suffix`. |
-| `strings.contains(str s, str sub)` | bool | True if `sub` appears anywhere in `s`. |
-| `strings.count(str s, str sub)` | int | Count non-overlapping occurrences of `sub` in `s`. |
+| `strings.split(str s, str delim)` | dyn | Split on delimiter. |
+| `strings.join(dyn parts, str glue)` | str | Join with glue. |
+| `strings.concat(a, b, ...)` | str | Concatenate any number of values. |
+| `strings.slice(str s, int start, int end)` | str | Byte substring. Negative indices from end. |
+| `strings.trim(str s)` | str | Remove leading/trailing whitespace. |
+| `strings.find(str s, str sub)` | int | Offset of first occurrence, or -1. |
+| `strings.replace(str s, str old, str new)` | str | Replace all occurrences. |
+| `strings.starts_with(str s, str prefix)` | bool | |
+| `strings.ends_with(str s, str suffix)` | bool | |
+| `strings.contains(str s, str sub)` | bool | |
+| `strings.count(str s, str sub)` | int | Count non-overlapping occurrences. |
 | `strings.lower(str s)` | str | ASCII lowercase. |
 | `strings.upper(str s)` | str | ASCII uppercase. |
-| `strings.repeat(str s, int n)` | str | Repeat `s` `n` times. Returns `""` if `n <= 0`. |
-| `strings.from_int(int n)` | str | Convert int or float to its string representation. |
-| `strings.to_int(str s)` | int | Parse str as integer (via `atol`). Returns 0 if not parseable. |
-
-### Examples
-
-```fluxa
-import std strings
-
-// Parsing a sensor reading string
-str raw    = "  sensor_01: 23.5 degC  "
-str clean  = strings.trim(raw)                       // "sensor_01: 23.5 degC"
-dyn parts  = strings.split(clean, ": ")             // ["sensor_01", "23.5 degC"]
-str id     = parts[0]                            // "sensor_01"
-str val    = strings.slice(parts[1], 0, 4)          // "23.5"
-
-// Building a log line
-str prefix = strings.upper("warn")                   // "WARN"
-bool ok    = strings.starts_with(id, "sensor")      // true
-int  n     = strings.count(clean, " ")              // 3
-
-// CSV field splitting
-dyn row    = strings.split("alice,30,engineer", ",")
-str name   = row[0]   // "alice"
-str age    = row[1]   // "30"
-```
-
-### Combining with std.csv and std.json
-
-```fluxa
-import std csv
-import std strings
-
-danger {
-    dyn rows = csv.load("data.csv")
-    dyn data = csv.skip(rows, 1)
-    for row in data {
-        str id    = csv.field(row, 0)
-        str clean = strings.trim(id)
-        if strings.starts_with(clean, "sensor") {
-            str upper_id = strings.upper(clean)
-        }
-    }
-}
-```
-
+| `strings.repeat(str s, int n)` | str | Repeat n times. |
+| `strings.from_int(int n)` | str | int or float to string. |
+| `strings.to_int(str s)` | int | Parse as integer (atol). Returns 0 if not parseable. |
 
 ---
 
 ## std.time
 
-Time functions. No `danger` required. Platform-aware: uses `clock_gettime`/`nanosleep` on Linux/macOS, native hardware timers on RP2040 and ESP32.
+Time functions. No `danger` required.
 
 **Enable:**
 ```toml
@@ -691,100 +477,32 @@ Time functions. No `danger` required. Platform-aware: uses `clock_gettime`/`nano
 std.time = "1.0"
 ```
 
-### Function reference
-
 | Function | Returns | Description |
 |---|---|---|
-| `time.sleep(int ms)` | nil | Block current thread for N milliseconds |
-| `time.sleep_us(int us)` | nil | Block current thread for N microseconds |
-| `time.now_ms()` | int | Monotonic timestamp in milliseconds |
-| `time.now_us()` | int | Monotonic timestamp in microseconds |
-| `time.ticks()` | int | Raw hardware tick counter (platform-native resolution) |
-| `time.elapsed_ms(int since)` | int | Milliseconds since a prior `now_ms()` call. Safe against wraparound. |
-| `time.timeout(int start, int max_ms)` | bool | True if at least `max_ms` have passed since `start` |
-| `time.format(int ms)` | str | Human-readable UTC datetime: `"2025-01-15 14:32:01.123"`. On embedded targets without RTC: elapsed time `"00:01:23.456"` |
-
-### The three loop patterns
-
-`std.time` is designed around three documented loop patterns that also determine how `std.flxthread` mailbox drain interacts with the thread:
-
-```fluxa
-import std time
-
-// Pattern 1 — with sleep (IoT, game loops)
-// Mailbox drains at sleep frequency. Predictable latency.
-while active {
-    readings = sensor.read()
-    time.sleep(16)   // ← drain + GC safe point here
-}
-
-// Pattern 2 — hot loop (DSP, control, computation)
-// No sleep. Back-edge drain is O(1) — just one load + branch.
-while i < 10000 {
-    sum = sum + data[i]
-    i = i + 1
-    // ← drain check every iteration, negligible overhead
-}
-
-// Pattern 3 — polling loop (maximum responsiveness)
-// timeout drives exit. Responds to stop signal immediately.
-int t0 = time.now_ms()
-while !time.timeout(t0, 5000) {
-    process_next()
-    // ← exits within one iteration of stop signal
-}
-```
-
-### Example
-
-```fluxa
-import std time
-
-int t0     = time.now_ms()
-time.sleep(100)
-int dt     = time.elapsed_ms(t0)   // ~100
-bool late  = time.timeout(t0, 50)  // true
-str  ts    = time.format(t0)       // "2025-01-15 14:32:01.100"
-print(dt)
-```
+| `time.sleep(int ms)` | nil | Block for N milliseconds |
+| `time.sleep_us(int us)` | nil | Block for N microseconds |
+| `time.now_ms()` | int | Monotonic timestamp in ms |
+| `time.now_us()` | int | Monotonic timestamp in µs |
+| `time.ticks()` | int | Raw hardware tick counter |
+| `time.elapsed_ms(int since)` | int | ms since prior `now_ms()`. Safe against wraparound. |
+| `time.timeout(int start, int max_ms)` | bool | True if max_ms passed since start |
+| `time.format(int ms)` | str | Human-readable UTC datetime |
 
 ---
 
 ## std.flxthread
 
-Concurrency for Fluxa. Threads are isolated by default — Block instances have no shared state, no locks required. The only shared resource is `prst` global vars, protected explicitly via `ft.lock()`.
-
-No `danger` required for any `ft.*` call. Not available on embedded targets (`FLUXA_EMBEDDED`).
+Concurrency for Fluxa. Threads are isolated by default — Block instances have no shared state. No `danger` required for any `ft.*` call.
 
 **Enable:**
 ```toml
 [libs]
 std.flxthread = "1.0"
-std.time      = "1.0"   # required for time.sleep in thread loops
+std.time      = "1.0"
 ```
 
-**Import with alias:**
 ```fluxa
 import std flxthread as ft
-```
-
-### Model
-
-```
-Thread A (main)          Thread B (t1 — e1.update)
-─────────────────        ─────────────────────────
-ft.new("t1", e1, "update")
-                         while health > 0 {
-                             health = health - 1
-ft.message("t1","hit",10)── → mailbox enqueued
-                             time.sleep(16)
-                         }  ← back-edge: drain mailbox
-                             ↳ hit(10) called on e1
-int hp = ft.await("t1","get_health")
-                         ← get_health() called, reply sent
-         ← hp received
-ft.resolve_all()         thread finishes
-                         ← joined
 ```
 
 ### Function reference
@@ -795,7 +513,7 @@ ft.resolve_all()         thread finishes
 |---|---|---|
 | `ft.new("name", fn_str)` | No | Spawn global function as thread |
 | `ft.new("name", instance, "method")` | No | Spawn Block method as thread |
-| `ft.resolve_all()` | Yes | Wait for all threads to finish. Syncs prst pool to main runtime. |
+| `ft.resolve_all()` | Yes | Wait for all threads. Syncs prst pool. |
 | `ft.active("name")` | No | True if thread is still running |
 | `ft.thread_count()` | No | Number of active threads |
 
@@ -803,83 +521,26 @@ ft.resolve_all()         thread finishes
 
 | Function | Blocking? | Description |
 |---|---|---|
-| `ft.message("name", "method")` | No | Enqueue method call. Thread drains at back-edge. |
+| `ft.message("name", "method")` | No | Enqueue method call |
 | `ft.message("name", "method", arg)` | No | Same, with one argument |
-| `ft.await("name", "method")` | Yes | Enqueue + wait for return value |
+| `ft.await("name", "method")` | Yes | Enqueue + wait for return |
 | `ft.await("name", "method", arg)` | Yes | Same, with one argument |
 
 **Stop control:**
 
 | Function | Description |
 |---|---|
-| `ft.stop("name")` | Request cooperative stop. Thread exits at next back-edge. |
-| `ft.kill("name")` | Force stop. Marks thread dead immediately. Pending `ft.await` calls return nil. **WARNING:** `ft.lock()` mutexes held by the killed thread are NOT released. |
-| `ft.should_stop()` | Called inside a thread. Returns true if stop was requested. Use in `while !ft.should_stop()` loops. |
+| `ft.stop("name")` | Cooperative stop. Thread exits at next back-edge. |
+| `ft.kill("name")` | Force stop. WARNING: held `ft.lock()` mutexes NOT released. |
+| `ft.should_stop()` | True if stop was requested. Use in `while !ft.should_stop()`. |
 
 **Shared state:**
 
 | Function | Description |
 |---|---|
-| `ft.lock("var_name")` | Register a prst global var with a mutex. All accesses from any thread are automatically serialized. Only meaningful for prst global scope — Block prst is isolated by design. |
+| `ft.lock("var_name")` | Serialize access to a prst var. Main scope only — Block prst is isolated by design. |
 
-### Stop patterns
-
-```fluxa
-// ft.stop — cooperative. Thread exits at next while back-edge.
-ft.stop("t1")
-ft.resolve_all()
-
-// ft.should_stop — idiomatic for clean shutdown with resource cleanup.
-Block Worker {
-    fn run() nil {
-        while !ft.should_stop() {
-            process()
-            time.sleep(10)
-        }
-        cleanup()   // always runs before thread dies
-        print("shutdown complete")
-    }
-}
-
-// ft.kill — forced. Use when ft.stop would never be observed.
-ft.kill("t1")       // marks dead immediately
-// do NOT call ft.resolve_all() after ft.kill on that thread
-
-// ft.stop + timeout → ft.kill pattern (graceful first, force fallback)
-ft.stop("t1")
-time.sleep(500)
-if ft.active("t1") {
-    ft.kill("t1")
-}
-```
-
-### When to use global fn threads vs Block method threads
-
-| Use case | Recommended | Reason |
-|---|---|---|
-| Simple work, no loops | Global fn thread | Less boilerplate |
-| Loops that mutate prst | **Block method thread** | Block scope isolates vars correctly |
-| Mailbox / `ft.await` | Block method thread | Methods needed for dispatch |
-| `ft.stop` / `ft.should_stop` | Either | Both patterns supported |
-
-> **Implementation note:** `while` loops compile to the bytecode VM, which
-> accesses prst variables by name via scope — independent of stack slot
-> assignments. Local fn variables (`int i`) use stack slots that overlap with
-> global prst slots in the resolver numbering, but this does not cause
-> aliasing because the VM separates the two lookups. For prst + loop patterns,
-> Block method threads are the idiomatic choice in Fluxa.
-
-### Decision table
-
-| Scenario | Use | Why |
-|---|---|---|
-| Loop with `time.sleep` | `ft.stop()` | Thread observes stop at next back-edge |
-| Hot loop, no sleep | `ft.stop()` | Back-edge runs every iteration, stops fast |
-| Thread stuck in long operation | `ft.kill()` | `ft.stop()` won't be observed |
-| Holding `ft.lock()` | `ft.stop()` + timeout → `ft.kill()` | Avoid leaving mutex inconsistent |
-| Application shutdown | `ft.stop()` all → `ft.kill()` remaining | Graceful first |
-
-### Full example (from the design spec)
+### Full example
 
 ```fluxa
 import std flxthread as ft
@@ -924,281 +585,106 @@ ft.resolve_all()
 print(contador)
 ```
 
-### Notes
-
-- `ft.message` and `ft.await` map to **real declared methods** on the Block. If the method doesn't exist, it's a runtime error.
-- Each thread gets its own `Runtime` clone — stack and scope are fully isolated. `prst` global vars are shared via the prst pool and synced on every `NODE_ASSIGN`.
-- Mailbox drain happens at the **while back-edge** — the same safe point used by the GC. Fast path: O(1) when no messages.
-- `ft.resolve_all()` syncs the prst pool back to the main runtime's stack after all threads finish.
-
 ---
-
-## Buffer Configuration Reference
-
-All limits are configurable in `fluxa.toml`. Defaults are conservative and safe for embedded targets.
-
-```toml
-[libs.csv]
-max_line_bytes = 1024   # bytes per line — increase for wide CSVs
-max_fields     = 64     # fields per row — used by csv.field internally
-
-[libs.json]
-max_str_bytes  = 4096   # max size of a JSON str value or loaded file
-
-[ffi]
-str_buf_size   = 1024   # writable char* buffer allocated per pointer arg (default 1024)
-                        # range: 64–65536. Applies to all char* output params in FFI calls.
-```
-
-**RP2040 recommended (264 KB SRAM):**
-```toml
-[libs.csv]
-max_line_bytes = 256
-max_fields     = 16
-
-[libs.json]
-max_str_bytes  = 512
-
-[ffi]
-str_buf_size   = 64
-```
-
-**ESP32 recommended (520 KB SRAM):**
-```toml
-[libs.csv]
-max_line_bytes = 512
-max_fields     = 32
-
-[libs.json]
-max_str_bytes  = 2048
-
-[ffi]
-str_buf_size   = 512
-```
-
----
-
-## What Is Not Supported (v1.0)
-
-**std.csv:**
-- Multiline fields (quoted fields spanning multiple lines)
-- Automatic type detection (all fields are `str` — convert manually)
-- Streaming iterator with random access
-- Encoding beyond ASCII/UTF-8 passthrough
-
-Quoted fields with embedded commas (`"hello, world"`) and escaped quotes (`"say ""hello"""`) **are supported** via the FSM parser in `csv.field`.
-
-**std.strings:**
-- Unicode-aware indexing (all operations work on bytes, not codepoints)
-- Regex pattern matching (coming in `std.regex`)
-- `trim_left` / `trim_right` (use `strings.trim` for both sides)
-- `replace_first` (use `strings.find` + `strings.slice` + string concatenation)
-- `pad_left` / `pad_right`
-
-**std.json:**
-- Deeply nested object construction (flatten before building)
-- JSON path expressions (`json.get("a.b.c")`)
-- Number formatting control (uses `%g` internally)
-- Unicode escape sequences in strings (`\uXXXX`)
-- In-place mutation of JSON objects (always returns new `str`)
-
-These limitations are intentional — the goal is predictable memory use on embedded hardware, not feature parity with desktop JSON/CSV libraries.
 
 ## std.crypto
 
-**Sprint 12.a** — Cryptographic primitives via libsodium 1.0.18+. All functions follow the standard error model: errors abort outside `danger`, are captured in `err[]` inside `danger`. Key material is stored in `int arr` (each byte as `VAL_INT [0..255]`), so `prst int arr key` survives hot reloads.
-
-**Dependency:** libsodium must be installed (`apt install libsodium-dev` or equivalent). Auto-detected via `pkg-config`.
+Cryptographic primitives via libsodium 1.0.18+. Dep: `apt install libsodium-dev`.
 
 ```toml
 [libs]
 std.crypto = "1.0"
 ```
 
-```fluxa
-import std crypto
-```
-
-### Hash
+Key material is stored in `int arr` (each byte as `VAL_INT [0..255]`) — `prst int arr key` survives hot reloads.
 
 | Function | Signature | Description |
 |---|---|---|
-| `hash` | `hash(data: str\|arr) → dyn[32]` | BLAKE2b-256 hash. No secret key. Deterministic. |
-| `to_hex` | `to_hex(arr) → str` | Encode byte arr as lowercase hex string. |
-| `from_hex` | `from_hex(str) → dyn` | Decode hex string to byte arr. Error on invalid hex. |
-
-### Symmetric Encryption (XSalsa20-Poly1305)
-
-| Function | Signature | Description |
-|---|---|---|
-| `keygen` | `keygen() → dyn[32]` | Random 32-byte symmetric key. Use with `encrypt`/`decrypt`. |
-| `nonce` | `nonce() → dyn[24]` | Random 24-byte nonce. **Generate fresh per message.** |
-| `encrypt` | `encrypt(msg, key, nonce) → dyn` | Authenticated encryption. Output = 16-byte MAC + ciphertext. |
-| `decrypt` | `decrypt(cipher, key, nonce) → str` | Verify MAC then decrypt. Fails on authentication error. |
-
-### Signing (Ed25519)
-
-| Function | Signature | Description |
-|---|---|---|
-| `sign_keygen` | `sign_keygen(pk: int arr[32], sk: int arr[64]) → nil` | Generate Ed25519 keypair. Writes into existing arr args. |
-| `sign` | `sign(msg, sk) → dyn` | Sign message. Output = 64-byte signature + message. |
-| `sign_open` | `sign_open(signed, pk) → str` | Verify signature and extract message. Fails on invalid sig. |
-
-### Key Exchange (Curve25519)
-
-| Function | Signature | Description |
-|---|---|---|
-| `kx_keygen` | `kx_keygen(pk: int arr[32], sk: int arr[32]) → nil` | Curve25519 keypair for key exchange. |
-| `kx_client` | `kx_client(rx, tx, cpk, csk, spk) → nil` | Client-side session keys. rx/tx: int arr[32]. |
-| `kx_server` | `kx_server(rx, tx, spk, ssk, cpk) → nil` | Server-side session keys. rx/tx: int arr[32]. |
-
-### Utilities
-
-| Function | Signature | Description |
-|---|---|---|
-| `compare` | `compare(a, b) → bool` | Constant-time comparison. Safe against timing attacks. |
-| `wipe` | `wipe(arr) → nil` | Securely zero arr in place. Compiler-barrier safe. |
-| `version` | `version() → str` | libsodium version string. |
-
-### Example — Encrypt/Decrypt
+| `hash` | `hash(data: str\|arr) → dyn[32]` | BLAKE2b-256 |
+| `to_hex` | `to_hex(arr) → str` | Encode as lowercase hex |
+| `from_hex` | `from_hex(str) → dyn` | Decode hex to byte arr |
+| `keygen` | `keygen() → dyn[32]` | Random 32-byte symmetric key |
+| `nonce` | `nonce() → dyn[24]` | Random 24-byte nonce |
+| `encrypt` | `encrypt(msg, key, nonce) → dyn` | XSalsa20-Poly1305 authenticated encryption |
+| `decrypt` | `decrypt(cipher, key, nonce) → str` | Verify MAC then decrypt |
+| `sign_keygen` | `sign_keygen(pk: int arr[32], sk: int arr[64]) → nil` | Ed25519 keypair |
+| `sign` | `sign(msg, sk) → dyn` | Sign message |
+| `sign_open` | `sign_open(signed, pk) → str` | Verify + extract |
+| `kx_keygen` | `kx_keygen(pk: int arr[32], sk: int arr[32]) → nil` | Curve25519 keypair |
+| `kx_client` | `kx_client(rx, tx, cpk, csk, spk) → nil` | Client session keys |
+| `kx_server` | `kx_server(rx, tx, spk, ssk, cpk) → nil` | Server session keys |
+| `compare` | `compare(a, b) → bool` | Constant-time comparison |
+| `wipe` | `wipe(arr) → nil` | Securely zero arr |
+| `version` | `version() → str` | libsodium version |
 
 ```fluxa
 import std crypto
 
-// Key generation — store as prst to survive reloads
 prst dyn session_key = crypto.keygen()
 
-// Encrypt a message
-dyn nonce  = crypto.nonce()                              // fresh nonce per message
+dyn nonce  = crypto.nonce()
 dyn cipher = crypto.encrypt("secret payload", session_key, nonce)
 
-// Decrypt
-str plain = crypto.decrypt(cipher, session_key, nonce)
-print(plain)    // secret payload
-```
-
-### Example — Ed25519 Signature
-
-```fluxa
-import std crypto
-
-// Generate keypair into pre-sized arrs
-int arr pk[32] = 0
-int arr sk[64] = 0
-crypto.sign_keygen(pk, sk)
-
-// Sign
-dyn signed = crypto.sign("data to sign", sk)
-
-// Verify and extract — fails with err if signature invalid
 danger {
-    str msg = crypto.sign_open(signed, pk)
-    print(msg)    // data to sign
+    str plain = crypto.decrypt(cipher, session_key, nonce)
+    print(plain)
 }
 ```
-
-### Example — Key Exchange (Curve25519)
-
-```fluxa
-import std crypto
-
-// Server generates keypair
-int arr spk[32] = 0; int arr ssk[32] = 0
-crypto.kx_keygen(spk, ssk)
-
-// Client generates keypair
-int arr cpk[32] = 0; int arr csk[32] = 0
-crypto.kx_keygen(cpk, csk)
-
-// Client computes session keys
-int arr crx[32] = 0; int arr ctx[32] = 0
-crypto.kx_client(crx, ctx, cpk, csk, spk)
-
-// Server computes session keys
-int arr srx[32] = 0; int arr stx[32] = 0
-crypto.kx_server(srx, stx, spk, ssk, cpk)
-
-// crx == stx and ctx == srx (symmetric session keys established)
-```
-
-### Notes
-
-- `keygen()`, `nonce()`, `sign_keygen()`, `kx_keygen()` use `randombytes_buf()` — cryptographically secure random, seeded by the OS.
-- `compare()` uses `sodium_memcmp()` — constant time regardless of input content. Use for MAC and signature comparison.
-- `wipe()` zeros the arr elements (type preserved as VAL_INT) with a compiler barrier. Call on key material after use.
-- On RP2040 with libsodium-minimal: all functions work. `randombytes` uses hardware RNG if available, otherwise system entropy.
-- `prst dyn key` survives hot reloads. The key material lives in the PrstPool and is serialized in Handover snapshots.
 
 ---
 
 ## std.pid — PID Controller
 
-Pure C99, zero external dependencies. Embedded-friendly (RP2040, ESP32).
+Pure C99, zero deps. Embedded-friendly.
 
-**Declaration:**
 ```toml
 [libs]
 std.pid = "1.0"
 ```
 
-**State:** The controller state (integral, prev_error, gains, limits) lives inside a heap-allocated struct wrapped in a `dyn` cursor. Use `prst dyn ctrl` so state survives hot reloads — this is the correct pattern for PID in a control loop.
-
-### Functions
+Use `prst dyn ctrl` in main scope to keep state across hot reloads. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `pid.new(kp, ki, kd)` | `dyn` | Create controller cursor. kp/ki/kd are float gains. |
-| `pid.compute(ctrl, setpoint, pv)` | `float` | Compute output. setpoint = desired value, pv = measured value. |
-| `pid.reset(ctrl)` | `nil` | Zero integral and prev_error. Call on mode switch or startup. |
-| `pid.set_limits(ctrl, min, max)` | `nil` | Clamp output to [min, max]. Enables anti-windup. min must be < max. |
-| `pid.set_deadband(ctrl, band)` | `nil` | Ignore errors smaller than band (treat as zero). Reduces chatter. |
-| `pid.state(ctrl)` | `dyn` | Returns [kp, ki, kd, integral, prev_error, out_min, out_max]. |
-
-**Anti-windup:** When `set_limits` is configured, `compute` back-calculates the integral when the output is clamped — preventing the integral from growing unbounded during saturation.
-
-### Example
+| `pid.new(kp, ki, kd)` | `dyn` | Create controller cursor |
+| `pid.compute(ctrl, setpoint, pv)` | `float` | Compute output |
+| `pid.reset(ctrl)` | `nil` | Zero integral and prev_error |
+| `pid.set_limits(ctrl, min, max)` | `nil` | Clamp output. Enables anti-windup. |
+| `pid.set_deadband(ctrl, band)` | `nil` | Ignore errors smaller than band |
+| `pid.state(ctrl)` | `dyn` | [kp, ki, kd, integral, prev_error, out_min, out_max] |
 
 ```fluxa
 import std pid
 
 prst dyn heater = pid.new(2.0, 0.5, 0.1)
-pid.set_limits(heater, 0.0, 100.0)    // output: 0–100% duty cycle
-pid.set_deadband(heater, 0.2)          // ignore error < 0.2°C
+pid.set_limits(heater, 0.0, 100.0)
+pid.set_deadband(heater, 0.2)
 
-float setpoint = 72.0
-float temperature = 68.5              // from sensor
-
-float duty = pid.compute(heater, setpoint, temperature)
-// → duty ≈ 7.0 (kp * 3.5 + accumulated integral)
+float duty = pid.compute(heater, 72.0, 68.5)
 ```
 
 ---
 
 ## std.sqlite — Embedded SQL
 
-SQLite 3 wrapper. Requires `libsqlite3-dev`. Works on RP2040 with filesystem support.
+SQLite 3 wrapper. Dep: `apt install libsqlite3-dev`.
 
-**Declaration:**
 ```toml
 [libs]
 std.sqlite = "1.0"
 ```
 
-**State:** DB connection is a `dyn` cursor wrapping a `sqlite3*`. Use `prst dyn db` to keep the connection open across hot reloads.
-
-### Functions
+Use `prst dyn db` in main scope to keep the connection open across hot reloads. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `sqlite.open(path)` | `dyn` | Open (or create) a SQLite database file. |
+| `sqlite.open(path)` | `dyn` | Open (or create) database file |
 | `sqlite.close(db)` | `nil` | Close connection. Double-close is a no-op. |
-| `sqlite.exec(db, sql)` | `nil` | Execute DDL or DML (CREATE, INSERT, UPDATE, DELETE). |
-| `sqlite.query(db, sql)` | `dyn` | Execute SELECT. Returns dyn of rows, each row a dyn of values. |
-| `sqlite.last_insert_id(db)` | `int` | Row ID of the last INSERT. |
-| `sqlite.changes(db)` | `int` | Rows affected by the last DML statement. |
-| `sqlite.version()` | `str` | libsqlite3 version string (e.g. "3.45.1"). |
-
-### Example
+| `sqlite.exec(db, sql)` | `nil` | DDL or DML |
+| `sqlite.query(db, sql)` | `dyn` | SELECT. Returns dyn of rows, each row a dyn. |
+| `sqlite.last_insert_id(db)` | `int` | Row ID of last INSERT |
+| `sqlite.changes(db)` | `int` | Rows affected by last DML |
+| `sqlite.version()` | `str` | libsqlite3 version |
 
 ```fluxa
 import std sqlite
@@ -1207,13 +693,12 @@ danger {
     dyn db = sqlite.open("sensors.db")
     sqlite.exec(db, "CREATE TABLE IF NOT EXISTS readings (ts INTEGER, val REAL)")
     sqlite.exec(db, "INSERT INTO readings VALUES (1700000000, 23.5)")
-
-    dyn rows = sqlite.query(db, "SELECT ts, val FROM readings ORDER BY ts DESC LIMIT 5")
+    dyn rows = sqlite.query(db, "SELECT ts, val FROM readings LIMIT 5")
     int i = 0
     while i < len(rows) {
         dyn row = rows[i]
-        print(row[0])    // ts (int)
-        print(row[1])    // val (float)
+        print(row[0])
+        print(row[1])
         i = i + 1
     }
     sqlite.close(db)
@@ -1224,467 +709,308 @@ danger {
 
 ## std.serial — UART / Serial
 
-UART communication via libserialport. Requires `libserialport-dev`. Fundamental for RP2040/ESP32 debug and device communication.
+UART via libserialport. Dep: `apt install libserialport-dev`.
 
-**Declaration:**
 ```toml
 [libs]
 std.serial = "1.0"
 ```
 
-**State:** Port cursor wraps an `sp_port*`. Use `prst dyn port` to keep the port open across hot reloads.
-
-### Functions
+Use `prst dyn port` in main scope. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `serial.list()` | `dyn` | List available port names as strings (e.g. ["/dev/ttyUSB0"]). |
-| `serial.open(port, baud)` | `dyn` | Open port at given baud rate. 8N1 by default. |
-| `serial.close(port)` | `nil` | Close port. Double-close is a no-op. |
-| `serial.write(port, data)` | `int` | Write string to port. Returns bytes written. |
-| `serial.read(port, max_bytes, timeout_ms)` | `str` | Read up to max_bytes with timeout. Returns what arrived. |
+| `serial.list()` | `dyn` | List available port names |
+| `serial.open(port, baud)` | `dyn` | Open port at baud rate. 8N1 default. |
+| `serial.close(port)` | `nil` | Close. Double-close is a no-op. |
+| `serial.write(port, data)` | `int` | Write string. Returns bytes written. |
+| `serial.read(port, max_bytes, timeout_ms)` | `str` | Read up to max_bytes with timeout. |
 | `serial.readline(port, timeout_ms)` | `str` | Read until `\n` or timeout. |
-| `serial.flush(port)` | `nil` | Flush TX and RX buffers. |
-| `serial.bytes_available(port)` | `int` | Bytes waiting in RX buffer (non-blocking). |
-
-### Example
-
-```fluxa
-import std serial
-
-prst dyn port = serial.list()    // list on first load
-
-danger {
-    dyn p = serial.open("/dev/ttyUSB0", 115200)
-    serial.write(p, "AT\r\n")
-    str resp = serial.readline(p, 500)
-    print(resp)
-    serial.close(p)
-}
-```
+| `serial.flush(port)` | `nil` | Flush TX/RX buffers. |
+| `serial.bytes_available(port)` | `int` | Bytes in RX buffer (non-blocking). |
 
 ---
 
 ## std.i2c — I2C Protocol
 
-I2C via Linux i2c-dev kernel interface. No external library required — i2c-dev is part of the Linux kernel. For RP2040: use PICO_SDK `hardware_i2c` directly (i2c-dev is Linux-only; the lib returns a clear error on non-Linux).
+I2C via Linux i2c-dev. No external library required. RP2040: use PICO_SDK directly (i2c-dev is Linux-only).
 
-**Declaration:**
 ```toml
 [libs]
 std.i2c = "1.0"
 ```
 
-**State:** Bus cursor wraps an `I2cBus` struct (fd + addr). Use `prst dyn bus` to keep the handle open across hot reloads.
-
-### Functions
+Use `prst dyn bus` in main scope. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `i2c.open(device, addr)` | `dyn` | Open I2C bus and set slave address. e.g. `i2c.open("/dev/i2c-1", 72)` |
-| `i2c.close(bus)` | `nil` | Close bus handle. Double-close is a no-op. |
-| `i2c.write(bus, data)` | `int` | Write int arr bytes to device. Returns bytes written. |
-| `i2c.read(bus, nbytes)` | `dyn` | Read nbytes. Returns dyn of int (each element 0–255). |
+| `i2c.open(device, addr)` | `dyn` | Open I2C bus and set slave address |
+| `i2c.close(bus)` | `nil` | Close. Double-close is a no-op. |
+| `i2c.write(bus, data)` | `int` | Write int arr bytes. Returns bytes written. |
+| `i2c.read(bus, nbytes)` | `dyn` | Read nbytes. Returns dyn of int (0–255). |
 | `i2c.write_reg(bus, reg, value)` | `nil` | Write single byte to register. |
 | `i2c.read_reg(bus, reg)` | `int` | Read single byte from register. |
-| `i2c.read_reg16(bus, reg)` | `int` | Read 16-bit big-endian value from register (common for sensors). |
-| `i2c.scan(device)` | `dyn` | Scan bus for responding addresses. Returns dyn of int addresses. |
+| `i2c.read_reg16(bus, reg)` | `int` | Read 16-bit big-endian from register. |
+| `i2c.scan(device)` | `dyn` | Scan bus. Returns dyn of int addresses. |
 
-**Note:** I2C addresses in Fluxa are plain integers. `0x48` in C = `72` in Fluxa (no hex literal support).
-
-### Example
-
-```fluxa
-import std i2c
-
-// ADS1115 ADC at address 72 (0x48) on /dev/i2c-1
-prst dyn adc = i2c.open("/dev/i2c-1", 72)
-
-danger {
-    // Read conversion register (register 0)
-    int raw = i2c.read_reg16(adc, 0)
-    float voltage = raw * 0.0001875    // ADS1115 at ±6.144V, 16-bit
-    print(voltage)
-}
-```
+**Note:** I2C addresses are plain integers. `0x48` in C = `72` in Fluxa.
 
 ---
 
 ## std.httpc — HTTP Client (libcurl)
 
-HTTP client via libcurl. Requires `libcurl-dev`. Works on Linux/macOS; embedded targets need network stack support.
+Dep: `apt install libcurl-dev`. All requests require `danger {}`.
 
-**Declaration:**
 ```toml
 [libs]
 std.httpc = "1.0"
 ```
 
-All requests must be inside `danger {}` — network I/O can fail for external reasons.
-
-### Functions
-
 | Function | Returns | Description |
 |---|---|---|
-| `httpc.get(url)` | `dyn` | HTTP GET. Returns response dyn. |
-| `httpc.post(url, body)` | `dyn` | HTTP POST with form-encoded body. |
-| `httpc.post_json(url, json)` | `dyn` | HTTP POST with `Content-Type: application/json`. |
-| `httpc.put(url, body)` | `dyn` | HTTP PUT. |
-| `httpc.delete(url)` | `dyn` | HTTP DELETE. |
-| `httpc.status(resp)` | `int` | HTTP status code (200, 404, ...). |
-| `httpc.body(resp)` | `str` | Response body as string. |
-| `httpc.ok(resp)` | `bool` | True if status 200–299. |
+| `httpc.get(url)` | `dyn` | HTTP GET |
+| `httpc.post(url, body)` | `dyn` | HTTP POST |
+| `httpc.post_json(url, json)` | `dyn` | POST with `Content-Type: application/json` |
+| `httpc.put(url, body)` | `dyn` | HTTP PUT |
+| `httpc.delete(url)` | `dyn` | HTTP DELETE |
+| `httpc.status(resp)` | `int` | HTTP status code |
+| `httpc.body(resp)` | `str` | Response body |
+| `httpc.ok(resp)` | `bool` | True if status 200–299 |
 
-Response dyn layout: `[status:int, body:str, ok:bool]`.
+---
 
-### Example
+## std.https — HTTPS Client (TLS enforced)
 
-```fluxa
-import std httpc
+Same API as `std.httpc`. Rejects plain `http://` URLs. Verifies server certificate and hostname.
 
-danger {
-    dyn r = httpc.get("https://api.example.com/data")
-    if httpc.ok(r) {
-        str data = httpc.body(r)
-        print(data)
-    }
-}
+```toml
+[libs]
+std.https = "1.0"
 ```
 
 ---
 
 ## std.mqtt — MQTT Client
 
-MQTT publish/subscribe via libmosquitto. Requires `libmosquitto-dev`. Fundamental for IoT sensor telemetry and device control.
+Dep: `apt install libmosquitto-dev`. Use `prst dyn client` in main scope. **Never as a Block field.**
 
-**Declaration:**
 ```toml
 [libs]
 std.mqtt = "1.0"
 ```
 
-**State:** Connection cursor wraps a `mosquitto*`. Use `prst dyn client` to keep the connection alive across hot reloads.
-
-### Functions
-
 | Function | Returns | Description |
 |---|---|---|
-| `mqtt.connect(host, port, client_id)` | `dyn` | Connect to broker. |
-| `mqtt.connect_auth(host, port, id, user, pass)` | `dyn` | Connect with credentials. |
-| `mqtt.disconnect(cursor)` | `nil` | Disconnect and free. Double-disconnect is a no-op. |
-| `mqtt.publish(cursor, topic, payload)` | `nil` | Publish QoS 0. |
-| `mqtt.publish_qos(cursor, topic, payload, qos)` | `nil` | Publish with QoS 0/1/2. |
-| `mqtt.subscribe(cursor, topic)` | `nil` | Subscribe QoS 0. |
-| `mqtt.subscribe_qos(cursor, topic, qos)` | `nil` | Subscribe with QoS 0/1/2. |
-| `mqtt.loop(cursor, timeout_ms)` | `nil` | Process one event (call in sensor loop). |
-| `mqtt.connected(cursor)` | `bool` | True if connection is active. |
-
-### Example
-
-```fluxa
-import std mqtt
-
-prst dyn broker = mqtt.connect("mqtt.example.com", 1883, "sensor-01")
-
-danger {
-    if mqtt.connected(broker) {
-        mqtt.publish(broker, "sensors/temp", "23.5")
-        mqtt.loop(broker, 10)
-    }
-}
-```
+| `mqtt.connect(host, port, client_id)` | `dyn` | Connect to broker |
+| `mqtt.connect_auth(host, port, id, user, pass)` | `dyn` | Connect with credentials |
+| `mqtt.disconnect(cursor)` | `nil` | Disconnect and free |
+| `mqtt.publish(cursor, topic, payload)` | `nil` | Publish QoS 0 |
+| `mqtt.publish_qos(cursor, topic, payload, qos)` | `nil` | Publish with QoS |
+| `mqtt.subscribe(cursor, topic)` | `nil` | Subscribe QoS 0 |
+| `mqtt.subscribe_qos(cursor, topic, qos)` | `nil` | Subscribe with QoS |
+| `mqtt.loop(cursor, timeout_ms)` | `nil` | Process one event |
+| `mqtt.connected(cursor)` | `bool` | True if connection active |
 
 ---
 
 ## std.mcpc — MCP Client
 
-MCP client for calling AI tool servers (Claude, filesystem, databases). Uses JSON-RPC 2.0 over HTTP POST. Requires `libcurl-dev`.
+MCP client over HTTP POST. Dep: `apt install libcurl-dev`.
 
-**Declaration:**
 ```toml
 [libs]
 std.mcpc = "1.0"
 ```
 
-**State:** Server cursor is lazy — `connect` doesn't open a TCP connection, it just stores the URL. Use `prst dyn server` to keep the cursor across hot reloads.
-
-### Functions
+Use `prst dyn server` in main scope. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `mcpc.connect(url)` | `dyn` | Create cursor for MCP server at url. |
-| `mcpc.connect_auth(url, token)` | `dyn` | Create cursor with Bearer token auth. |
-| `mcpc.list_tools(cursor)` | `dyn` | List tool names as `dyn` of `str`. |
-| `mcpc.call(cursor, tool, args_json)` | `str` | Call tool, return full JSON result. |
-| `mcpc.call_text(cursor, tool, args_json)` | `str` | Call tool, return text content only. |
-| `mcpc.disconnect(cursor)` | `nil` | Free cursor resources. |
-
-### Example
-
-```fluxa
-import std mcpc
-
-prst dyn claude = mcpc.connect("http://localhost:3000")
-
-danger {
-    dyn tools = mcpc.list_tools(claude)
-    int i = 0
-    while i < len(tools) {
-        print(tools[i])
-        i = i + 1
-    }
-    str result = mcpc.call_text(claude, "read_file", "{\"path\":\"/etc/hostname\"}")
-    print(result)
-}
-```
-
----
-
-## std.libv — Vectors, Matrices, Tensors
-
-Pure C99, zero external dependencies. GLM-inspired API. Works on RP2040 and ESP32.
-
-All storage is backed by `float arr` or `int arr` — no new types introduced. Operations add shape semantics on top of existing Fluxa arrays. Col-major storage (same as GLSL/OpenGL). In-place operations by default.
-
-**Declaration:**
-```toml
-[libs]
-std.libv = "1.0"
-```
-
-### Initializers
-
-| Expression | Size | Description |
-|---|---|---|
-| `libv.vec2` | 2 | 2D float vector, zeros |
-| `libv.vec3` | 3 | 3D float vector, zeros |
-| `libv.vec4` | 4 | 4D / RGBA float vector, zeros |
-| `libv.ivec2` | 2 | 2D int vector, zeros |
-| `libv.ivec3` | 3 | 3D int vector, zeros |
-| `libv.mat2` | 4 | 2×2 identity matrix |
-| `libv.mat3` | 9 | 3×3 identity matrix |
-| `libv.mat4` | 16 | 4×4 identity matrix (shader standard) |
-| `libv.vec(n)` | n | N-vector, zeros |
-| `libv.mat(r, c)` | r×c | r×c matrix, zeros |
-| `libv.tens(d0, d1, ...)` | d0×d1×... | N-dimensional tensor, zeros |
-
-### Vector operations
-
-All modify the first argument **in-place** unless the operation inherently returns a scalar.
-
-| Function | Returns | Description |
-|---|---|---|
-| `libv.add(a, b)` | `nil` | a = a + b |
-| `libv.sub(a, b)` | `nil` | a = a − b |
-| `libv.scale(a, s)` | `nil` | a = a × scalar |
-| `libv.negate(a)` | `nil` | a = −a |
-| `libv.normalize(a)` | `nil` | a = a / ‖a‖ |
-| `libv.lerp(a, b, t)` | `nil` | a = mix(a, b, t) |
-| `libv.cross(out, a, b)` | `nil` | out = a × b (vec3 only, caller allocates out) |
-| `libv.dot(a, b)` | `float` | dot product |
-| `libv.norm(a)` | `float` | Euclidean length |
-| `libv.angle(a, b)` | `float` | angle in radians |
-| `libv.eq(a, b)` | `bool` | element-wise equality (ε = 1e-6) |
-| `libv.shape(a)` | `int` | element count |
-| `libv.fill(a, v)` | `nil` | set all elements to scalar v |
-| `libv.copy(dst, src)` | `nil` | copy src into dst |
-
-Shape mismatch produces a runtime error:
-```
-libv.add (line 5): shape mismatch (3 != 4)
-```
-
-### Matrix operations
-
-| Function | Returns | Description |
-|---|---|---|
-| `libv.identity(m)` | `nil` | reset to identity in-place |
-| `libv.transpose(m)` | `nil` | in-place (square matrices) |
-| `libv.matmul(out, a, b)` | `nil` | out = a × b (caller allocates out) |
-| `libv.det(m)` | `float` | determinant (2×2, 3×3, 4×4) |
-| `libv.inverse(out, m)` | `nil` | out = m⁻¹ (2×2 only; higher dims in std.libdsp) |
-
-### 3D transform helpers (shader / Raylib workflow)
-
-All write into the matrix `m` in-place (mat4 required).
-
-| Function | Description |
-|---|---|
-| `libv.translate(m, tx, ty, tz)` | apply translation |
-| `libv.rotate(m, angle_rad, ax, ay, az)` | rotate around axis |
-| `libv.scale_mat(m, sx, sy, sz)` | apply scale |
-| `libv.perspective(m, fov_rad, aspect, near, far)` | perspective projection |
-| `libv.ortho(m, left, right, bottom, top, near, far)` | orthographic projection |
-| `libv.lookat(m, eye, center, up)` | view matrix (eye/center/up are vec3) |
-
-### Tensor operations
-
-| Function | Returns | Description |
-|---|---|---|
-| `libv.tens_add(t, t2)` | `nil` | element-wise add in-place |
-| `libv.tens_scale(t, s)` | `nil` | scalar multiply in-place |
-| `libv.tens_slice(out, t, idx)` | `nil` | extract slice along first axis |
-
-### Example
-
-```fluxa
-import std libv
-
-// 3D transform pipeline
-float arr model[16] = libv.mat4
-float arr view[16]  = libv.mat4
-float arr proj[16]  = libv.mat4
-
-libv.translate(model, 1.0, 0.0, 0.0)
-libv.rotate(model, 0.785, 0.0, 1.0, 0.0)   // 45 degrees around Y
-
-float arr eye[3]    = libv.vec3
-float arr center[3] = libv.vec3
-float arr up[3]     = libv.vec3
-libv.fill(eye, 0.0)
-eye[2] = 5.0          // camera at z=5
-libv.lookat(view, eye, center, up)
-
-libv.perspective(proj, 1.047, 1.777, 0.1, 100.0)  // 60 deg FOV, 16:9
-
-// Dot product
-float arr a[3] = libv.vec3
-float arr b[3] = libv.vec3
-a[0] = 1.0; b[0] = 0.5; b[1] = 0.5
-float d = libv.dot(a, b)
-
-// PID weights as prst tensor (survives hot reloads)
-prst float arr weights[27] = libv.tens(3, 3, 3)
-```
-
-### Notes
-
-- `mat2/mat3/mat4` initialize to the **identity matrix**. All other initializers produce zeros.
-- Storage is flat col-major: `mat4[col*4 + row]`.
-- `prst float arr` works exactly like any other `prst arr` — flat storage serializes through handover.
-- `libv.inverse` supports only 2×2 currently. Full 3×3/4×4 inverse (LU decomposition) will be in `std.libdsp`.
-
----
-
-## std.libdsp — DSP and Radar Math
-
-Pure C99, zero external deps. Requires `std.libv` (uses float arr as storage).
-FFT: Cooley-Tukey in-place, power-of-2 sizes only.
-
-**Declaration:**
-```toml
-[libs]
-std.libv   = "1.0"   # required
-std.libdsp = "1.0"
-```
-
-**Interleaved complex layout:** `[re0, im0, re1, im1, ...]` — a 1024-point FFT needs `float arr[2048]`. Use `dsp.zeros(s)` to set imaginary parts to 0 when loading real data.
-
-### Functions
-
-| Function | Returns | Description |
-|---|---|---|
-| `dsp.fft(signal)` | `nil` | Forward FFT in-place. Size must be power-of-2 × 2. |
-| `dsp.ifft(signal)` | `nil` | Inverse FFT in-place (normalized by N). |
-| `dsp.zeros(signal)` | `nil` | Zero imaginary parts (load real signal into complex arr). |
-| `dsp.window(signal, type)` | `nil` | Apply window: `"hann"`, `"hamming"`, `"blackman"`, `"rect"`. |
-| `dsp.power(psd, signal)` | `nil` | Power spectrum: `psd[i] = re²+im²`. |
-| `dsp.magnitude(mag, signal)` | `nil` | Magnitude: `mag[i] = sqrt(re²+im²)`. |
-| `dsp.phase(ph, signal)` | `nil` | Phase: `ph[i] = atan2(im, re)`. |
-| `dsp.fir(signal, h)` | `nil` | FIR filter (linear convolution with coefficients h). |
-| `dsp.iir(signal, b, a)` | `nil` | IIR filter direct form II (b=numerator, a=denominator). |
-| `dsp.matched_filter(signal, tmpl)` | `nil` | Cross-correlation with template. |
-| `dsp.stft(out, signal, win_size, hop)` | `nil` | Short-time Fourier Transform. |
-| `dsp.range_doppler(rd, signal, nrng, ndop)` | `nil` | 2D FFT range-Doppler map. |
-| `dsp.cfar(det, rd, guard, ref, threshold)` | `nil` | Cell-Averaging CFAR detector. |
-| `dsp.peak(signal)` | `int` | Index of maximum magnitude bin. |
-| `dsp.snr(signal, noise_floor)` | `float` | SNR in dB: `10 × log10(peak_power / noise_floor)`. |
-| `dsp.normalize(signal)` | `nil` | Scale signal so max absolute value = 1.0. |
-
-### Example — FFT of a tone
-
-```fluxa
-import std libv
-import std libdsp
-
-int N = 1024
-float arr signal[2048] = libv.vec(2048)  // N complex samples
-
-// Load real tone at bin 16 (interleaved: re at even indices)
-int i = 0
-while i < N {
-    signal[i * 2] = math.cos(2.0 * 3.14159 * 16.0 * i / N)
-    i = i + 1
-}
-
-dsp.window(signal, "hann")
-dsp.fft(signal)
-
-float arr psd[1024] = libv.vec(1024)
-dsp.power(psd, signal)
-
-int bin = dsp.peak(psd)
-print(bin)    // → 16
-
-float snr = dsp.snr(psd, 0.01)
-print(snr)    // → ~40 dB
-```
-
-### Example — CFAR radar detection
-
-```fluxa
-import std libv
-import std libdsp
-
-// 64-range × 16-Doppler map (power values)
-float arr rd[1024] = libv.vec(1024)
-int arr  det[1024] = libv.vec(1024)
-
-// ... fill rd with radar returns ...
-// Strong target at range bin 32
-rd[32] = 500.0
-
-dsp.cfar(det, rd, 2, 4, 6.0)   // guard=2, ref=4, threshold=6×noise
-// det[32] = 1 (detected), others = 0
-```
-
----
-
-## std.https — HTTPS Client (libcurl, TLS enforced)
-
-Identical API to `std.httpc` but enforces TLS on every request. Rejects plain `http://` URLs at runtime with a clear error. Verifies server certificate and hostname (`CURLOPT_SSL_VERIFYPEER=1`, `CURLOPT_SSL_VERIFYHOST=2`).
-
-```toml
-[libs]
-std.https = "1.0"   # requires: libcurl with TLS support
-```
-
-Functions: same as `std.httpc` — `get`, `post`, `post_json`, `put`, `delete`, `status`, `body`, `ok`.
+| `mcpc.connect(url)` | `dyn` | Create cursor for MCP server |
+| `mcpc.connect_auth(url, token)` | `dyn` | Create with Bearer token auth |
+| `mcpc.list_tools(cursor)` | `dyn` | List tool names |
+| `mcpc.call(cursor, tool, args_json)` | `str` | Call tool, return full JSON |
+| `mcpc.call_text(cursor, tool, args_json)` | `str` | Call tool, return text only |
+| `mcpc.disconnect(cursor)` | `nil` | Free cursor resources |
 
 ---
 
 ## std.mcps — MCP Client over HTTPS
 
-Identical API to `std.mcpc` but forces TLS on all requests. Use for production MCP endpoints.
+Identical API to `std.mcpc` but forces TLS on all requests.
 
 ```toml
 [libs]
-std.mcps = "1.0"   # requires: libcurl with TLS support
+std.mcps = "1.0"
 ```
 
-Functions: same as `std.mcpc` — `connect`, `connect_auth`, `list_tools`, `call`, `call_text`, `disconnect`.
+---
+
+## std.websocket — WebSocket Client
+
+Two backends: pure C99 RFC 6455 (default, `ws://` only) or libwebsockets (`make FLUXA_WS_LWS=1`, adds `wss://`).
+
+```toml
+[libs]
+std.websocket = "1.0"
+```
+
+Use `prst dyn conn` in main scope. **Never as a Block field.**
+
+| Function | Returns | Description |
+|---|---|---|
+| `ws.connect(url)` | `dyn` | Connect to `ws://` |
+| `ws.connect_tls(url)` | `dyn` | Force TLS (requires libwebsockets build) |
+| `ws.send(conn, msg)` | `nil` | Send text frame |
+| `ws.send_bin(conn, data)` | `nil` | Send binary frame |
+| `ws.recv(conn, timeout_ms)` | `str` | Next message, `""` on timeout |
+| `ws.poll(conn)` | `bool` | Message ready without blocking |
+| `ws.close(conn)` | `nil` | Close connection |
+| `ws.connected(conn)` | `bool` | Connection status |
+| `ws.url(conn)` | `str` | Original URL |
+| `ws.version()` | `str` | Backend version |
+
+---
+
+## std.http — HTTP Server + Client (mongoose 7.21)
+
+Mongoose-backed. Embedded-friendly — runs on RP2040 Wi-Fi and ESP32. Uses `dyn` cursors (mongoose lifecycle model).
+
+```toml
+[libs]
+std.http = "1.0"
+```
+
+**Server:**
+
+| Function | Returns | Description |
+|---|---|---|
+| `http.serve(port)` | `dyn` | Start HTTP server |
+| `http.serve_tls(port, cert, key)` | `dyn` | HTTPS server |
+| `http.poll(server, timeout_ms)` | `dyn\|nil` | Wait for next request |
+| `http.req_method(req)` | `str` | `"GET"`, `"POST"`, etc. |
+| `http.req_path(req)` | `str` | Request URI path |
+| `http.req_body(req)` | `str` | Request body |
+| `http.req_header(req, name)` | `str` | Header value |
+| `http.reply(req, status, body)` | `nil` | Send response |
+| `http.reply_json(req, status, json)` | `nil` | Send JSON response |
+| `http.stop(server)` | `nil` | Stop server |
+
+**Client:**
+
+| Function | Returns | Description |
+|---|---|---|
+| `http.get(url)` | `dyn` | HTTP GET |
+| `http.post(url, body)` | `dyn` | HTTP POST |
+| `http.post_json(url, json)` | `dyn` | POST with JSON content-type |
+| `http.put(url, body)` | `dyn` | HTTP PUT |
+| `http.delete(url)` | `dyn` | HTTP DELETE |
+| `http.status(resp)` | `int` | HTTP status code |
+| `http.body(resp)` | `str` | Response body |
+| `http.ok(resp)` | `bool` | Status 200–299 |
+| `http.version()` | `str` | `"mongoose/7.21"` |
+
+```fluxa
+import std http
+
+danger {
+    dyn srv = http.serve(8080)
+    dyn req = http.poll(srv, 10000)
+    if req != nil {
+        str path = http.req_path(req)
+        http.reply_json(req, 200, "{\"temp\":22.5}")
+    }
+    http.stop(srv)
+}
+```
+
+---
+
+## std.mcp — Fluxa as MCP Server
+
+Exposes the Fluxa runtime as a Model Context Protocol server over HTTP. AI agents can discover and call Fluxa tools via JSON-RPC 2.0.
+
+```toml
+[libs]
+std.http = "1.0"
+std.mcp  = "1.0"
+```
+
+| Function | Returns | Description |
+|---|---|---|
+| `mcp.serve(port)` | `dyn` | Start MCP server |
+| `mcp.poll(server, ms)` | `nil` | Process one request cycle |
+| `mcp.stop(server)` | `nil` | Stop server |
+| `mcp.version()` | `str` | Server version |
+
+---
+
+## std.graph — 2D/3D Graphics
+
+Two backends: stub (default, zero deps, no-op rendering) or Raylib (`make FLUXA_GRAPH_RAYLIB=1`).
+
+```toml
+[libs]
+std.graph = "1.0"
+```
+
+Use `prst dyn win` in main scope. **Never as a Block field.**
+
+| Function | Returns | Description |
+|---|---|---|
+| `graph.init(w, h, title)` | `dyn` | Open window |
+| `graph.close(win)` | `nil` | Close window |
+| `graph.should_close(win)` | `bool` | Window close requested |
+| `graph.begin_frame(win)` | `nil` | Begin draw frame |
+| `graph.end_frame(win)` | `nil` | Present frame |
+| `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
+| `graph.fps(win)` | `int` | Current FPS |
+| `graph.set_fps(win, fps)` | `nil` | Set target FPS |
+| `graph.draw_rect(win, x, y, w, h, r, g, b)` | `nil` | Filled rectangle |
+| `graph.draw_circle(win, x, y, radius, r, g, b)` | `nil` | Filled circle |
+| `graph.draw_line(win, x1, y1, x2, y2, r, g, b)` | `nil` | Line |
+| `graph.draw_text(win, text, x, y, size, r, g, b)` | `nil` | Text |
+| `graph.key_pressed(win, key)` | `bool` | Key just pressed |
+| `graph.key_down(win, key)` | `bool` | Key held |
+| `graph.mouse_x(win)` | `int` | Mouse X |
+| `graph.mouse_y(win)` | `int` | Mouse Y |
+| `graph.mouse_pressed(win)` | `bool` | Left mouse button |
+| `graph.dt(win)` | `float` | Delta time in seconds |
+| `graph.version()` | `str` | Backend version |
+
+---
+
+## std.infer — Local LLM Inference
+
+Two backends: stub (default) or llama.cpp (`make FLUXA_INFER_LLAMA=1`).
+
+```toml
+[libs]
+std.infer = "1.0"
+```
+
+Use `prst dyn model` in main scope. **Never as a Block field.**
+
+| Function | Returns | Description |
+|---|---|---|
+| `infer.load(path)` | `dyn` | Load GGUF model |
+| `infer.generate(model, prompt)` | `str` | Generate text (256 tokens) |
+| `infer.generate_n(model, prompt, n)` | `str` | Generate max n tokens (1–4096) |
+| `infer.unload(model)` | `nil` | Free model |
+| `infer.loaded(model)` | `bool` | Load status |
+| `infer.ctx_size(model)` | `int` | Context window size |
+| `infer.model_name(model)` | `str` | Filename from path |
+| `infer.version()` | `str` | Backend version |
 
 ---
 
 ## std.zlib — Compression
 
-Wrapper over zlib (the C library behind gzip, PNG, ZIP). Critical for IoT: compress sensor data before Flash writes, reduce MQTT payloads, decompress OTA chunks.
-
-Compressed output is base64-encoded for safe `str` transport over MQTT/HTTP.
+Dep: `apt install zlib1g-dev`. Compressed output is base64-encoded for safe `str` transport.
 
 ```toml
 [libs]
-std.zlib = "1.0"   # requires: zlib1g-dev
+std.zlib = "1.0"
 ```
 
 | Function | Returns | Description |
@@ -1696,24 +1022,13 @@ std.zlib = "1.0"   # requires: zlib1g-dev
 | `zlib.crc32(data)` | `int` | CRC-32 checksum |
 | `zlib.adler32(data)` | `int` | Adler-32 checksum |
 | `zlib.ratio(orig, comp)` | `float` | Compression ratio |
-| `zlib.version()` | `str` | zlib version string |
-
-```fluxa
-import std zlib
-
-str data = "sensor:temp:22.5,humidity:60,pressure:1013"
-str comp = zlib.compress(data)          // deflate + base64
-str back = zlib.decompress(comp)        // back to original
-
-int crc  = zlib.crc32(data)             // integrity check
-float ratio = zlib.ratio(len(data), len(comp))
-```
+| `zlib.version()` | `str` | zlib version |
 
 ---
 
 ## std.fs — Filesystem
 
-POSIX file and directory operations. Pure C99, zero deps. Designed for IoT: SD cards, tmpfs, embedded Linux.
+POSIX file and directory operations. Pure C99, zero deps.
 
 ```toml
 [libs]
@@ -1732,270 +1047,490 @@ std.fs = "1.0"
 | `fs.size(path)` | `int` | File size in bytes (-1 if missing) |
 | `fs.mkdir(path)` | `bool` | Create directory (including parents) |
 | `fs.rmdir(path)` | `bool` | Remove empty directory |
-| `fs.listdir(path)` | `dyn` | List filenames (no path prefix) |
+| `fs.listdir(path)` | `dyn` | List filenames |
 | `fs.isdir(path)` | `bool` | Is a directory? |
 | `fs.isfile(path)` | `bool` | Is a regular file? |
 | `fs.join(a, b)` | `str` | Join path components |
 | `fs.basename(path)` | `str` | Filename part |
 | `fs.dirname(path)` | `str` | Directory part |
-| `fs.ext(path)` | `str` | Extension including dot (`.txt`), empty if none |
+| `fs.ext(path)` | `str` | Extension including dot |
 | `fs.tempfile()` | `str` | Create and return path to temp file |
 
-```fluxa
-import std fs
-
-// Log sensor reading to SD card
-str entry = "22.5,60,1013\n"
-fs.append("/mnt/sd/log.csv", entry)
-
-// List config files
-dyn files = fs.listdir("/mnt/sd/config")
-int i = 0
-while i < len(files) {
-    print(files[i])
-    i = i + 1
-}
-
-// Safe config read
-danger {
-    str cfg = fs.read("/mnt/sd/config.json")
-    print(cfg)
-}
-if err != nil { print("no config found, using defaults") }
-```
-
 ---
 
-## std.websocket — WebSocket Client
+## std.libv — Vectors, Matrices, Tensors
 
-Two backends — selected at compile time. Same API regardless of backend.
-
-**Native backend** (default, zero deps): Pure C99 RFC 6455. `ws://` only. Works on Linux, macOS, RP2040, ESP32.
-
-**libwebsockets backend** (`make FLUXA_WS_LWS=1`): Full RFC 6455 + `wss://` TLS. Requires `libssl-dev + libwebsockets-dev`.
+Pure C99, zero deps. All storage is backed by `float arr` or `int arr`. Col-major storage.
 
 ```toml
 [libs]
-std.websocket = "1.0"
+std.libv = "1.0"
 ```
+
+### Initializers
+
+| Expression | Size | Description |
+|---|---|---|
+| `libv.vec2` | 2 | 2D float vector, zeros |
+| `libv.vec3` | 3 | 3D float vector, zeros |
+| `libv.vec4` | 4 | 4D float vector, zeros |
+| `libv.mat2` | 4 | 2×2 identity matrix |
+| `libv.mat3` | 9 | 3×3 identity matrix |
+| `libv.mat4` | 16 | 4×4 identity matrix |
+| `libv.vec(n)` | n | N-vector, zeros |
+| `libv.mat(r, c)` | r×c | r×c matrix, zeros |
+| `libv.tens(d0, d1, ...)` | d0×d1×... | N-dimensional tensor, zeros |
+
+### Vector operations (in-place unless scalar result)
 
 | Function | Returns | Description |
 |---|---|---|
-| `ws.connect(url)` | `dyn` | Connect to `ws://host:port/path` |
-| `ws.connect_tls(url)` | `dyn` | Force TLS (requires libwebsockets build) |
-| `ws.send(conn, msg)` | `nil` | Send text frame |
-| `ws.send_bin(conn, data)` | `nil` | Send binary frame |
-| `ws.recv(conn, timeout_ms)` | `str` | Next message, `""` on timeout |
-| `ws.poll(conn)` | `bool` | Message ready without blocking |
-| `ws.close(conn)` | `nil` | Close connection |
-| `ws.connected(conn)` | `bool` | Connection status |
-| `ws.url(conn)` | `str` | Original connection URL |
-| `ws.version()` | `str` | Backend version string |
+| `libv.add(a, b)` | `nil` | a = a + b |
+| `libv.sub(a, b)` | `nil` | a = a − b |
+| `libv.scale(a, s)` | `nil` | a = a × scalar |
+| `libv.normalize(a)` | `nil` | a = a / ‖a‖ |
+| `libv.lerp(a, b, t)` | `nil` | a = mix(a, b, t) |
+| `libv.cross(out, a, b)` | `nil` | out = a × b (vec3 only) |
+| `libv.dot(a, b)` | `float` | dot product |
+| `libv.norm(a)` | `float` | Euclidean length |
+| `libv.angle(a, b)` | `float` | angle in radians |
+| `libv.eq(a, b)` | `bool` | element-wise equality (ε = 1e-6) |
+| `libv.shape(a)` | `int` | element count |
+| `libv.fill(a, v)` | `nil` | set all elements to v |
+| `libv.copy(dst, src)` | `nil` | copy src into dst |
 
-```fluxa
-import std websocket
-
-danger {
-    dyn c = websocket.connect("ws://dashboard.local:8080/sensors")
-    websocket.send(c, "subscribe:temp")
-    str msg = websocket.recv(c, 5000)
-    print(msg)
-    websocket.close(c)
-}
-```
-
----
-
-## std.http — HTTP Server + Client (mongoose 7.21)
-
-HTTP server and client backed by mongoose 7.21 (vendored in `vendor/`). Embedded-friendly — same library runs on RP2040 Wi-Fi and ESP32.
-
-```toml
-[libs]
-std.http = "1.0"
-```
-
-**Server:**
+### Matrix operations
 
 | Function | Returns | Description |
 |---|---|---|
-| `http.serve(port)` | `dyn` | Start HTTP server, return cursor |
-| `http.serve_tls(port, cert, key)` | `dyn` | HTTPS server |
-| `http.poll(server, timeout_ms)` | `dyn\|nil` | Wait for next request |
-| `http.req_method(req)` | `str` | `"GET"`, `"POST"`, etc. |
-| `http.req_path(req)` | `str` | Request URI path |
-| `http.req_body(req)` | `str` | Request body |
-| `http.req_header(req, name)` | `str` | Header value |
-| `http.reply(req, status, body)` | `nil` | Send response |
-| `http.reply_json(req, status, json)` | `nil` | Send JSON response |
-| `http.stop(server)` | `nil` | Stop server |
+| `libv.identity(m)` | `nil` | reset to identity |
+| `libv.transpose(m)` | `nil` | in-place (square) |
+| `libv.matmul(out, a, b)` | `nil` | out = a × b |
+| `libv.det(m)` | `float` | determinant (2×2, 3×3, 4×4) |
+| `libv.inverse(out, m)` | `nil` | out = m⁻¹ (2×2 only) |
 
-**Client** (same API as std.httpc but mongoose-backed):
+### 3D transform helpers
 
-| Function | Returns | Description |
-|---|---|---|
-| `http.get(url)` | `dyn` | HTTP GET |
-| `http.post(url, body)` | `dyn` | HTTP POST |
-| `http.post_json(url, json)` | `dyn` | POST with JSON content-type |
-| `http.put(url, body)` | `dyn` | HTTP PUT |
-| `http.delete(url)` | `dyn` | HTTP DELETE |
-| `http.status(resp)` | `int` | HTTP status code |
-| `http.body(resp)` | `str` | Response body |
-| `http.ok(resp)` | `bool` | Status 200–299 |
-| `http.version()` | `str` | `"mongoose/7.21"` |
-
-```fluxa
-import std http
-
-// Sensor HTTP endpoint
-danger {
-    dyn srv = http.serve(8080)
-    dyn req = http.poll(srv, 10000)
-    if req != nil {
-        str path = http.req_path(req)
-        http.reply_json(req, 200, "{\"temp\":22.5,\"path\":\"" + path + "\"}")
-    }
-    http.stop(srv)
-}
-```
-
----
-
-## std.mcp — Fluxa as MCP Server
-
-Exposes the Fluxa runtime as a Model Context Protocol (MCP) server over HTTP. AI agents (Claude, GPT, Gemini, local llama.cpp) can discover and call Fluxa tools via JSON-RPC 2.0.
-
-```toml
-[libs]
-std.http = "1.0"   # mongoose — required by std.mcp
-std.mcp  = "1.0"
-```
-
-**MCP tools exposed:**
-
-| Tool | Description |
+| Function | Description |
 |---|---|
-| `fluxa/observe` | Read current value of a `prst` variable |
-| `fluxa/set` | Mutate a `prst` variable |
-| `fluxa/status` | Cycle count, prst count, error count, mode |
-| `fluxa/logs` | Last error log entries |
-| `tools/list` | MCP tool discovery (initialize) |
-
-| Function | Returns | Description |
-|---|---|---|
-| `mcp.serve(port)` | `dyn` | Start MCP server, return cursor |
-| `mcp.poll(server, ms)` | `nil` | Process one request cycle |
-| `mcp.stop(server)` | `nil` | Stop server |
-| `mcp.version()` | `str` | Server version string |
-
-```fluxa
-import std mcp
-
-// Expose this Fluxa runtime to AI agents
-danger {
-    dyn srv = mcp.serve(3000)
-    int tick = 0
-    while tick < 1000 {
-        mcp.poll(srv, 100)
-        tick = tick + 1
-    }
-    mcp.stop(srv)
-}
-```
-
-Connects internally to the running `/tmp/fluxa-<pid>.sock` IPC socket to execute tools. Requires `fluxa run main.flx -prod` to be running alongside.
+| `libv.translate(m, tx, ty, tz)` | apply translation |
+| `libv.rotate(m, angle_rad, ax, ay, az)` | rotate around axis |
+| `libv.scale_mat(m, sx, sy, sz)` | apply scale |
+| `libv.perspective(m, fov_rad, aspect, near, far)` | perspective projection |
+| `libv.ortho(m, left, right, bottom, top, near, far)` | orthographic projection |
+| `libv.lookat(m, eye, center, up)` | view matrix |
 
 ---
 
-## std.graph — 2D/3D Graphics
+## std.libdsp — DSP and Radar Math
 
-Two backends:
-
-**Stub** (default, zero deps): API-complete, no-op rendering. Tests game logic, state machines, and `prst` patterns without a display.
-
-**Raylib** (`make FLUXA_GRAPH_RAYLIB=1`): Full hardware-accelerated rendering. Vendor `vendor/raylib.h` + `vendor/libraylib.a`.
+Pure C99, zero deps. Requires `std.libv`. FFT: Cooley-Tukey in-place, power-of-2 only.
 
 ```toml
 [libs]
-std.graph = "1.0"
+std.libv   = "1.0"
+std.libdsp = "1.0"
 ```
+
+Interleaved complex layout: `[re0, im0, re1, im1, ...]`.
 
 | Function | Returns | Description |
 |---|---|---|
-| `graph.init(w, h, title)` | `dyn` | Open window |
-| `graph.close(win)` | `nil` | Close window |
-| `graph.should_close(win)` | `bool` | Window close requested |
-| `graph.begin_frame(win)` | `nil` | Begin draw frame |
-| `graph.end_frame(win)` | `nil` | Present frame |
-| `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
-| `graph.fps(win)` | `int` | Current FPS |
-| `graph.set_fps(win, fps)` | `nil` | Set target FPS |
-| `graph.draw_rect(win, x, y, w, h, r, g, b)` | `nil` | Filled rectangle |
-| `graph.draw_circle(win, x, y, radius, r, g, b)` | `nil` | Filled circle |
-| `graph.draw_line(win, x1, y1, x2, y2, r, g, b)` | `nil` | Line |
-| `graph.draw_text(win, text, x, y, size, r, g, b)` | `nil` | Text |
-| `graph.key_pressed(win, key)` | `bool` | Key just pressed (`"SPACE"`, `"A"`–`"Z"`, ...) |
-| `graph.key_down(win, key)` | `bool` | Key held |
-| `graph.mouse_x(win)` | `int` | Mouse X |
-| `graph.mouse_y(win)` | `int` | Mouse Y |
-| `graph.mouse_pressed(win)` | `bool` | Left mouse button |
-| `graph.dt(win)` | `float` | Delta time in seconds |
-| `graph.version()` | `str` | Backend version |
+| `dsp.fft(signal)` | `nil` | Forward FFT in-place |
+| `dsp.ifft(signal)` | `nil` | Inverse FFT in-place (normalized) |
+| `dsp.zeros(signal)` | `nil` | Zero imaginary parts |
+| `dsp.window(signal, type)` | `nil` | Apply window: `"hann"`, `"hamming"`, `"blackman"`, `"rect"` |
+| `dsp.power(psd, signal)` | `nil` | Power spectrum |
+| `dsp.magnitude(mag, signal)` | `nil` | Magnitude |
+| `dsp.phase(ph, signal)` | `nil` | Phase |
+| `dsp.fir(signal, h)` | `nil` | FIR filter |
+| `dsp.iir(signal, b, a)` | `nil` | IIR filter direct form II |
+| `dsp.matched_filter(signal, tmpl)` | `nil` | Cross-correlation with template |
+| `dsp.stft(out, signal, win_size, hop)` | `nil` | Short-time Fourier Transform |
+| `dsp.range_doppler(rd, signal, nrng, ndop)` | `nil` | 2D FFT range-Doppler map |
+| `dsp.cfar(det, rd, guard, ref, threshold)` | `nil` | Cell-Averaging CFAR |
+| `dsp.peak(signal)` | `int` | Index of maximum magnitude bin |
+| `dsp.snr(signal, noise_floor)` | `float` | SNR in dB |
+| `dsp.normalize(signal)` | `nil` | Scale so max absolute value = 1.0 |
+
+---
+
+## std.wserver — Resilient HTTP Server
+
+Thread-pool HTTP server via libmicrohttpd. Designed for `std.flxthread` worker pattern.
+
+**Dual-backend:** libmicrohttpd when available via `pkg-config`, stub with clear error otherwise.
+
+Dep: `apt install libmicrohttpd-dev`
+
+```toml
+[libs]
+std.wserver   = "1.0"
+std.flxthread = "1.0"
+
+[libs.wserver]
+max_servers       = 4      # hard cap 32
+max_requests      = 128    # hard cap 4096
+max_body_bytes    = 65536  # hard cap 16MB
+max_header_pairs  = 16     # hard cap 128
+max_header_bytes  = 4096   # hard cap 65536
+queue_depth       = 256    # hard cap 4096
+# Auto-scaling pool (serve with true):
+min_threads       = 2      # hard cap 64
+max_threads       = 16     # hard cap 256
+scale_up_queue    = 4      # queue depth to trigger scale-up
+scale_down_idle   = 10     # idle seconds to trigger scale-down
+```
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `wserver.serve(int port)` | int | Start server, manual mode. Returns handle > 0. |
+| `wserver.serve(int port, bool auto)` | int | Start server. `auto=true` enables auto-scaling MHD thread pool. |
+| `wserver.accept(int server, int timeout_ms)` | int | Wait for next request. Returns handle > 0, or 0 on timeout. Thread-safe. |
+| `wserver.req_method(int req)` | str | `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"` |
+| `wserver.req_path(int req)` | str | Request URI path |
+| `wserver.req_body(int req)` | str | Request body (POST/PUT/PATCH) |
+| `wserver.req_header(int req, str name)` | str | Header value, `""` if absent |
+| `wserver.reply(int req, int status, str body)` | nil | Send response. Invalidates req handle. |
+| `wserver.reply_json(int req, int status, str json)` | nil | Send JSON (`Content-Type: application/json`). |
+| `wserver.reply_headers(int req, int status, str body, str arr headers, int n)` | nil | Send with custom headers. `headers` is flat key/value pairs. `n` = pair count. |
+| `wserver.connections(int server)` | int | Active connection count |
+| `wserver.stop(int server)` | nil | Stop server. No-op on invalid handle. |
+| `wserver.version()` | str | `"libmicrohttpd/x.x.x"` |
+
+**Return value convention:** `serve` and `accept` return an `int` > 0 on success, 0 on failure/timeout. Always check inside `danger {}`.
+
+### Manual mode — user controls workers
 
 ```fluxa
-import std graph
+import std wserver
+import std flxthread as ft
+
+fn worker_loop(int srv) nil {
+    while !ft.should_stop() {
+        danger {
+            int req = wserver.accept(srv, 100)
+            if req != 0 {
+                str method = wserver.req_method(req)
+                if method == "GET"    { wserver.reply(req, 200, "ok") }
+                if method == "POST"   { wserver.reply(req, 201, wserver.req_body(req)) }
+                if method == "PUT"    { wserver.reply(req, 200, wserver.req_body(req)) }
+                if method == "PATCH"  { wserver.reply(req, 200, wserver.req_body(req)) }
+                if method == "DELETE" { wserver.reply(req, 204, "") }
+            }
+        }
+    }
+}
+
+int srv = 0
+danger { srv = wserver.serve(8080, false) }
+
+Block w1 typeof Worker
+Block w2 typeof Worker
+ft.new("t1", w1, "run", srv)
+ft.new("t2", w2, "run", srv)
+ft.resolve_all()
+wserver.stop(srv)
+```
+
+### Auto-scaling mode — lib manages MHD thread pool
+
+With `auto=true`, the lib maintains a pool of MHD threads internally. The pool grows when the request queue fills and shrinks when threads are idle. The Fluxa accept/reply loop is identical in both modes.
+
+```fluxa
+import std wserver
+import std flxthread as ft
+
+fn worker_loop(int srv) nil {
+    while !ft.should_stop() {
+        danger {
+            int req = wserver.accept(srv, 100)
+            if req != 0 {
+                str method = wserver.req_method(req)
+                if method == "GET"  { wserver.reply(req, 200, "ok") }
+                if method == "POST" { wserver.reply(req, 201, wserver.req_body(req)) }
+            }
+        }
+    }
+}
+
+int srv = 0
+danger { srv = wserver.serve(8080, true) }
+
+Block w1 typeof Worker
+ft.new("t1", w1, "run", srv)
+ft.resolve_all()
+wserver.stop(srv)
+```
+
+### reply_headers example
+
+```fluxa
+str arr headers[4] = ["Content-Type", "text/html", "X-Frame-Options", "DENY"]
+wserver.reply_headers(req, 200, "<h1>ok</h1>", headers, 2)
+```
+
+### Comparison with std.http
+
+| | std.http (mongoose) | std.wserver (libmicrohttpd) |
+|---|---|---|
+| Backend | mongoose 7.21 (vendored) | libmicrohttpd (system) |
+| Handle type | dyn cursor | int opaque handle |
+| Connection model | Single-threaded poll | Thread-per-connection pool |
+| Best for | Embedded, low connection count | Server workloads, high concurrency |
+| Auto-scaling | No | Yes (`serve(port, true)`) |
+| TLS | ✅ via mongoose | ✅ via GnuTLS backend |
+| Dep | None (vendored) | `libmicrohttpd-dev` |
+
+---
+
+## std.pg — PostgreSQL Client
+
+PostgreSQL client via libpq. Parameterized queries prevent SQL injection.
+
+**Dual-backend:** libpq when available via `pkg-config`, stub with clear error otherwise.
+
+Dep: `apt install libpq-dev`
+
+```toml
+[libs]
+std.pg = "1.0"
+
+[libs.pg]
+max_connections = 16     # hard cap 256
+max_results     = 64     # hard cap 1024
+max_cell_bytes  = 4096   # hard cap 65536
+max_param_bytes = 1024   # hard cap 65536
+max_params      = 16     # hard cap 64
+```
+
+### Functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `pg.connect(str connstr)` | int | Connect. Returns handle > 0, or 0 on failure. |
+| `pg.close(int conn)` | nil | Close connection. No-op on invalid handle. |
+| `pg.exec(int conn, str sql)` | nil | DDL or DML |
+| `pg.query(int conn, str sql)` | int | SELECT. Returns result handle > 0, or 0 on failure. |
+| `pg.query_params(int conn, str sql, str arr params, int n)` | int | Parameterized query. `params` is a str arr, `n` is how many elements to use. |
+| `pg.rows(int result)` | int | Row count |
+| `pg.cols(int result)` | int | Column count |
+| `pg.col_name(int result, int col)` | str | Column name (0-indexed) |
+| `pg.get(int result, int row, int col)` | str | Value as string. `""` if NULL. |
+| `pg.get_int(int result, int row, int col)` | int | Value as int. `0` if NULL. |
+| `pg.get_float(int result, int row, int col)` | float | Value as float. `0.0` if NULL. |
+| `pg.get_bool(int result, int row, int col)` | bool | Value as bool. |
+| `pg.is_null(int result, int row, int col)` | bool | True if cell is NULL. |
+| `pg.free_result(int result)` | nil | Release result. No-op on invalid handle. |
+| `pg.last_error(int conn)` | str | Last error from libpq. |
+| `pg.ping(str connstr)` | bool | Check server reachable (no full connect). |
+| `pg.version(int conn)` | str | Server version string. |
+| `pg.version()` | str | libpq version (no conn needed). |
+
+**Return value convention:** `connect`, `query`, `query_params` return `int` > 0 on success, 0 on error. Always check inside `danger {}`.
+
+### Connection string format
+
+```
+"host=localhost port=5432 dbname=mydb user=fluxa password=secret connect_timeout=5"
+"postgresql://fluxa:secret@localhost/mydb"
+```
+
+### Example — basic query
+
+```fluxa
+import std pg
+
+int db = 0
+danger { db = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t") }
 
 danger {
-    dyn win = graph.init(800, 600, "Fluxa Demo")
-    graph.set_fps(win, 60)
-    int frame = 0
-    while frame < 300 {
-        graph.begin_frame(win)
-        graph.clear(win, 20, 20, 30)
-        graph.draw_rect(win, frame, 200, 60, 60, 255, 80, 0)
-        graph.draw_text(win, "fluxa", 10, 10, 24, 255, 255, 255)
-        graph.end_frame(win)
-        frame = frame + 1
+    pg.exec(db, "CREATE TABLE IF NOT EXISTS readings (ts BIGINT, val REAL)")
+    pg.exec(db, "INSERT INTO readings VALUES (1700000000, 23.5)")
+
+    int res = pg.query(db, "SELECT ts, val FROM readings ORDER BY ts DESC LIMIT 5")
+    int i = 0
+    while i < pg.rows(res) {
+        int   ts  = pg.get_int(res, i, 0)
+        float val = pg.get_float(res, i, 1)
+        print(ts)
+        print(val)
+        i = i + 1
     }
-    graph.close(win)
+    pg.free_result(res)
+    pg.close(db)
 }
+```
+
+### Example — parameterized query (SQL injection safe)
+
+```fluxa
+import std pg
+
+int db = 0
+danger { db = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t") }
+
+danger {
+    str arr params[2] = ["sensor-01", "23.5"]
+    int res = pg.query_params(db,
+        "SELECT ts FROM readings WHERE sensor_id = $1 AND val > $2::real",
+        params, 2)
+    int n = pg.rows(res)
+    print(n)
+    pg.free_result(res)
+    pg.close(db)
+}
+```
+
+### Example — multi-threaded with std.flxthread
+
+IO stays in functions with `danger`. Block holds pure state. Each worker fetches data independently using its own connection handle.
+
+```fluxa
+import std pg
+import std flxthread as ft
+
+fn fetch(int conn, str sql) str {
+    danger {
+        int res = pg.query(conn, sql)
+        str val = ""
+        if pg.rows(res) > 0 { val = pg.get(res, 0, 0) }
+        pg.free_result(res)
+        return val
+    }
+    return ""
+}
+
+Block Worker {
+    prst int   count = 0
+    prst float sum   = 0.0
+    fn record(float v) nil {
+        sum   = sum + v
+        count = count + 1
+    }
+    fn avg() float { return sum / count }
+}
+
+int c1 = 0
+int c2 = 0
+danger {
+    c1 = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t")
+    c2 = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t")
+}
+
+Block w1 typeof Worker
+Block w2 typeof Worker
+ft.new("t1", w1, "record")
+ft.new("t2", w2, "record")
+
+int tick = 0
+while tick < 1000 {
+    danger {
+        str v1 = fetch(c1, "SELECT val FROM readings ORDER BY ts DESC LIMIT 1")
+        str v2 = fetch(c2, "SELECT val FROM readings ORDER BY ts DESC LIMIT 1")
+        ft.message("t1", "record", v1)
+        ft.message("t2", "record", v2)
+    }
+    tick = tick + 1
+}
+
+ft.resolve_all()
+pg.close(c1)
+pg.close(c2)
+```
+
+### Notes
+
+- `pg.free_result` must be called after every `pg.query` / `pg.query_params`.
+- `pg.close` and `pg.free_result` are no-ops on invalid or already-freed handles — safe to call unconditionally.
+- `pg.ping` uses `PQping` — does not open a full connection.
+- `query_params` validates that `n ≤ arr.size` and each element is str before touching libpq.
+- Out-of-bounds row/col in `get*` and `is_null` produces a runtime error with line number.
+- Integration tests (real PostgreSQL in Docker): `bash tests/integration/pg/run.sh`
+
+---
+
+## Buffer Configuration Reference
+
+```toml
+[libs.csv]
+max_line_bytes = 1024
+max_fields     = 64
+
+[libs.json]
+max_str_bytes  = 4096
+
+[libs.pg]
+max_connections = 16
+max_results     = 64
+max_cell_bytes  = 4096
+max_param_bytes = 1024
+max_params      = 16
+
+[libs.wserver]
+max_servers       = 4
+max_requests      = 128
+max_body_bytes    = 65536
+max_header_pairs  = 16
+max_header_bytes  = 4096
+queue_depth       = 256
+min_threads       = 2
+max_threads       = 16
+scale_up_queue    = 4
+scale_down_idle   = 10
+
+[ffi]
+str_buf_size = 1024
+```
+
+**RP2040 recommended (264 KB SRAM):**
+```toml
+[libs.csv]
+max_line_bytes = 256
+max_fields     = 16
+
+[libs.json]
+max_str_bytes  = 512
+
+[libs.pg]
+max_connections = 2
+max_results     = 8
+max_cell_bytes  = 512
+max_params      = 4
+
+[ffi]
+str_buf_size = 64
 ```
 
 ---
 
-## std.infer — Local LLM Inference
+## What Is Not Supported (v1.0)
 
-Two backends:
+**std.csv:**
+- Multiline fields (quoted fields spanning multiple lines)
+- Automatic type detection (all fields are `str`)
+- Encoding beyond ASCII/UTF-8 passthrough
 
-**Stub** (default, zero deps): `load()` succeeds, `generate()` returns a placeholder. Tests prompt pipelines without a model.
+**std.strings:**
+- Unicode-aware indexing (all operations work on bytes, not codepoints)
+- Regex pattern matching (coming in `std.regex`)
+- `trim_left` / `trim_right`
 
-**llama.cpp** (`make FLUXA_INFER_LLAMA=1`): Runs GGUF quantized models locally. Vendor `vendor/llama.h` + `vendor/libllama.a`.
+**std.json:**
+- JSON path expressions (`json.get("a.b.c")`) — use `std.json2`
+- Number formatting control (uses `%g`)
+- Unicode escape sequences (`\uXXXX`)
+- In-place mutation (always returns new `str`)
 
-```toml
-[libs]
-std.infer = "1.0"
-```
+**std.pg:**
+- Prepared statements (use `query_params` instead)
+- Async queries
+- COPY protocol
 
-| Function | Returns | Description |
-|---|---|---|
-| `infer.load(path)` | `dyn` | Load GGUF model from path |
-| `infer.generate(model, prompt)` | `str` | Generate text (256 tokens) |
-| `infer.generate_n(model, prompt, n)` | `str` | Generate max n tokens (1–4096) |
-| `infer.unload(model)` | `nil` | Free model |
-| `infer.loaded(model)` | `bool` | Model load status |
-| `infer.ctx_size(model)` | `int` | Context window size (tokens) |
-| `infer.model_name(model)` | `str` | Filename from path |
-| `infer.version()` | `str` | Backend version |
+**std.wserver:**
+- WebSocket upgrade (use `std.websocket` for WebSocket)
+- HTTP/2
 
-`prst dyn` model cursor survives hot reloads — no reload needed when swapping scripts.
-
-```fluxa
-import std infer
-
-danger {
-    dyn model = infer.load("/models/mistral-7b-q4.gguf")
-    str out = infer.generate(model, "Sensor reads 42.5°C. Should I alert?")
-    print(out)
-    infer.unload(model)
-}
-```
+These limitations are intentional — predictable memory use on embedded hardware, not feature parity with desktop libraries.

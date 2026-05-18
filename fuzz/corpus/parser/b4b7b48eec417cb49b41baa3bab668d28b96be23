@@ -1,6 +1,0 @@
-//²ï/Oiàteaerre) ver
-fn pop() int {
-   return data[top]
-    }
-
-    fn is()int     top

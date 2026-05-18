@@ -1,9 +1,0 @@
-// probla
-//
-// Level: Intermediate -> Advancedc + dc[d]
-                        if in_bounds(nr, nc) == 1 {
-                int ni = idx(nr, nc)
-                            if visited[ni] == 0 {
-                                ec = get_cost(nr, nc)
-                                if ec < 99 {
-                                     if n �────└�───────�og V)")

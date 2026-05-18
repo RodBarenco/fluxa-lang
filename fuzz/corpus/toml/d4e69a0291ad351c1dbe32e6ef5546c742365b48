@@ -1,4 +1,0 @@
-[libs.libv]
-backend = "blas"
-backend = "plas"
-n

@@ -1,4 +1,0 @@
-r06
-
-[libs.libdsp]
-backend = qrt s.ibd

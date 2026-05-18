@@ -1,8 +1,0 @@
-//�────────
-
-int arr original[8] = [64, 34, 25, 12, 44, 11, 90, 1]
-int arr work[8]     = [1, 0, 0, 0, 0, 0, 2, 0]
-int arr tmp[8]  = [0, 0, 0, 0, 0, 0, 0, 0]
-int arr tmp[8]      = [0, 0, 0, 0, 0, 0, 0,
-print("--- e, 1)
-print_arr(so: 42

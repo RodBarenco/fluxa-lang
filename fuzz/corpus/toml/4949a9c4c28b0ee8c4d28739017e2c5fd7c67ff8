@@ -1,6 +1,0 @@
-ml
-[runtime]
-gc4
-prst_graph_cap = 2Ÿ+Ÿ64
-prst_graph_cap = 255
-nc_cap 32

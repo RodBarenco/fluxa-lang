@@ -1,5 +1,0 @@
-// pBloozBuzz
-//   For det _cost(0,4,5)
-    set_cost(1,0,1) set_cost(1,1,9) set_cost(1,2,1) set_cost(2,3,1) set_cost(1,4,2)
-        set_cost(6,0,3) set_cost(2,1,1) set_cost(2,2,1)
-)   )    

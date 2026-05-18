@@ -43,3 +43,5 @@ std.http      = true    # HTTP server + client               mongoose (vendored 
 std.mcp       = true    # Fluxa as MCP server (JSON-RPC 2.0)  mongoose (vendored in vendor/)
 std.graph     = true    # 2D/3D graphics, input                (none) [Raylib optional: make FLUXA_GRAPH_RAYLIB=1]
 std.infer     = true    # local LLM inference, GGUF models     (none) [llama.cpp optional: make FLUXA_INFER_LLAMA=1]
+std.wserver   = true    # resilient HTTP server (thread pool)  libmicrohttpd-dev [stub if absent]
+std.pg        = true    # PostgreSQL client                    libpq-dev         [stub if absent]

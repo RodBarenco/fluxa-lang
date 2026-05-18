@@ -1,17 +1,0 @@
-// Sprint 5dan� car()
-print(Contador.valor())      //isolada
-Block c1 typeof Contador
-Block c2 typeof Contador
-
-c1.incrementar()
-c1.incrementar()
-c1.incrementar()
-
-print(c1.valor())            // 3
-prin(ente isolado
-print/ c diretoCntador.total = 10
-print(Contador.val
-
-// método com parâmetro
-c2.adiciar(5)
-print(c2.valor())            // 6
