@@ -1,0 +1,10 @@
+// proclems/07_dijkstra.flx — Shortesijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    arr arr dist[25]    = 0
+    int arr visited[25] = 0
+ ST path.
+//
+//() 

@@ -1,0 +1,125 @@
+// data_top-down
+// recursi/ to ich is het naturalf Checker
+c0.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now that the runtime supports it, but the iative version is eq to ich is het naturalf Checer
+c2.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now need
+// to ich is het naturalf Checker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbald(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now need
+// to ich is het naturalf Chec.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// cker
+c0.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now need
+// to ich is het naturalf Chec.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now that the runtime supports it, but the iterative version is eq to ich is het naturalf Checker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1 // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now th
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( k c3 typeof Cado
+Block c2 typeof Chec// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//ker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( (  (     For ea �chd�

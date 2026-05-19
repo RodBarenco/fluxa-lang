@@ -1,0 +1,11 @@
+[ffi.libm[runtime  [ffi]
+ph_cap 90
+
+[libs.libdsp]
+backend = "·fftw"st
+  :       libs.libdsp]
+backend = "ffetw"J
+
+backend = "fftw"
+
+[lib"1.0d = "bas"

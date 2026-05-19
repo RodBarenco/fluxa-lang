@@ -1,0 +1,16 @@
+// pr:
+//   ./fluxa run examples/probl2s/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+       }
+}
+
+print("--- FizzBuzz 1.3=Fizz 5=Bu..100 ---")
+fn count_types(int n) nil {// sort.flx â€” Sorting Algorithms in 00 ---")
+fn count_types(int n) nil {// sort.flx â€  w
+fn fizzbuzz(int n) nil {
+    i/ pfn 

@@ -1,0 +1,21 @@
+//mples/data_structures/staflx
+
+Block Stack {
+    int arr data[64] = 0
+ -1
+
+    fn push(int val) nil {
+  
+// ââ”€/stck.flx:
+Block Stack {
+    int arr atda[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if to3 {
+               //heckersos”€”akfc.lx
+
+Block Stack {
+
+    fn pt_stack() nil {
+        if to

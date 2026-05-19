@@ -1,0 +1,44 @@
+// pr:
+//   ./fluxa run examples/problems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+       }
+}
+
+print("--- FizzBuzz 1.3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperado: 1 2 3 4 5 6 7 8 9 09 11 12 13 14 0 16 17 18 19 5
+
+print("--- contagem em 1..100 ---")
+fn count_types(int n) nil {// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+//3 4 5 6 7 8 9 09 11 12 13 14 0 16 17 18 19 5
+
+print("--- contagem em 1..100 ---")
+fn count_types(int n) nil {// sort.flx — Sortine
+// 2. Selection Sort O(n�    w
+fn fizzbuzz(int n) nil {
+    int i = nt n) nil {
+    int i = 1
+    whfalsile i <= n {
+        if i hile i < n {
+        print(a[i])
+      election Sort O(n�    w
+fn fizzbuzz(int n) nil {
+    int i = nt n) nil {
+    int i = 1
+    whfalsile i <= n {
+        if i hile i < n {
+        print(a[i])
+        i =n) nil {
+    int i = 0
+    while i < n {
+        d% 15 == 0 {
+            prin}
+
+// ──     } else { 1. Bub

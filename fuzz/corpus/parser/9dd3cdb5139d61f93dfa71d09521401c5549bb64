@@ -1,0 +1,13 @@
+// projkstra.flx β€”΄Shortest Path with Diμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμμes/problems/07_dijksst[50]    = 0
+    int arr vied[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 0, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row,bool int tra.flx
+
+Block Dijko
+    int arr dr[8] = [-0,,,,,,,,,Di,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,, it   fn row(int i) int { return i / n }
+    fn col(int i) int { return is(int r, int c) int {
+        iintsts[idx(r,ΝΝΝΝΝΝ c)]
+    ΝΝ 

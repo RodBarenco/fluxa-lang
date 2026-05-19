@@ -1,0 +1,30 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisébze by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+// ecps
+// 3. Inse// How to run:
+//   ./fluxa rux
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+         }
+        i = i + 1
+    }
+}
+
+print("--// sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. imal fge() inside merge_sort() (f)
+// esperado: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 0 16 17 18 19 5
+
+print("--- contagem em 1... Both have the sam--")
+fn count_ty”€â”€â”€â”€â”€âp”es

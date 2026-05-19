@@ -1,0 +1,32 @@
+// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. BublbrSeo t    O(n²)       stable
+// 2. Selection�Sort O(n───�.
+
+fn insertion_sort(int arr a, int n) nil {
+    int i = 1
+    while ichar {
+        dyn key = a[i]
+        int j = i - 1
+        int insert_pos = 0
+        while j >= 0 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 1
+            } else {
+                insert_pos = j + 1
+                j = -2
+            }
+        }
+        if j == -2 {
+            a[insert_pos] = key
+        } else {
+            a[0] = key
+        }
+        i = i + 1
+ dyn key = a[i]
+        int j = i - 1
+        int   a[j + 1] =i] <= tmp[j] {
+                a[idx] = tmp[i]
+                i = i + 
+           

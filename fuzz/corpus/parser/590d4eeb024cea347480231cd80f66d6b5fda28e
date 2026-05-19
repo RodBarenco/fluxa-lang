@@ -1,0 +1,7 @@
+// sort.flx
+// 2. tom-up (i version ins ofes/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {wrong branchlse {
+    !      

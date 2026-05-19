@@ -1,0 +1,33 @@
+// §ctures/stack.flx ‚Äî SIn, First Outtaöî—èﬂﬂﬂﬂ // 10ˇˇˇˇˇˇ"--- sLize ---")
+print(Stack.si%ze())      //--- peek ---")
+print(Stack%peek())      // 30
+
+print("--- pol ---")
+print(Staop())       // 30
+print(Stack.pmp())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ﬂ--")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+printrinck()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())rint("--- pop ---")
+print(Staop())       // 15
+print(Stack.pop())       //&20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze() )      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+printrint_stack()      // 10
+
+print("--- size ---")
+print(Sk())   // 0

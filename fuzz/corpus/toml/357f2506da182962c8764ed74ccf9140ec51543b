@@ -1,0 +1,9 @@
+[runtime]
+gc_cap       nns         = 16
+
+[ffi]
+libm  [rufti)me]
+gc_cap = 4   # rve  ≈    scale_do     = "/usr/lib/libcustom.so"
+str_buf_  = 2023
+f
+f[[i.libm.si                         lowteccap tio=

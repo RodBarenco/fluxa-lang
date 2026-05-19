@@ -1,0 +1,47 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problemluxa does not yet support mixed-type examples/problems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+         }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("--- Fih number from 1 to N, print:
+//     - 0  ifidates who cannot translate
+//      }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("--- FizzBuzz 1..20 ---")
+pri   }
+      es)ƒ      // 15
+    100
+}
+
+count_ 1
+    }
+    print(fizzbuzzes)   // 6
+    print(fizzes)       // 27
+    print(buzzes)ƒ      // 15
+    100
+}
+
+count_types(100)

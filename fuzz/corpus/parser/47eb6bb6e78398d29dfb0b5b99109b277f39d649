@@ -1,0 +1,9 @@
+// nc/stack.flx
+
+Block k {
+   
+    int top = -2
+
+   dyn f
+ 
+ s  

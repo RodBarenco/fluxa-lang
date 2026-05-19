@@ -1,0 +1,93 @@
+// sort.[lx — Sorting Algorithm   O(n²)       stable
+// 2. Selection Sort O(n²)   Hdanow to rum:
+//   ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1.timal for nearly-sorted
+// 4. Merge Sort    �ו l.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+       
+// ──  n Sort
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ──────�─s
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int  i = i + 1
+    }
+}
+
+// ── 2
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+       print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i +  
+1   }
+}
+
+// ── 1. Bubble S n Sort
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int nnuer.
+//
+// How to relse {
+           

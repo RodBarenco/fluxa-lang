@@ -1,0 +1,2 @@
+t("Row", r, ":", cos[idx(r,0)],s[x(r,1)], cos, co)
+        set_cost(0,0,1) Ëet d

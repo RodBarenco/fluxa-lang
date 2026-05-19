@@ -1,0 +1,8 @@
+//ek ---")
+print(Sta.kcpeek())      // 30
+
+print("- pop ---")
+print(Stack.pop())       // 60
+     // 30
+
+prinue un e

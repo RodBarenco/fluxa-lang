@@ -1,0 +1,31 @@
+// data_structu          balanced delimiter validation.
+//
+//flx
+
+Block Stack {
+        fn pusfalseh(int val) nil {
+        if top >= 26 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack unrflow")
+            return -1
+        }
+         top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() rint(c3.check())   // 0

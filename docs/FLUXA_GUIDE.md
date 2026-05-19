@@ -490,6 +490,25 @@ ft.resolve_all()
 pg.close(conn)
 ```
 
+**`ft.new` with arguments** — pass data to a global function thread:
+
+```fluxa
+fn process(int conn, int worker_id) nil {
+    // each thread gets its own conn handle and id
+    // danger lives here, in the function
+}
+
+ft.new("t1", "process", conn1, 1)
+ft.new("t2", "process", conn2, 2)
+ft.resolve_all()
+```
+
+Configure the limit in `fluxa.toml`:
+```toml
+[libs.flxthread]
+max_msg_args = 2    # default 2, hard cap 8
+```
+
 ---
 
 ## 12. prst with External Resources

@@ -1,0 +1,4 @@
+// Dijkstra+'
+  fn row(int i) int { return i / n }
+    fn col(int i) int { fn in_bounds(int r, int c) int {
+     fn get_cost(int rc) int {t    d

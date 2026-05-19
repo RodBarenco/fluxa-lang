@@ -1,0 +1,8 @@
+//
+fn prr(int arr a,int n) nil {
+    int i =1
+while i < n {rint(a[i])
+ }
+}
+
+fn y_ar(int arr src,d 

@@ -1,0 +1,7 @@
+// probl
+Block DijkstraSolver {
+    int n = 5
+    int arr cots[25]   = 0
+     int arr visited[25] = 0
+  int arr parent[25]  = -1
+    int arr dr[2] = [-1, 1, ive

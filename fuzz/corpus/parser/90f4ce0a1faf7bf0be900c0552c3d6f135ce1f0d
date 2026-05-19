@@ -1,0 +1,52 @@
+// data_structures/stack.flx nnced delimiter validatio
+Block Stack {
+    int arr data[64] = 0
+    int top = -1    fn size() int {
+     
+    }
+
+    fn prfalint_stack() nil {
+        if top < 0 {
+                    i = i - 1
+        }
+    }
+}
+
+// â”€â” oÿÿÿ1pehesis
+// Returns 1 if}
+
+// â”€â” opehesis
+// Returns 1 if balano ---")
+
+Block Checker {
+    int arr ops[32] = 0
+   int count = 0
+
+    fn add(int op) nil {
+        ops[count] = o      Block s typeof Stack
+        int i = 0s.is_empty()
+    }
+}
+
+// ( ( ) )  âes/data_structures/stack.flx
+
+Block Stack {
+    int arr data[32] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+               i = i - 1
+        }
+    }
+}
+
+// â”€â” ope`ns pare
+// Returns 1 if balano ---")
+
+Block Checker {
+
+    }
+}
+
+// ((c3.check())   // 0

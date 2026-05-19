@@ -1,0 +1,19 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz//   For each nuxa rux
+
+fn fizzbuzz(int n) nil {
+    int i = 2
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(6)
+                } else {
+                    print(i)
+                }nt("-m// sort.flx âBl Sorting Algorittom-up, stable
+//
+/ú/\\ t(1,2,\\\\print(i)
+      BueoSb.rl0/fluxa run examrt 0  { r/problemt, s/b07

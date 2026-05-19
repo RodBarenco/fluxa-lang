@@ -1,0 +1,26 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)ÿ                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+   // problem }
+}
+
+s/07p

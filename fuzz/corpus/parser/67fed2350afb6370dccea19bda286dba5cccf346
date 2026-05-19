@@ -1,0 +1,10 @@
+// prolls as l/   ./fluxa run exaeples/problems/07_dijkstra.flx
+
+Block Dijkst{
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, ive version is equally
+// dind  t goal_c) int {
+        int start_i = idx(start_r, start_c,)
+        int goal_i//  p

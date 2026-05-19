@@ -1,0 +1,59 @@
+// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// â”€â”€ The history of ve equal weight. In weighted graphs,
+// BFS may find A path, but not the CHEAPEST path.
+//
+// Graph: weighted 5x5 grid, cells as linear array (row*5 + col)
+// Movement: 4-directiOnal. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 0, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// â”€â”€ The history of the problem â”€â”€â”€â”€â”€â”€â”0â”€â”€â”€â”€â”€ive edge weights.
+// It is - Network routing (lowest latency paths)
+//   - Game ½¶ß×cost-based pathfinding: road=1, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+     //   if r < 0  { return 0 }
+        if r >= n { return 0 }
+        ifcosts[idx(r,     while i problems/07_dijkstra.flx â€” Sh'rtest Pa   fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if in_bounds(r, c) == 0  < 25 cur == -1 {
+                dl(int val) nil {
+ ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ{ return 99 }
+        int v = costs[idx(r,ÍÍÍÍÍÍ c)]
+    ÍÍ 

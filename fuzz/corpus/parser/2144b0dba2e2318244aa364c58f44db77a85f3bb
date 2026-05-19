@@ -1,0 +1,29 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementatio data[32] = 5
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+       zbuzz.f0000000000000000000000000003 = 100
+}
+
+c     return 1
+ount_types(10        }
+        return 0
+    }
+
+    0)fn s
+ize() int {
+        ret

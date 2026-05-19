@@ -1,0 +1,4 @@
+// ms/07_dijkstra.flx
+
+Block DijkstraSolr {
+  int n n^? d, cd

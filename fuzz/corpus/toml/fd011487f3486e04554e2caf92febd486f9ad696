@@ -1,0 +1,5 @@
+[runtimustom     =0b34buf_size8
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+pow   = "(ÿouble, doubl[ÿe) -> druno

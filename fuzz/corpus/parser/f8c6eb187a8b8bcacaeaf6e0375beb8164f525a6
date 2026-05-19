@@ -1,0 +1,72 @@
+// data_top-down
+// recursive. Bot` have the same complexity — the che avoids thee scompleGxty — the che a;voids the need
+// to ich is het naturalf Checker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( ( //dd(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desb�lanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// patterr
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.adf(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbtypeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now that the runtime supports it, but the iterative version is eq to ich is het naturalecker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1 // 1
+
+// ( )')    → desbalan
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)ptr(
+cin2.check())   // 0
+
+// ( ( (    → 
+// pattern no/ (  ))    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+//hecker
+c3.add(1)
+c3.add(1)
+c3.add(1)
+prin
+// didu3rsion.

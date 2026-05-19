@@ -129,6 +129,7 @@ typedef struct {
     int          wserver_max_threads;      /* max pool threads,         default 16   */
     int          wserver_scale_up_queue;   /* queue depth to trigger scale-up, def 4 */
     int          wserver_scale_down_idle;  /* idle seconds to scale down,      def 10*/
+    int          ft_max_msg_args;    /* [libs.flxthread] max_msg_args, default 2, hard cap 8 */
     char         libdsp_backend[16]; /* [libs.libdsp] backend = "native"|"fftw"  */
     char         libv_backend[16];   /* [libs.libv]   backend = "native"|"blas"  */
     FluxaSecurityConfig security; /* [security] — key paths + enforcement mode */
@@ -147,6 +148,7 @@ static inline void fluxa_config_defaults_fill(FluxaConfig *c) {
     c->warm_func_cap  = 32;
     c->json_max_str      = 4096;
     c->ffi_str_buf_size  = 1024;
+    c->ft_max_msg_args   = 2;
     strncpy(c->libdsp_backend, "native", sizeof(c->libdsp_backend)-1);
     strncpy(c->libv_backend,   "native", sizeof(c->libv_backend)-1);
     c->security.mode = FLUXA_SEC_MODE_OFF;
@@ -470,9 +472,10 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
     char line[512];
     int in_libs         = 0;
     int in_libs_json    = 0;
-    int in_libs_pg      = 0;
-    int in_libs_wserver = 0;
-    int in_libs_libdsp  = 0;
+    int in_libs_pg         = 0;
+    int in_libs_wserver    = 0;
+    int in_libs_flxthread  = 0;
+    int in_libs_libdsp     = 0;
     int in_libs_libv    = 0;
     while (fgets(line, sizeof(line), f)) {
         /* Strip leading whitespace */
@@ -484,6 +487,7 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
             in_libs_json    = (strncmp(p, "[libs.json]",     11) == 0);
             in_libs_pg      = (strncmp(p, "[libs.pg]",        9) == 0);
             in_libs_wserver = (strncmp(p, "[libs.wserver]",  14) == 0);
+            in_libs_flxthread = (strncmp(p, "[libs.flxthread]", 16) == 0);
             in_libs_libdsp  = (strncmp(p, "[libs.libdsp]",   13) == 0);
             in_libs_libv    = (strncmp(p, "[libs.libv]",     11) == 0);
             continue;
@@ -551,6 +555,18 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
                     else if (strncmp(p, "max_threads",       11) == 0) cfg->wserver_max_threads      = v;
                     else if (strncmp(p, "scale_up_queue",    14) == 0) cfg->wserver_scale_up_queue   = v;
                     else if (strncmp(p, "scale_down_idle",   15) == 0) cfg->wserver_scale_down_idle  = v;
+                }
+            }
+        }
+        if (in_libs_flxthread) {
+            char *eq = strchr(p, '=');
+            if (eq) {
+                long lv2 = strtol(eq + 1, NULL, 10);
+                if (strncmp(p, "max_msg_args", 12) == 0) {
+                    if (lv2 >= 1 && lv2 <= 8) cfg->ft_max_msg_args = (int)lv2;
+                    else fprintf(stderr,
+                        "[fluxa] toml: flxthread.max_msg_args %ld out of range [1..8],"
+                        " keeping default %d\n", lv2, cfg->ft_max_msg_args);
                 }
             }
         }

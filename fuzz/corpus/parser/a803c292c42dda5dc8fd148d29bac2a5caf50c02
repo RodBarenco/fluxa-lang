@@ -1,0 +1,40 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top pointn eva1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+           int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 [
+            print("[ vazia ]")
+            return
+        rint:
+//    size - --

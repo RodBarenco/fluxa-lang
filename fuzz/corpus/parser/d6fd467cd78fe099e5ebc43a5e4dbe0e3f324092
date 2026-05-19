@@ -1,0 +1,6 @@
+// d
+Block Stack {
+   
+    int top = -1
+
+   dyn  a 

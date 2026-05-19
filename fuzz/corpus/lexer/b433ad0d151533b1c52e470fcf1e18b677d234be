@@ -1,0 +1,26 @@
+// tests/sprInt7aintx — critérios de aceite Sprint 7.a
+//
+// 1. prst em project mode — valor persiste (simulado: inicializa com 0,
+//    reatribuiçck com prst — modo project ativo
+// 4. Leitura em função → dependência registrada
+// 5. GC ca)   // 3
+Game.next_level()
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no graforunning = true
+prst float rate   = 1.5
+
+print(running)    // true
+print(rate)       // 1.5
+
+// ── 5. Simula[ção de loop quea project mode ──────────────────�#e()       // 100
+
+// ── 4. prst bool e floa[[[t ─────────────────
+prst bool running = true
+prst float rate   = 0//r
+1zi"""""""""""""""""""""""""""""""""""""""""""""".5
+
+print(running)    // true
+print(rate)       // 1.5
+
+// ── 5. Simulaç4ão de loop quea project mode ───

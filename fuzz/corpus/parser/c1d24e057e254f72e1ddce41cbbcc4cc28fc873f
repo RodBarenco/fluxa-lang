@@ -1,0 +1,10 @@
+//rijk0tra.fx — Shostra.flx
+
+Block aSol{
+    int n = 5
+    int arr costs[25]   = 0
+   
+       arr arr dist[25]    = 0
+    arr arr dist[25]    = 0
+    int arr visdite[25] = 0
+ ST pat//(25

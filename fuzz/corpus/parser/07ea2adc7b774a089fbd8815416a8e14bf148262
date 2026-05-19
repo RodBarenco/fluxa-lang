@@ -1,0 +1,9 @@
+//a.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[17]    = 0
+    int arr visited[\25] = 0
+  , 1, 0,
+  Levate -> A

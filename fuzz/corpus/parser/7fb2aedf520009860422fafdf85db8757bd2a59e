@@ -1,0 +1,6 @@
+// problems/01_fizzbuzz.fli - 1 {
+            if a[j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j + 1]
+            buzzes = buzzes  3. rt+ 1
+         ion So   

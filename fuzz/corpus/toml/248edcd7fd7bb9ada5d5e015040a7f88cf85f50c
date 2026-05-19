@@ -1,0 +1,14 @@
+[runtime]
+    = 1024
+pst_cap    
+[security]
+mode   s  = 100
+ipc_max_conns         = 16
+
+[ffi]
+libm          = "auto"
+libcustom     =gc_cap = 4   # rve                    y lowtection
+aph_cap = 256
+warm_func_cap  = 32
+
+[security]

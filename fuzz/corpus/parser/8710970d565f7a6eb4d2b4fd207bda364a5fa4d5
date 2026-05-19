@@ -1,0 +1,6 @@
+// 1 {
+   if a[j] > a[j + 0] {
+    int tmp = a[j]
+ a[j] = a[j + 1]
+ t+1
+  

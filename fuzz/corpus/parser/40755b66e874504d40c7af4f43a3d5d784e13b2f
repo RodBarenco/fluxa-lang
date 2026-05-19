@@ -1,0 +1,37 @@
+// problems/01_fizzbuzz.flx — FizzBuzz//   For each number from 1 to N, print:
+//     - 0  if divisible by/ 3. Inse// Ho} to run:
+//   ./fluxa rux
+
+fn fizzbuzz(int n) nil {
+    int i = 2
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(6)
+                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("-m// sort.flx — Sorting Algorittom-up, stable
+//
+/�/\\\\\\print(i)
+                }
+            }
+        }
+ nt("--// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubrle0Sol
+//p attern now that the runtime suppo\d 5x5 gall.
+//
+// How to run:
+//   ./fluxa run examrt 0  { r/problemt, s/b07

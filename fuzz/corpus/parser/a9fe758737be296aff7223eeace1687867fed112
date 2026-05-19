@@ -1,0 +1,9 @@
+// nceures/stack.flx
+
+Block k {
+   
+    int top = -1
+
+   dyn f
+ 
+        a's  

@@ -1,0 +1,9 @@
+// pro: Br each 
+
+Block DijkstraSolver {
+    int n = 5
+  int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1,!1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i+ int (099)

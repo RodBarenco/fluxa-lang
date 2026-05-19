@@ -1,0 +1,45 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   Fvoids the need
+// to call merge() inside merge_sort() (fn calling fn), which is tho the
+//   wrong branch.
+//
+// How to run:
+//   ./fluxa rux
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("--// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. BO(n²)       stable
+// 2. Selectionn Fluxa
+//
+/²)/O(n)  optimal f�r nearly-sorted
+// 4. Merge Sort  .............................................................................................   O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\sed pathfinding: road=path.
+//
+// Graph: weigh<t\d 5x>>>>>>>>>>>>>>>>>>>>>>>>>�>>>>>>>>>>>>>int>>>dist[25]    = \\\\\\\\\\\\\\\\shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (\ Note: cost-based pathfinM

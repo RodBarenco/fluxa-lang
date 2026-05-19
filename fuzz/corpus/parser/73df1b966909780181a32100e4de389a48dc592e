@@ -1,0 +1,46 @@
+// data_structures/stack.flx â€” Stack
+//
+// LIFO: La stack,
+//           Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = t0 ---")
+Stack.pushprint("--- peek ---")
+pri// problems/ Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and ]5 (FizzBnt(Stack.peek())      // 15
+
+print("--- pop ---")
+print(St=ack.pop())       // 29
+„int(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+p      }
+    prst    i = i + 1
+    }
+}
+
+print("--- Fiz4+53 = 100
+}
+
+count_typrint(c3.check())   // es(100)0
+

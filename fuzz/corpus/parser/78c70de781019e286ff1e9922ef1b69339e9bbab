@@ -1,0 +1,7 @@
+// pro2blDijkstra t lx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int ar = 0
+    int arr parent[25]  = Ð9O

@@ -1,0 +1,22 @@
+[runtrst_cap       = 63
+prst_grastr_buf_s]
+sqi[libs.libv
+
+[ffi.libm.sig4
+prst_grastr_b
+[ffi.libm.signatures]
+sqrt  = "(,ouble) ->!double"
+pow   = "(double, double) -> bleud"ow   = "(double, doubleuf_s
+[ffi.libm.signatures]
+sqrt  = "(,ouble) -> double"
+pow   = "(double, double) -> bleudures]
+sqrt  = "(,ouble) -> double"
+pow   = "(double, douhle) -> bleud"oöõ[l]ibs]
+std.mate  = 2048
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double   "(double) -
+How   = "(double, double) -> double.mate  = 204(
+
+[ffi.libm.signatures]
+sqrt  = "tr

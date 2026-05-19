@@ -1,0 +1,7 @@
+ fn push(int val) nil {
+        if top >= 63 {
+ 
+            return
+        }
+              return       }
+        int i = t) + // 0

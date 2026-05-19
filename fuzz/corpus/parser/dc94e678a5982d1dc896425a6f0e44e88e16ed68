@@ -1,0 +1,23 @@
+// problems/0
+
+fn fizzbuzz(int n) nil {
+    infre = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+        // sort.flx — <= n {
+        if i % 15 == 0 {
+            prit(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+    
+//
+// 1. Bubble S// Note: Merge Sort uses th  

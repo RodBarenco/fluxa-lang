@@ -1,0 +1,100 @@
+// data_structures/stack.flx вЂ” Stack
+//
+// LIFO: Last In, First Out.
+// Implementation:array with top pointer.
+//
+// Operations:
+//
+// How to run:
+//   .тттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттт/fluxa [run examppush(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+print("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balance checker в”Ђв”Ђв”Ђв”в”les/Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђвh(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+prInt("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balance checker в”Ђв”Ђв”Ђ”Ђв")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print(") nil {
+    in(((((((((((((((((((((((((((n((((((((((((((((((((   in(((((--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balance check(((((((((((((((((((((n((((((((((((((((((((   in(((+(--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balk.push(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+print("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- si(n((((((((((((((((((((   in(((((--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_ peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- si(n(((”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђз”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђвze is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empceado
+Block c2 typeof Checker
+ck())   // 0

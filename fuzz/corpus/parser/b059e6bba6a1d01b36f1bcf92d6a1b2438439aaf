@@ -1,0 +1,24 @@
+// data_structures/st top >= 63 {
+            print("ERRO: stack overflow")
+            return------------------------------   int topdc = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return----------------------------------------------------// Implementation: static arrÌy with top point 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return--------------------------------------------------u[-------wh--------------------// data_structures/stack.flx â€” Stack
+//
+// LIFO: Last In, First Out. static array with top point 0
+    int top = -1
+
+    fn push------------------)
+print(Stack.peek())      // 30
+
+prin(((((t i =1 
+ src[i]
+ sr/ â”€â”€ App€â”licatio€â”€n: balan

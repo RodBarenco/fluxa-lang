@@ -1,0 +1,9 @@
+bcuom_ubf_size  = 2048
+
+[ffi.libm.signat8
+
+[ffi.libm.signatures]
+sqrt  = "buel)(od -> double"
+pow   = "(double, double) ->
+[bv]
+backeˆ› = "blas"

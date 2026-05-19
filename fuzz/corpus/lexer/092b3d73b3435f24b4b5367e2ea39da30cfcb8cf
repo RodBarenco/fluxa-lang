@@ -1,0 +1,12 @@
+// Sprint 7 — z, typeof, métodos, campos, isolamento
+
+Block Contador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        toltal + 1
+   while   fn valor() int {
+ 			fn azdicionar(int n) nil {
+char        total = total +  // 2
+
+// typeof cria instância ir/ 5

@@ -1,0 +1,164 @@
+// data_top-down
+// recursive. Bot` have the same complexituralf Checker
+c0.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-ck())   // 1
+
+// ( ) )   desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    �)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 5
+
+// ( ( (    → 
+// patternfre now need
+// to ich is het naturalf Checkre
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-0)
+print(c1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now that thative version is eq to ich is het naturalf Checker
+c1.add(1)
+c1.aintcdd(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1 // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now th)    → dessbalancBldo
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now need
+// to ich is het naturalf Checker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// (-1)
+print(c1.check())   // 1 // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now th
+
+// ( ) )    → desbalancerts))   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checkeb
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// patte1.check())   // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checkez
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   //t naturalf Checker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1 // 1
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)rint(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now th
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-k())   // 0
+
+// ( ( ( version is eq to ich is het naturalf Chucker
+c1.add(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1 // alanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now th
+
+// ( ) )    → desbalanceado
+Block c2 typeof Checker
+c2.add(1)
+c2.add(-1)
+c2.add(-1)
+print(c2.check())   // 0
+
+// ( ( (    → 
+// pattern now that tuallydesdo
+Block c3 typeof Cado
+Block c2 typeof Checkeo
+Block c3 typeof Checker
+c3.add(1)
+c3.add(1)
+c3.add(1)
+prin
+// didu3rsion.

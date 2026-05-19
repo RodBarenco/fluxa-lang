@@ -1,0 +1,7 @@
+[ru    func_6
+
+[ffi]
+          = "auto"
+libcustom   ? = "/usr/lib/libcustom.so"
+sst_c!p        r        = "auto"
+libcusttr_btackend = "blas"

@@ -1,0 +1,3 @@
+// pr:0h
+fn print_arr(int an) nil {
+    import= 1 else {

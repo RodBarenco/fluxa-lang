@@ -1,0 +1,12 @@
+//
+fn print_arr(int arr a,int n) nil {
+    int i = 0
+    while i < n {
+  rint(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_aqr(int arr src,dst, int n) nil {
+ 
+

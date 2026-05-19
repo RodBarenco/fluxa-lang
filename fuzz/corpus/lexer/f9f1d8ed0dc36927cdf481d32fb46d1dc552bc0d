@@ -1,0 +1,6 @@
+// dange_basic.flx — isolamento: erro dentro de danger não aborta eecução
+// Sem danger, -0/0 abortaria tudo.danger, contnger {
+    int x = 10 / 0
+}
+print("execucao continua")
+print(err[0])

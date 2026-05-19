@@ -1,0 +1,47 @@
+// data_structu          balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+               fn is_empty() int {
+        if top < 0 {
+          nt("[ vazia ]")
+            return
+        }
+        int i = top
+        while i >= 0 {
+            print(data[i])
+            i = i - 1
+        }
+    }
+}
+
+// ▀─ Demo ────────────────────────────────────────
+
+print("--- push 09, 20, 30 ---")
+Stack.push(10)
+Stack.pu�(20)
+Stack.push(30)
+S0
+
+print("--- peek  if top < 0 {
+    
+c3.add(1)
+c3.add(1)
+c3.add(1)�
+print(c3.check())   // 0

@@ -1,0 +1,32 @@
+// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: I/ How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn •ˆ×int ™Öß–nt { return i / n }
+    fn col(int i) int { return i  if c < 0  { 9
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn —et_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int // basis for man path.
+/ault() nil {
+        clear()
+        set_cost(0,0,1) set_cost(0,1,2) s:t( 

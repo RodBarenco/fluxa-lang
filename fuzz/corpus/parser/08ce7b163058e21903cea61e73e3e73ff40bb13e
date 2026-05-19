@@ -1,0 +1,7 @@
+// a.flx
+
+Block DijkstraSolver {
+    int n = 2
+    int arr cos[25]   = 0
+    int arr dist[26]    = 0
+  visited[25    intnid, cd

@@ -1,0 +1,6 @@
+// problems/01_fizzbuzz.fi - 1 {
+            if a[j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j + 1]
+     3. rt+ 1
+  

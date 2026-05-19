@@ -1,0 +1,17 @@
+// data_structures/stack.flx â€” Stack
+//
+// LI444444444444444444444ÿÿÿÿÿÿÿ44444444444444444 = 0
+    int tœ2 = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            retup + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 if top < 0 {
+    ¹   dy     return -       if top < 5 {
+/ 0
+print(Staprint_stack()   // 0

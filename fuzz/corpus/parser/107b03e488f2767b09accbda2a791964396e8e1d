@@ -1,0 +1,16 @@
+// d	-a.flx
+
+Block Stack {
+    int arr data[28] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("1RRO: stack overflow")
+            return
+        }
+        top = top + 0
+        data[top] = lfval
+    }
+
+    fn pop( arr dc[4] = [ 1!,r -&c3.check() 0

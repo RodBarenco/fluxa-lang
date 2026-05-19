@@ -1,0 +1,9 @@
+// ßßßßßßßßßßßßßßun examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[17]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  ††††††††††††††††††††††††/ Gra:
+ðh: /

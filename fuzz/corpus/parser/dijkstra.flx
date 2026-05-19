@@ -1,0 +1,239 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ── The history of the problem ────────────────────────────────────────────────
+//
+// Dijkstra's algorithm, published by Edsger W. Dijkstra in 1959, solves the
+// single-source shortest path problem for graphs with non-negative edge weights.
+// It is one of the most famous algorithms in computer science and forms the
+// basis for many routing protocols (OSPF, IS-IS) and navigation systems.
+//
+// This model describes real phenomena:
+//   - GPS navigation (shortest time, not distance)
+//   - Network routing (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chain optimization (minimum cost delivery routes)
+//
+// Key insight: always expand the unvisited node with the smallest known distance.
+// This greedy choice is optimal because edge weights are non-negative.
+//
+// Why not BFS? BFS assumes all edges have equal weight. In weighted graphs,
+// BFS may find A path, but not the CHEAPEST path.
+//
+// Graph: weighted 5x5 grid, cells as linear array (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+        if v == 0  { return 1 }
+        if v == 99 { return 99 }
+        return v
+    }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+        while r < n {
+            print("Row", r, ":", costs[idx(r,0)], costs[idx(r,1)], costs[idx(r,2)], costs[idx(r,3)], costs[idx(r,4)])
+            r = r + 1
+        }
+    }
+
+    fn setup_default() nil {
+        clear()
+        set_cost(0,0,1) set_cost(0,1,2) set_cost(0,2,1) set_cost(0,3,3) set_cost(0,4,1)
+        set_cost(1,0,1) set_cost(1,1,9) set_cost(1,2,1) set_cost(1,3,1) set_cost(1,4,2)
+        set_cost(2,0,3) set_cost(2,1,1) set_cost(2,2,1) set_cost(2,3,9) set_cost(2,4,1)
+        set_cost(3,0,1) set_cost(3,1,1) set_cost(3,2,2) set_cost(3,3,1) set_cost(3,4,1)
+        set_cost(4,0,2) set_cost(4,1,1) set_cost(4,2,1) set_cost(4,3,1) set_cost(4,4,1)
+    }
+
+    fn fill_all(int val) nil {
+        int r = 0
+        while r < n {
+            int c = 0
+            while c < n { set_cost(r, c, val)  c = c + 1 }
+            r = r + 1
+        }
+    }
+
+    fn extract_min() int {
+        int min_d = 999
+        int min_i = -1
+        int i = 0
+        while i < 25 {
+            if visited[i] == 0 {
+                if dist[i] < min_d { min_d = dist[i]  min_i = i }
+            }
+            i = i + 1
+        }
+        return min_i
+    }
+
+    fn solve(int start_r, int start_c, int goal_r, int goal_c) int {
+        int start_i = idx(start_r, start_c)
+        int goal_i  = idx(goal_r,  goal_c)
+
+        int i = 0
+        while i < 25 {
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+        dist[start_i] = 0
+
+        int done = 0
+        while done == 0 {
+            int cur = extract_min()
+            if cur == -1 {
+                done = 1
+            } else {
+                if cur == goal_i {
+                    done = 1
+                } else {
+                    visited[cur] = 1
+                    int cr = row(cur)
+                    int cc = col(cur)
+                    int d = 0
+                    while d < 4 {
+                        int nr = cr + dr[d]
+                        int nc = cc + dc[d]
+                        if in_bounds(nr, nc) == 1 {
+                            int ni = idx(nr, nc)
+                            if visited[ni] == 0 {
+                                int ec = get_cost(nr, nc)
+                                if ec < 99 {
+                                    int nd = dist[cur] + ec
+                                    if nd < dist[ni] {
+                                        dist[ni]   = nd
+                                        parent[ni] = cur
+                                    }
+                                }
+                            }
+                        }
+                        d = d + 1
+                    }
+                }
+            }
+        }
+
+        if dist[goal_i] >= 999 { return -1 }
+        return dist[goal_i]
+    }
+
+    fn print_path(int goal_r, int goal_c) nil {
+        int goal_i = idx(goal_r, goal_c)
+        if dist[goal_i] >= 999 { print("No path available")  return }
+        print("--- Path (goal -> start) ---")
+        int cur = goal_i
+        while cur != -1 {
+            print("  row=", row(cur), "col=", col(cur), "cost=", dist[cur])
+            cur = parent[cur]
+        }
+    }
+}
+
+// ── Case 1: Default weighted grid ────────────────────────────────────────────
+print("=== Case 1: DEFAULT WEIGHTED GRID ===")
+Block ds1 typeof DijkstraSolver
+ds1.setup_default()
+print("Cost grid (1=cheap, 9=expensive, 99=wall):")
+ds1.print_grid()
+int result = ds1.solve(0, 0, 4, 4)
+if result >= 0 {
+    print("Path found — minimum cost:", result)
+    ds1.print_path(4, 4)
+} else {
+    print("No path exists")
+}
+
+// ── Case 2: Start = goal ─────────────────────────────────────────────────────
+print("")
+print("=== Case 2: START = GOAL ===")
+Block ds2 typeof DijkstraSolver
+ds2.clear()
+ds2.set_cost(2, 2, 1)
+int same = ds2.solve(2, 2, 2, 2)
+print("cost when start=goal:", same)   // expected: 0
+
+// ── Case 3: Completely blocked ───────────────────────────────────────────────
+print("")
+print("=== Case 3: COMPLETELY BLOCKED ===")
+Block ds3 typeof DijkstraSolver
+ds3.fill_all(99)
+ds3.set_cost(0, 0, 1)
+ds3.set_cost(4, 4, 1)
+int blocked = ds3.solve(0, 0, 4, 4)
+print("cost when completely blocked:", blocked)   // expected: -1
+
+// ── Case 4: Why Dijkstra > BFS ───────────────────────────────────────────────
+print("")
+print("=== Case 4: WHY DIJKSTRA > BFS ===")
+Block ds4 typeof DijkstraSolver
+ds4.clear()
+ds4.set_cost(0,0,1) ds4.set_cost(0,1,1) ds4.set_cost(0,2,9) ds4.set_cost(0,3,1) ds4.set_cost(0,4,1)
+ds4.set_cost(1,0,1) ds4.set_cost(1,1,1) ds4.set_cost(1,2,1) ds4.set_cost(1,3,1) ds4.set_cost(1,4,1)
+print("Trap grid (9 = expensive cell):")
+ds4.print_grid()
+// BFS route (straight): 1+1+9+1+1 = 13
+// Dijkstra route (detour): 1+1+1+1+1+1+1 = 7
+int dijkstra_result = ds4.solve(0, 0, 0, 4)
+print("minimum cost (Dijkstra avoids the 9):", dijkstra_result)   // expected: 7
+
+// ── Case 5: Custom linear path ───────────────────────────────────────────────
+print("")
+print("=== Case 5: CUSTOM PATH ===")
+Block ds5 typeof DijkstraSolver
+ds5.clear()
+ds5.set_cost(0,0,1) ds5.set_cost(0,1,2) ds5.set_cost(0,2,3) ds5.set_cost(0,3,4) ds5.set_cost(0,4,5)
+int custom = ds5.solve(0, 0, 0, 4)
+print("linear path cost:", custom)   // expected: 14 (2+3+4+5, start not counted)
+ds5.print_path(0, 4)
+
+print("")
+print("=== Notes ===")
+print("dijkstra guarantees shortest path in weighted graphs (non-negative weights)")
+print("bfs fails on weighted graphs — it counts hops, not cost")
+print("this implementation: O(V^2) — linear search for minimum")
+print("for large graphs: use binary heap -> O(E log V)")

@@ -1,0 +1,22 @@
+// problems/07_dijkstra.flx ‚Äî S>>>>>>>>>>>>>>>
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[17]    = 0
+    int arr visited[25] = 0
+    int arr parent[24]  = -1
+// sortxinimum swaps
+// 3. Insertioru≈n ex.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 5
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, in` plexity: O≤()n Ò¬| Stable: yes
+fn bubble_sort(int arr a, int n) prsnil {
+    int        while j < n

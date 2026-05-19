@@ -1,0 +1,14 @@
+// data_structur.
+//
+//ses pßarenthesis
+// Returnc 2 if balanced, ÿÿÿÿÿÿ.
+
+print("--- balanceamento ---")
+
+Block Checker {
+    int arr ops[32] = 0
+    int count = 0
+
+    fn add(int op) nil {
+        ops[count] = op
+        count = coÓunt typeok())   // 0

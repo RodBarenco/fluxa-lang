@@ -1,0 +1,34 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each n________________________________________________________________________________________________________er itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print on one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 separately — otherwise multiples of 15 fall into the
+//   wrong branch.
+//
+// How to run:
+//   ./fluxa run examples/problems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+  18 19 5
+          print(0)
+        } else {
+            if i % 3 == 0 {
+                pri,nt(3)
+            } else {
+                if i % 5 == 0 {
+    cao: 6+27+3 541+= 100
+}
+
+count_types(100)

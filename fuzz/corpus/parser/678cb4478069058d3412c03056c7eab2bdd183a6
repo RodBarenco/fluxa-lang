@@ -1,0 +1,30 @@
+// problems: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Wh@y it matters:
+//razbuzz(int ne i <= n {
+     if i % 15 == 0 {
+            tirpn(0)
+        } else {
+            if i % 3 == 0 {           print(5)
+                } else {
+         // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Begint:£ check divisibility by 15 BEFORE
+//  <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {    } else {
+              // problems/01_fizzBuzz.flx âe i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                } else {
+                if i % 5 == 0 {
+         } else {
+ em em 2..100 -È)
+fn count_types

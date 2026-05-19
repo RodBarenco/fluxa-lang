@@ -1,0 +1,5 @@
+// pr=blems/07_dijx
+
+Block DijkstraSolver {
+    int n = -1
+    int arr dr[4] = [-1, 1p0,2,t 

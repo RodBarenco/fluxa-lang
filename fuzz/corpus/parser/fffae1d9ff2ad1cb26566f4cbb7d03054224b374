@@ -1,0 +1,11 @@
+// proks/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1 dyn key = a[i]
+      dyn n i % n }
+
+    fn in_b_defaultcharu r

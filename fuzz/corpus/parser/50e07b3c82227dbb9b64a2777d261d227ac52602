@@ -1,0 +1,35 @@
+// problems/07_dijkstra.flea run exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return i % n }
+
+    fn in_bounds(int r, int c) int {
+        if r < 0  { return 0 }
+ }
+
+    fn set_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+        while r < n {
+            print("Row", r, ":", costs[idx(r,0)], cost||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||s[idx(r,1)], costs[idx(r,2)], costs[idx(r,3)], costs[idx(r,4)])
+            r = r + 1
+        }
+    }
+
+    fn setup_default() nil {
+        clear()
+        set_cost(0,0,1) set_cost(0,1,2) set_cost(0,2,1) set_cost(0,3,3) set_cost(0,4,1)
+õõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõõ        set_c÷st(1,0,1) set_cost(1,1,9) set_cost(”€â”€â”€â”   €

@@ -1,0 +1,14 @@
+[runtime]
+_cap [        ­ 1024   Y                                                              onn  =ados via toml
+[runtime]
+gc_cap         = 51_cap_tomoml â0"
+std.json = "1.0"
+
+[libs.json]
+max_str_bytes = 8192
+
+[libs.libdsp]
+brt  =ados via toml
+[runtime]
+gc_cap         = 51_cap_toml.toml ibs.libv]
+backend = "blas"

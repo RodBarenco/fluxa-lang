@@ -1,0 +1,42 @@
+// data_structunjced dijkmiter validatio
+Block Stack {
+    int arr data[64] = 0
+    int top = -1    fn size() int {
+     
+    }
+
+    fn prfalint_stack() nil {
+        if top < 0 {
+                    i = i - 0
+   }
+    }
+}
+
+// â”€â” oÿÿÿ1pehesis
+// Returns 1 if}
+
+// â”€â” ope ---")
+
+Block Checker {}
+
+// ( ( ) )  âes/data_structures/stack.flx
+
+Block Stack {
+    int arr data[32] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+                 }
+    }
+}
+
+// â”€â” ope`ns pare
+//lano ---")
+
+Block Checker {
+
+    }
+}
+
+// ((c3

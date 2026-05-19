@@ -85,11 +85,20 @@ FLX
 out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
 echo "$out" | grep -q "^4$" && pass "block_method_thread" || fail "block_method_thread" "4" "$out"
 
-# CASE 4: ft.active lifecycle — DETERMINISTIC: resolve_all before checking
+# CASE 4: ft.active lifecycle — DETERMINISTIC: use sleep to keep thread alive during check
 P="$WORK_DIR/p4"; setup "$P" "active"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "active"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+std.time = "1.0"
+TOML
 cat > "$P/main.flx" << 'FLX'
 import std flxthread as ft
-Block W { fn run() nil { int i = 0  while i < 3 { i = i + 1 } } }
+import std time
+Block W { fn run() nil { int i = 0  while i < 5 { i = i + 1  time.sleep(20) } } }
 Block w typeof W
 ft.new("t1", w, "run")
 bool before = ft.active("t1")
@@ -98,7 +107,7 @@ bool after = ft.active("t1")
 print(before)
 print(after)
 FLX
-out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
 if echo "$out" | sed -n '1p' | grep -q "true" && echo "$out" | sed -n '2p' | grep -q "false"; then
     pass "ft_active_lifecycle"
 else
@@ -378,8 +387,202 @@ else
     fail "ft_kill_immediate" "false + 1" "$out"
 fi
 
+
+# CASE 16: ft.new global fn with 1 arg
+P="$WORK_DIR/p16"; setup "$P" "new_fn_1arg"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+prst int result = 0
+fn worker(int n) nil {
+    result = n
+}
+ft.new("t1", "worker", 99)
+ft.resolve_all()
+print(result)
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^99$" && pass "new_fn_1arg" || fail "new_fn_1arg" "99" "$out"
+
+# CASE 17: ft.new global fn with 3 args
+P="$WORK_DIR/p17"; setup "$P" "new_fn_3args"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "new_fn_3args"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+[libs.flxthread]
+max_msg_args = 3
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+prst int result = 0
+fn worker(int a, int b, int c) nil {
+    result = a + b + c
+}
+ft.new("t1", "worker", 10, 20, 30)
+ft.resolve_all()
+print(result)
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^60$" && pass "new_fn_3args" || fail "new_fn_3args" "60" "$out"
+
+# CASE 18: ft.message with 2 args
+P="$WORK_DIR/p18"; setup "$P" "message_2args"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "message_2args"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+std.time = "1.0"
+[libs.flxthread]
+max_msg_args = 2
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+import std time
+Block Acc {
+    int total = 0
+    fn run() nil { int i = 0  while i < 20 { i = i + 1  time.sleep(5) } }
+    fn add(int a, int b) nil { total = total + a + b }
+    fn get() int { return total }
+}
+Block acc typeof Acc
+ft.new("t1", acc, "run")
+ft.message("t1", "add", 10, 20)
+ft.message("t1", "add", 5, 5)
+int v = ft.await("t1", "get")
+print(v)
+ft.resolve_all()
+FLX
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^40$" && pass "message_2args" || fail "message_2args" "40" "$out"
+
+# CASE 19: ft.await with 2 args
+P="$WORK_DIR/p19"; setup "$P" "await_2args"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "await_2args"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+std.time = "1.0"
+[libs.flxthread]
+max_msg_args = 2
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+import std time
+Block Calc {
+    fn run() nil { int i = 0  while i < 20 { i = i + 1  time.sleep(5) } }
+    fn mul(int a, int b) int { return a * b }
+}
+Block c typeof Calc
+ft.new("t1", c, "run")
+int v = ft.await("t1", "mul", 6, 7)
+print(v)
+ft.resolve_all()
+FLX
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^42$" && pass "await_2args" || fail "await_2args" "42" "$out"
+
+# CASE 20: overflow protection — too many args for ft.new
+P="$WORK_DIR/p20"; setup "$P" "new_overflow"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+fn worker(int a, int b) nil { }
+danger {
+    ft.new("t1", "worker", 1, 2, 3)
+}
+if err != nil { print("overflow caught") }
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "overflow caught" && pass "new_fn_overflow_caught" || fail "new_fn_overflow_caught" "overflow caught" "$out"
+
+# CASE 21: overflow protection — too many args for ft.message
+P="$WORK_DIR/p21"; setup "$P" "message_overflow"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "message_overflow"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+std.time = "1.0"
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+import std time
+Block W {
+    fn run() nil { int i = 0  while i < 5 { i = i + 1  time.sleep(5) } }
+    fn add(int a) nil { }
+}
+Block w typeof W
+ft.new("t1", w, "run")
+danger {
+    ft.message("t1", "add", 1, 2, 3)
+}
+if err != nil { print("overflow caught") }
+ft.resolve_all()
+FLX
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "overflow caught" && pass "message_overflow_caught" || fail "message_overflow_caught" "overflow caught" "$out"
+
+# CASE 22: arity mismatch — ft.new with more args than fn params
+P="$WORK_DIR/p22"; setup "$P" "arity_mismatch"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "arity_mismatch"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+[libs.flxthread]
+max_msg_args = 4
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+fn worker(int a) nil { }
+danger {
+    ft.new("t1", "worker", 1, 2, 3)
+}
+if err != nil { print("arity error") }
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "arity error" && pass "new_fn_arity_mismatch" || fail "new_fn_arity_mismatch" "arity error" "$out"
+
+# CASE 23: toml max_msg_args respected
+P="$WORK_DIR/p23"; setup "$P" "toml_max_msg"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "toml_max_msg"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+std.time = "1.0"
+[libs.flxthread]
+max_msg_args = 4
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+import std time
+Block W {
+    int total = 0
+    fn run() nil { int i = 0  while i < 20 { i = i + 1  time.sleep(5) } }
+    fn add(int a, int b, int c, int d) nil { total = total + a + b + c + d }
+    fn get() int { return total }
+}
+Block w typeof W
+ft.new("t1", w, "run")
+ft.message("t1", "add", 1, 2, 3, 4)
+int v = ft.await("t1", "get")
+print(v)
+ft.resolve_all()
+FLX
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^10$" && pass "toml_max_msg_args_4" || fail "toml_max_msg_args_4" "10" "$out"
+
 echo "────────────────────────────────────────────────────────────────────"
-total=15
+total=23
 if [ "$FAILS" -eq 0 ]; then
     echo "  Results: ${total} passed, 0 failed"
     echo "  → std.flxthread: PASS"

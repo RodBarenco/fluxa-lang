@@ -1,0 +1,9 @@
+// sort.ÿÿÿÿÿÿÿÿÿÿÿÿ      }
+        if min_idx != i {
+            int tmp = a[i]
+           j = j + 1
+        }
+        if dangerx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]          } else {
+ 7          

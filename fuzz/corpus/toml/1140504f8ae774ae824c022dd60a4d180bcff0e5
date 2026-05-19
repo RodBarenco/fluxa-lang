@@ -1,0 +1,29 @@
+[runt         = oons         = 16
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/lib/libcustom.so"
+str_buf_size  = 204custŸom.so"
+str_buf_size  = 2048
+
+[ffi.libm.signatuzes]
+sqrt  = "(double) ->6
+
+[ffi]
+libm        "/usr/lmb/|ibcustom.so"
+str_buf_size  = 2048
+
+[ff8
+
+= "(double) ->8
+
+[ffi]
+libm      /lmb/|ibcust¢m.so"
+str_buf_size  = 2048
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+pow   = "(dokend = "fftw"
+
+[libs.libv]
+backend=b la "s"

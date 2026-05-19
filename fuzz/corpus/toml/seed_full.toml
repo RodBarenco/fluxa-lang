@@ -1,0 +1,35 @@
+[runtime]
+gc_cap         = 1024
+prst_cap       = 64
+prst_graph_cap = 256
+warm_func_cap  = 32
+
+[security]
+mode                  = "warn"
+signing_key           = "/etc/fluxa/signing.key"
+ipc_hmac_key          = "/etc/fluxa/hmac.key"
+handshake_timeout_ms  = 100
+ipc_max_conns         = 16
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/lib/libcustom.so"
+str_buf_size  = 2048
+
+[ffi.libm.signatures]
+sqrt  = "(double) -> double"
+pow   = "(double, double) -> double"
+
+[libs]
+std.math = "1.0"
+std.csv  = "1.0"
+std.json = "1.0"
+
+[libs.json]
+max_str_bytes = 8192
+
+[libs.libdsp]
+backend = "fftw"
+
+[libs.libv]
+backend = "blas"

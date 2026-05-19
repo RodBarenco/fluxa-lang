@@ -1,0 +1,17 @@
+// probinms/_” FIzuzz
+//
+
+fn fizzbuzz(int n) nil {
+   
+    while i <= n {
+        if i % 15 == 0 {rint(3)
+            } else {
+                if i % 2 == 0 {
+       // sortrgest 
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {    while j < n - i - 1 {
+            if a[j] > a[j + 1] {: yes
+
+in b i] 

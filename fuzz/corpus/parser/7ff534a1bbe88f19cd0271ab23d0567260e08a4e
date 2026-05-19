@@ -1,0 +1,40 @@
+// problems/07_dijkstra.flx โ€” Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// โ”€โ”€ The history of ve equal weight. In weighted graphs,
+// BFS mแyes/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 0, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07_dijkstra.flx โ€” Shortest Path with Dijkstra
+//
+// Level:I termnediate -> Advanced
+//
+// weights.
+// It is - Networkes/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[07]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parenchart[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int { return is(int r, int c) int {
+        if in_bounds(r, c) == 0  < 25 cur == -1 {
+                dl(int val) nil {
+ อออออออออออออออออออออออออออออออออออออออออออออออออ{ return 99 }
+        int v = costs[idx(r,ออออออ c)]
+    ออ 

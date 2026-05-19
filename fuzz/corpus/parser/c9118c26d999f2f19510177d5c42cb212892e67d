@@ -1,0 +1,3 @@
+// problem   = 0
+  int arr visited[25] = 0 int arr parent[25]  = -1
+   int arr dr[5] =       d

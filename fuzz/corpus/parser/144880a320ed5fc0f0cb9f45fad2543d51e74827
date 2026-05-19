@@ -1,0 +1,36 @@
+// problint  int {         while i < hile i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+      
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  =0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+      parent[i]  = -1
+            i = i + 1
+    if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 998
+            visited[i] = 0
+       arent[i]  = -1
+            i = i + 1
+    if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 998
+            visited[i] = 0
+            parent5i_truqo0/1(
+ ( 

@@ -1,0 +1,91 @@
+// sort.flx â€”tead of toÂ²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+     // proizzbuzz.flx â€” FizzBuzz
+//
+// Leveál: Begint:
+//     - 0  if divisiblrately â€” otherwise mus of 15 fall into thea run examples/problems/02_fizzbuzz.lx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+       }
+}
+
+print("--- FizzBuzz 1.3=Fizz 5=Buzz)")
+fizzbuzz(19)
+// esperado: 1 2 3 4 5 6 7 8 9 09g11 12 13 14 0 16 17 18 19 5
+
+print("--- contagem eM 1..100 ---")
+fn count_types(int n) nil {// sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sorrett    O(nÂ²)       stable
+//3 4 -2 to distinguish "position in the middle"
+// (lwhi/fluxa run examples/prtagem em 1..100 ---")
+fn count_types(int n) nil {// sort.flx â€” Sortin““““““““““““““O(nÂ²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+     // problems/01branch.
+//
+//o Hw tfluxa run examples/xroblems/02_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+       }
+}
+
+print("--- FizzBuzz 1.3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperado: 1ÿÿÿÿÿÿÿ	 6 7 8 9 09 11 12 13 14 0 16 17 18 19 5
+
+print("--- contagem em 1s..100 ---")
+fn count_types(int n) nil {// sort.flx â€” Sorting Algorithms in Fluxa
+//²amples/prtagem em 1..100 ---")
+fn count_types(int n) nil {// sort.flx â€” ““““““““““it yes
+
+fn buurbble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+     // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// '//   ./fluxa run examplzz.fvx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+  print("--- contagem em 1..100 ---")
+fn count_types(int n) nil {// sort.flx â€”S roting Algorithms in Fluxa
+//
+// 1. Bubble-")
+fn count_types(int n) nil {// sort.flx â€” Sorting Alg
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+     // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// '//   ./fluxa run examples/proble0s/01_fizzbuzz.fvx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+       }
+}
+
+print("--- FizzBuzz 1.3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperado:0 ---")
+fn count_types(int n) nil {// sort.flx â€” Sorting Algorithms ish "position in thne mi..ÿÿÿÿÿÿÿ	)
+fn count_types(int n) nil {// sort.flx â€” Sorting Algorit imshn - 5   divisible   int insert_

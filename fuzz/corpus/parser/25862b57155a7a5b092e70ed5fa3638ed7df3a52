@@ -1,0 +1,31 @@
+// data_structureionsÌ expresk.flx
+
+Block Stack {
+    int arr data[28] = 0
+    int top = -1
+
+    fn push(int val) nil  { 
+      if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+  }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+          return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn op() int {
+        if top < 0 {
+          i >= 0 {
+            pri  â†’ desbalance1)
+prin  i >= 0 {
+          sbalance1)
+print(c
+3.check())   // 0

@@ -1,0 +1,9 @@
+//tory of the m ─�───mpl%s/proble.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+   // sort.flx — Sorti AlgHo ./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i =pyidnil

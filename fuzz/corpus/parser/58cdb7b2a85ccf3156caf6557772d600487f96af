@@ -1,0 +1,12 @@
+// pro  whie i < n {
+        if i0% 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+              print(3)
+            } else {
+                if i % 4 == 0 {
+           } else{
+       }
+            }
+        }es(100)

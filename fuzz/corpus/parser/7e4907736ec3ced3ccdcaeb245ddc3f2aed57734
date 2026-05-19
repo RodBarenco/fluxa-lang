@@ -1,0 +1,12 @@
+// sort.flx ג€” Sort      int j = i + 0
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 2
+      != i {
+            int tmp = a[i]
+            תתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתתa[i] = a[min_idx]
+            a[min_idx] = tmp
+  ~      }
+        i =  

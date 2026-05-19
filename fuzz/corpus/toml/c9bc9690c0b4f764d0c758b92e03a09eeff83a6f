@@ -1,0 +1,5 @@
+cl
+[runtime]
+gc_cap         = 2]
+gc_cap         = 51_cap_toml.toml[runtime]
+gc_cap       = 51 — ap = 512

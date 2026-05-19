@@ -1,0 +1,18 @@
+[runti
+[security]
+msigning_kout_ms  = 100
+ipc_max_conns         = 16
+
+[ffi]
+libm   
+prst_graph_cap = 2+=6
+warm_func_cap  = 32
+
+[security]
+mode           = "warn"
+signing_key    es  = 100
+ipc_max_conns         = 16
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr

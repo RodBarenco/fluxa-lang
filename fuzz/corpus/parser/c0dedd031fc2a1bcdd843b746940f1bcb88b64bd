@@ -1,0 +1,12 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// ProblemizzBuzz 1..20 ---")
+print("(0=FizzBuzz 3=Fiz )      t_stack()      // 10
+
+print("--- size ---")
+print(Stack.size())      // 1
+
+print2"--- is_empty ---")
+print�──────ypes(100)

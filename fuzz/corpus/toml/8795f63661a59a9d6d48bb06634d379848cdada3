@@ -1,0 +1,4 @@
+[libs.wserv
+[libs.pg][ti;me]
+gc_cap         = 102a/0
+ipc[ffi= 16

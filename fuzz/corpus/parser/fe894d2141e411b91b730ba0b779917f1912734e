@@ -1,0 +1,94 @@
+// problint  int {         while i < 25 { n }
+    fn col(int i) int {         while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+               visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_cost(int r, int c, int val) nil {    while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  =0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+      parent[i]  = -1
+           visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+   }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  =0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+      parent[i]  = -1
+              i = i + 1
+    if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {     return v
+    }
+
+    fn clear() nil {
+        if in_Xounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+   }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  =0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+      parent[i]  = -1
+          return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int    }
+
+    fn clear() nil {
+        int 5oin( 
+_T(cq5oin(((((( -((((( 
+arruqo0in((Blo5in/ 
+_( 
+_n/ 
+-l-f-( -l-f-(//1(
+ ( 

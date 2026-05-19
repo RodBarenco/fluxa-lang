@@ -1,0 +1,9 @@
+// proks/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+     -1 dyn key = a[i]
+      dyn n i % } n
+
+   f  nin_b_defaultcharu r

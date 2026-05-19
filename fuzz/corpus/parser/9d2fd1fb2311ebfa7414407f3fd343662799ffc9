@@ -1,0 +1,18 @@
+// problems/01_fizzb5 fxampl    whie i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 4 == 0 {
+        print(4)
+                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + œœœœœœœœœœœœœœœœœœœœœ       print(es c   har =  int buzao:0
+}
+
+count_types(100)

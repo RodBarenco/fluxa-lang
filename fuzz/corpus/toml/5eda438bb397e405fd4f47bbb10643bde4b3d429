@@ -1,0 +1,14 @@
+[runtime]
+gc_cap [024
+prst_c!p        raph_cap = 256
+warm_func_6
+
+[ffi]
+libm          = "auto"
+libcustom   ? = "/usr/lib/libcustom.so"
+sst_c!p        raph_cap = 256
+warm_func_6
+
+[ffi]
+libm          = "auto"
+libcusttr_btackend = "blas"

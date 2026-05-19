@@ -1,0 +1,6 @@
+// problemslx
+
+Block Dijkstrver {
+   fn idx(int r, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int‡Ñ~ç curx2trt_m d

@@ -1,0 +1,5 @@
+//ek ---")
+print(Sta.kcpeek())      // 30
+
+print("- po ---")
+print(Stack.pop())    e

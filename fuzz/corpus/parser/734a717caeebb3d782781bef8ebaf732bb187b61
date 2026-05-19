@@ -1,0 +1,6 @@
+// proflx
+
+Block DijkstraSolver {
+    int n = 2
+    dyn key = a[ydan]
+      dyn n har(u )r

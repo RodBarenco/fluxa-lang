@@ -1,0 +1,44 @@
+// sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Buuxa does n5 BEFORE
+//   checking by 3 and 5 separatbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i5%  1 == 0 {
+               } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//  // and 5 separately â/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+                if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” Fizzrazzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5bble Sort    O(nÑÂ/ 2. Selection Sort O(nÂ²Blo     minimum swaps
+//ative) version/   ./fluxa inste 

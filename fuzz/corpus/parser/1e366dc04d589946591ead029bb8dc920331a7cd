@@ -1,0 +1,50 @@
+// problems/07_dijkstra.flx — Shortest Path with Dijkstra
+//
+// Level: Intermediate -> Advanced
+//
+// ─♀ Theerrstory o�ߋ�e problemuel weight. In weighted graphs,
+// BFS may find A path, but not the CHEAPEST p>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[17]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+// sort.flx — Sortin��Algorithms in Fluxa
+//
+// 1. Bubble Sort  les/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+// ── 1. Bubble Sort ─────�argComplexity: O(n²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+        ───────────────t position.
+       while j <
+            }
+        "   j = j + 1
+        }
+        if min_idx != i {
+            nt i) int { return i / n }
+    fn coint tmp = a[i]
+            a[i] = a[min_idxl(int i) int { return ]
+      i

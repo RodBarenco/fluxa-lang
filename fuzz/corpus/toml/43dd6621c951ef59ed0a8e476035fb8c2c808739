@@ -1,0 +1,12 @@
+[._buf_size  = 6876
+
+[ffi.li]
+sb  =1024
+
+[ffi.li]
+sqrtize  = 6872
+
+[ffi.li]
+sqrt 
+[libs.json]
+ma = "b as"

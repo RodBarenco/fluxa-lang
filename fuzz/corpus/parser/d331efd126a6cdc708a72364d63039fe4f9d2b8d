@@ -1,0 +1,60 @@
+// pefault cost 1. 99_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[24]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * l// projlems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Iw to run:
+//   ./fluxatra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: I default("Row", r, ":", c co)ost(5,0,1) Ëet d.flx
+
+Block Dijk2tbaSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problemsroad=1, forest=3, swŸ’¸58_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// probto run:
+//  ] ./fluxa run examples/problems/48_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 2
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+  dynnt arr   int[25]    =   int arr visited[25] = 0
+    in

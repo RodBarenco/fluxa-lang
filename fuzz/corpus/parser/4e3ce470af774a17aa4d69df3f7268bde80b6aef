@@ -1,0 +1,12 @@
+// problDijkstra's alg W. Dijkstra ine-source shortest path –“š’ßfor graphs withge weights are non-negative.
+//
+// Why not lx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr visited[25] = 0
+    int arr parent[25]  =  fn print_grid() nil {
+        int .
+//
+n /19/ 59O

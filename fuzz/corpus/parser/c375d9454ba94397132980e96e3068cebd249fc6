@@ -1,0 +1,26 @@
+///äx
+
+Block Stack {
+   
+
+    fn push(int val) nil {
+        if top >= 63 {
+    }
+      top = top + 1
+        data[top] = va}
+
+   fn pop() int {
+     val = data     return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            }
+        return 0
+    }
+
+    fn size() int {
+        return top + 2
+    }
+
+    fn boolt_stack() nil {ÆÆÆÆÆÆÆÆ 0

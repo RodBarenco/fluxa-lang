@@ -20,9 +20,21 @@ __thread FlxThread *g_current_flx_thread = NULL;
 /* ── Internal: invoke a method by name on a Block instance ──────────────── */
 /* Finds the method's VAL_FUNC in the instance scope, binds the argument
  * into the instance scope under the first param name, then evals the body. */
+static Value flx_invoke_method_n(Runtime *rt, BlockInstance *inst,
+                                  const char *method_name,
+                                  const Value *args, int argc);
+
 static Value flx_invoke_method(Runtime *rt, BlockInstance *inst,
                                 const char *method_name,
                                 Value arg, int has_arg) {
+    if (has_arg)
+        return flx_invoke_method_n(rt, inst, method_name, &arg, 1);
+    return flx_invoke_method_n(rt, inst, method_name, NULL, 0);
+}
+
+static Value flx_invoke_method_n(Runtime *rt, BlockInstance *inst,
+                                  const char *method_name,
+                                  const Value *args, int argc) {
     if (!inst || !method_name) return flxt_nil();
 
     Value fn_val; fn_val.type = VAL_NIL;
@@ -58,10 +70,12 @@ static Value flx_invoke_method(Runtime *rt, BlockInstance *inst,
         rt->stack[_si].type = VAL_NIL;
     rt->stack_size = 0;
 
-    /* Bind argument to the first parameter via scope (not stack) */
-    if (has_arg && fn_node->as.func_decl.param_count > 0) {
-        const char *pname = fn_node->as.func_decl.param_names[0];
-        scope_set(&rt->scope, pname, arg);
+    /* Bind arguments to parameters via scope (not stack). */
+    int bind_n = argc < fn_node->as.func_decl.param_count
+                 ? argc : fn_node->as.func_decl.param_count;
+    for (int _ai = 0; _ai < bind_n; _ai++) {
+        const char *pname = fn_node->as.func_decl.param_names[_ai];
+        scope_set(&rt->scope, pname, args[_ai]);
     }
 
     /* Eval the function body */
@@ -105,9 +119,8 @@ int flx_mailbox_drain(FlxThread *t, void *rt_ptr, void *instance_ptr) {
         t->mb_count--;
         pthread_mutex_unlock(&t->mb_mu);
 
-        Value result = flx_invoke_method(rt, inst, msg.method,
-                                          msg.arg,
-                                          msg.arg.type != VAL_NIL);
+        Value result = flx_invoke_method_n(rt, inst, msg.method,
+                                           msg.args, msg.argc);
 
         if (msg.reply) {
             pthread_mutex_lock(&msg.reply->mu);
@@ -168,14 +181,31 @@ static void *flx_fn_runner(void *arg) {
     rt->current_thread = t;
     g_current_flx_thread = t;
 
-    /* Restore prst vars into clone scope so NODE_ASSIGN and rt_get
-     * can find them by name (scope fallback when stack slot is NIL).
-     * Note: while-loops compile to the bytecode VM which reads prst
-     * via scope_get directly; tree-walk paths use rt_get fallback. */
+    /* Restore prst vars into clone scope */
     if (rt->mode == FLUXA_MODE_PROJECT) {
         for (int _pi = 0; _pi < rt->prst_pool.count; _pi++) {
             PrstEntry *_pe = &rt->prst_pool.entries[_pi];
             scope_set(&rt->scope, _pe->name, _pe->value);
+        }
+    }
+
+    /* Bind initial args from ft.new(name, fn, arg1, arg2, ...) to stack slots.
+     * Params are positional — stack[0] = first param, stack[1] = second, etc.
+     * Mirror exactly what call_function does. */
+    int bind_n = t->fn_argc < fn->as.func_decl.param_count
+                 ? t->fn_argc : fn->as.func_decl.param_count;
+    if (bind_n > 0) {
+        /* Zero enough slots first */
+        int zero_n = fn->as.func_decl.param_count + 4;
+        if (zero_n > FLUXA_STACK_SIZE) zero_n = FLUXA_STACK_SIZE;
+        for (int _zi = 0; _zi < zero_n; _zi++) rt->stack[_zi].type = VAL_NIL;
+        for (int _ai = 0; _ai < bind_n; _ai++) {
+            Value av = t->fn_args[_ai];
+            if (av.type == VAL_ARR)
+                rt->stack[_ai] = val_arr_ref(av.as.arr.data, av.as.arr.size);
+            else
+                rt->stack[_ai] = av;
+            if (rt->stack_size <= _ai) rt->stack_size = _ai + 1;
         }
     }
 
@@ -237,23 +267,64 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         FlxRunnerArg *ra = (FlxRunnerArg *)malloc(sizeof(FlxRunnerArg));
         if (!ra) { t->active = 0; FT_ERR("out of memory"); }
 
-        /* ft.new("name", fn_name_str) — global function */
-        if (argc == 2 && args[1].type == VAL_STRING && args[1].as.string) {
+        /* ft.new("name", fn_name_str [, arg1, arg2, ...]) — global function */
+        if (args[1].type == VAL_STRING && args[1].as.string &&
+            !(argc >= 3 && args[2].type == VAL_STRING &&
+              args[1].type == VAL_STRING)) {
+            /* Disambiguate: if argc==3 and args[2] is VAL_BLOCK_INST
+             * or args[1] is instance — fall through to Block path.
+             * Global fn path: args[1] is fn name str, rest are fn args. */
+        }
+        if (args[1].type == VAL_STRING && args[1].as.string &&
+            !(argc >= 3 && args[2].type != VAL_STRING &&
+              (args[2].type == VAL_BLOCK_INST || args[2].type == VAL_NIL))) {
+            /* Check it's not ft.new(name, instance, method) */
+        }
+        /* Simpler detection: global fn if args[1] is VAL_STRING and
+         * (argc==2, or args[2] is not a method-name following a Block). */
+        if (args[1].type == VAL_STRING && args[1].as.string &&
+            (argc == 2 ||
+             (argc >= 3 && args[2].type != VAL_BLOCK_INST))) {
+            /* Could still be ft.new(name, fn, arg1, arg2...) */
             const char *fn_str = args[1].as.string;
             Value fn_val; fn_val.type = VAL_NIL;
             scope_table_get(rt->global_table, fn_str, &fn_val);
-            if (fn_val.type != VAL_FUNC) {
-                free(ra); t->active = 0;
-                snprintf(errbuf, sizeof(errbuf),
-                    "ft.new: function '%s' not found", fn_str);
-                FT_ERR(errbuf);
+            if (fn_val.type == VAL_FUNC) {
+                /* Global function — valid. Collect extra args. */
+                int cfg_max = rt->config.ft_max_msg_args > 0
+                              ? rt->config.ft_max_msg_args : 2;
+                int fn_extra = argc - 2; /* args beyond fn name */
+                if (fn_extra > cfg_max) {
+                    free(ra); t->active = 0;
+                    snprintf(errbuf, sizeof(errbuf),
+                        "ft.new: too many arguments (%d), max_msg_args=%d",
+                        fn_extra, cfg_max);
+                    FT_ERR(errbuf);
+                }
+                /* Verify arity */
+                ASTNode *fn_node = fn_val.as.func;
+                if (fn_extra > fn_node->as.func_decl.param_count) {
+                    free(ra); t->active = 0;
+                    snprintf(errbuf, sizeof(errbuf),
+                        "ft.new: function '%s' has %d param(s), got %d arg(s)",
+                        fn_str, fn_node->as.func_decl.param_count, fn_extra);
+                    FT_ERR(errbuf);
+                }
+                t->is_block = 0;
+                t->fn_node  = fn_node;
+                t->fn_argc  = fn_extra;
+                for (int _ai = 0; _ai < fn_extra; _ai++)
+                    t->fn_args[_ai] = args[2 + _ai];
+                ra->thread  = t; ra->rt = rt; ra->inst = NULL;
+                pthread_create(&t->tid, NULL, flx_fn_runner, ra);
+                pthread_detach(t->tid);
+                return flxt_nil();
             }
-            t->is_block = 0;
-            t->fn_node  = fn_val.as.func;
-            ra->thread  = t; ra->rt = rt; ra->inst = NULL;
-            pthread_create(&t->tid, NULL, flx_fn_runner, ra);
-            pthread_detach(t->tid);
-            return flxt_nil();
+            /* fn_str not found as function — fall through to error */
+            free(ra); t->active = 0;
+            snprintf(errbuf, sizeof(errbuf),
+                "ft.new: function '%s' not found", fn_str);
+            FT_ERR(errbuf);
         }
 
         /* ft.new("name", instance, "method") — Block method */
@@ -289,8 +360,16 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         if (!t) { snprintf(errbuf, sizeof(errbuf),
             "ft.message: thread '%s' not found", tname); FT_ERR(errbuf); }
         if (!t->is_block) FT_ERR("ft.message only works on Block threads");
-        Value arg = (argc >= 3) ? args[2] : flxt_nil();
-        if (!flx_mailbox_push(t, method, arg, NULL)) {
+        int cfg_max = rt->config.ft_max_msg_args > 0
+                      ? rt->config.ft_max_msg_args : 2;
+        int msg_argc = argc - 2;
+        if (msg_argc > cfg_max) {
+            snprintf(errbuf, sizeof(errbuf),
+                "ft.message: too many arguments (%d), max_msg_args=%d",
+                msg_argc, cfg_max);
+            FT_ERR(errbuf);
+        }
+        if (!flx_mailbox_push(t, method, args + 2, msg_argc, NULL)) {
             snprintf(errbuf, sizeof(errbuf),
                 "ft.message: mailbox full for '%s'", tname);
             FT_ERR(errbuf);
@@ -305,7 +384,15 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         if (!t) { snprintf(errbuf, sizeof(errbuf),
             "ft.await: thread '%s' not found", tname); FT_ERR(errbuf); }
         if (!t->is_block) FT_ERR("ft.await only works on Block threads");
-        Value arg = (argc >= 3) ? args[2] : flxt_nil();
+        int cfg_max = rt->config.ft_max_msg_args > 0
+                      ? rt->config.ft_max_msg_args : 2;
+        int aw_argc = argc - 2;
+        if (aw_argc > cfg_max) {
+            snprintf(errbuf, sizeof(errbuf),
+                "ft.await: too many arguments (%d), max_msg_args=%d",
+                aw_argc, cfg_max);
+            FT_ERR(errbuf);
+        }
         /* If thread already finished, call the method directly
          * on the Block instance from the calling thread */
         if (!t->active && t->is_block) {
@@ -323,7 +410,7 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         pthread_cond_init(&rep->cv, NULL);
         rep->ready = 0;
 
-        if (!flx_mailbox_push(t, method, arg, rep)) {
+        if (!flx_mailbox_push(t, method, args + 2, aw_argc, rep)) {
             pthread_mutex_destroy(&rep->mu);
             pthread_cond_destroy(&rep->cv);
             free(rep);

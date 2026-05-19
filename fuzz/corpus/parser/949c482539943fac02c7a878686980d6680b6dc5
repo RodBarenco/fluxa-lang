@@ -1,0 +1,8 @@
+// probn   fn in_Ãbr,t c) int {
+        if in_bounds(r, c) == 0 {}
+        int v = costs[idx(r, c)]
+        if v == 0  { return 1 }
+        if v == 99 { return 99 }
+        return v
+    } costs[i]   = 0 dist[i]    = 99 
+            int     d

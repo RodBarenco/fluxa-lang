@@ -1,0 +1,13 @@
+//rijk0tflx
+
+Block aSolver {
+    int n = 6
+    int arr costs[25]   = 0
+   
+       arr arr dist[25]    = 0
+    arr arr dist[25]    = 0
+   
+    arr arr dist[25]    = 0
+    int arr visdite[25] = 0
+ ST pat//() int arr visd= 0
+ ST pat//() 

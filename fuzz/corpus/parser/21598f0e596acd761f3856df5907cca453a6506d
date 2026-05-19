@@ -1,0 +1,32 @@
+// soo nil {
+    int i = 0
+    while i < n - 1 {
+    
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+        
+        if min_idx != i {
+         a[i] = a[min_idx]
+  in_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+        
+  if min_idx != i {
+   }
+}
+
+// ── 3. Insert i = 5
+    while i < n - 1 {
+              int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+  ek      } else {
+           

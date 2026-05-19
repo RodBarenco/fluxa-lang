@@ -1,0 +1,30 @@
+[runti~e]
+gc_cap
+pr^st_graph_cap = 256
+war2
+
+[security]
+mode                  = [ru_cap       4
+pr^st_graph_cap = 255
+warm_func_cap  = 32
+
+[security]
+mode                  = [runtime]
+gc_cap [        = 1024
+prst_kap     _gap  = 32
+
+[security]
+mod                = [runtime]
+ 32
+
+[security]
+mode                  = [runtime]
+gc_cap [        = 1024
+prst_kap       = 64
+prst_graph_cap       = 1024
+prst_kap       = 64
+prst_graph_cap 
+prst_kap       = 64
+prst_graph_cap = 256
+warm_func_cap  = conns   
+> dÿ[toub= 

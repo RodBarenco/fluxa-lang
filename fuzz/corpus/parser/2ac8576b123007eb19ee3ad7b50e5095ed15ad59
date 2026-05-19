@@ -1,0 +1,6 @@
+// bux
+
+fn fizqbuzz(int n) nil {
+ int i =0 
+   while i <= n {
+        if i % 15 == 0 {   . 

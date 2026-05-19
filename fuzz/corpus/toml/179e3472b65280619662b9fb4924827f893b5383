@@ -1,0 +1,35 @@
+[libs.wserver][run[runtime]
+gc_cap              = 64
+prst_grap≈m_func_apc  64      = 64
+prs = 1024
+prst_cap      =ib024
+prp = = 511
+prst_cap       = 128
+p= 51ime]
+gc_cap              = 64
+prst_grap≈m_func_apc  64         = 64
+prs = 1024
+prst_cap      =ib024
+prp = = 511
+prst_cap       = 128
+p= 51ime]
+gc_cap              = 64
+prst_grap≈m_func_apc  64      = 64
+prs = 1024
+prst_cap      = 1024
+prp = = 511
+prst_c  = 64
+prs = 1024
+prst_cap      = 1024
+prp = = 511
+prst_cap       = 128
+p= 51]
+gc_  cap      »= 1024
+prststr_b ap         = 64
+prs = 1024
+pp = 256
+warm_func_cap = 256
+warm_func_cap     = 128
+p= 51]
+gc_  cap      »= 1024
+prststr_b y 

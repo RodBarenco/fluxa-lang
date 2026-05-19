@@ -1,0 +1,13 @@
+// problems/ non-negat// probra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0  
+  int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+     int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+   n ta 

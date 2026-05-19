@@ -1,0 +1,15 @@
+// projkstra.flx â€”´Shortest Path with Dies/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]  = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-2, 0, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row,bool int collockn = s
+// 3. Inse/pro
+    int arr dr[8] = [-0,,,,,,,,,Di,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,, it   æn row(int i) int { return i / n }
+    int { return is(int r, int c) int {
+        iintsts[idx(r,ÍÍÍÍÍÍ c)]
+    ÍÍ 

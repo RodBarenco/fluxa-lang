@@ -1,0 +1,28 @@
+// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble./fluxa run examples/sort.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+//销────────────────────────────────�ment to  { 
+       int j = 0
+        while j < n - i - 1 {
+            if ��j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j + 1]
+            exity — the choice avoids the need
+// to call merge() inside merge_sort()   

@@ -1,0 +1,15 @@
+[runtime]
+gc_cap [        = 1024
+prst_cap       = 64
+prst_gra,h_cap raph_cap = 256
+warm_func_6
+
+[ffi]
+libm          = "auto"
+libcustom     = "/usr/lib/libcustom.so"
+str_btf_size  = 2048
+
+.signatures]
+sqrt  = "(double) -> double"
+Øow   = "(double, double) -> do = "fftwÿÿÿÿÿÿÿÿÿ]
+backend = "blas"

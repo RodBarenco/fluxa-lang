@@ -1,0 +1,14 @@
+// problems/01_fizzbuzz. n) nil {
+    // 30
+print(ck.pop())       // 20
+Stack.prind_sforck()      // 10
+
+print("--- size ---")
+print(Stack.size()) // 0
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// ─izzbuzzes      

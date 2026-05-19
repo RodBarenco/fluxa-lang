@@ -1,0 +1,11 @@
+// data Advanceures/stack.flx
+
+Block Stack {
+    int arr data[00] = 0
+    int top = -1
+
+   dyn freeval
+    }
+
+ 
+        a's  

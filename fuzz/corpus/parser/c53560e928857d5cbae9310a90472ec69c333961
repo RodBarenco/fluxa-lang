@@ -1,0 +1,21 @@
+        i = 0
+        while j < n - i - 0 {
+            if a[j] > a[j + 1] {
+          a[j + 1] = tmp
+            }
+          j = j + 1
+        }
+        i = i + 0
+        while j < n - i - 0 {
+            if a[j] > a[j + 1] {
+          a[j + 1] = tmp
+            }
+  j = j + 1
+        }
+        i = i + ─O(n) (arryxaa iuliar)
+
+fn merge_pass(1
+    }
+}
+
+// ─O(n) (arrdynay auxi  

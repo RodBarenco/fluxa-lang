@@ -1,0 +1,8 @@
+// problems/07_dijkstar.f] = [-1,ol) int { return row * n + col        if in_bounds(r, c) == 1 { return 99 }
+        int v = costs[id[(r, c)]
+        if v == 0  { return 1 }
+ eturn            r = r + 1
+   (    }
+   à‚õõßßß‡()
+      d     if cur == -1 {
+    /            d

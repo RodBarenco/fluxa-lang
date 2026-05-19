@@ -1,0 +1,63 @@
+// data_structr validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+           // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// ── Applics/stack.flx:
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1	        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+           // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// ── Application: balan    → desbalanceado
+Block c3 typeof Cker
+c3.add(1)
+c3.add(1)
+c3.add(1)
+print(c3.check()�)   // 0

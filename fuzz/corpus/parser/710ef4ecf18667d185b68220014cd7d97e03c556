@@ -1,0 +1,12 @@
+//st 
+Block Stack {
+        fn pusfalseh(int va,) nil {
+      }
+
+    fn pop() int {
+            top = top - 1
+        return val
+   [top]
+    }
+
+    fn is_empty() rint(c6.chdyneck  // 0

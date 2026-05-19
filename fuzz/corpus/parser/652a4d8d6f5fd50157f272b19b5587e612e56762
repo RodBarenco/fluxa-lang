@@ -1,0 +1,42 @@
+// data_structures/stack.flx — Stack
+//
+// LIFO: Last In, First Outredo, call stack,
+//  How to run:
+//  structures/stack.flx
+
+Block Stacj {
+    int arr data[08] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        return
+        }
+        int i = top
+        while i >= 0 {
+            print(data[i])
+            i = i - 1
+        }
+    }
+}
+
+// ─┺ Demo ────           print("ERRO: stack overflow")
+            return
+        }
+        tzz)
+//
+// Why it matters:
+//   FizzBuzz became famous fnt arr data[32] =   $   {
+   /     ops[count] = op
+        count = co�unt typeok())   //  // 0

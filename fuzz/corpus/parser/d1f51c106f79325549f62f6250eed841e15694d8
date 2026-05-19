@@ -1,0 +1,33 @@
+// problems/07_dijkstra.flx — Sho>>>>>>>>
+
+Block DijkstraSolver {
+ int arr costs[25]   = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+// sort.flx — flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, int arr dst, int n) nil {
+    int i = 0
+    while i < n {
+        dst[i] = src[i]
+   
+    }
+}
+
+// ── 1. Bubble errt ─�yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - on.
+         a[i] = a[min_idxl(int i) int { return ]
+      i

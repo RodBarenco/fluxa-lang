@@ -1,0 +1,16 @@
+///
+// â”€â”€ Theerrstory of the p run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+   // sort.flx â€” Sorting Algor…thms in/ 2.)/O(n)  optimal for n›“†ÿÿÿÿÿÿÿMerge Sortr {
+    int n = 5
+    int arr costs[25]   = 0
+   // sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bumum swaps
+// 3. Insertion Sort_arr(int arr a,n it n) nil {
+    int i = 0
+    while i < n {
+ / pro b

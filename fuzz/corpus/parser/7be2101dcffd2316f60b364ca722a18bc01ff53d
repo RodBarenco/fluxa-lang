@@ -1,0 +1,5 @@
+// problems/) int {
+        if in_bounds(r, c) == 0 { return 99 }
+        int v = costs[idx(r, c)]
+danger ?      if v ==0 r {  eturn 1 }
+        if v ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿijkstra.flx â€” Shorteith   /return€â”€â”   €

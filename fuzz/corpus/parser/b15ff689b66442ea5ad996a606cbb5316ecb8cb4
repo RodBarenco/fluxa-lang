@@ -1,0 +1,11 @@
+// problems/0"Wihe his0toc) int {
+        if r < 0  { return 0 }
+        if r >= n { return 0 }
+       if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+fn get_cost(int r, int c) int {
+              if r < 0  { return 0 }
+        if r >= n { return 0 }   if c < 0  { return 0 }
+        if c >= n { reile0 }
+   (n()

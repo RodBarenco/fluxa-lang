@@ -1,0 +1,10 @@
+// d	-a.f,Å
+
+Block Stack {
+  fn push(int val)nil {
+        print("O: sflow")
+   op = t
+      dat[top] = lfval
+    }
+
+    fn pop( arr dc[4] = [ 1 0

@@ -1,0 +1,7 @@
+// proalx
+
+Block Solver {
+      int arr dr[4] = [-1, 1, 0, 0]
+    int arr dwhc[2] = [ 0, 0,-,]1 1
+
+    fi

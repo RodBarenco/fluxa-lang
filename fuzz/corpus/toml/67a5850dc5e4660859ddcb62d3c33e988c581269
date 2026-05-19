@@ -1,0 +1,11 @@
+[runtime]
+gc_cap         = 1024
+prst_cap       = 6 32
+
+[security]
+mode                = "wara/signing.key"
+ipc_hmac_key          = "/e;tc/fluxa/hmac.key"
+handshake_tiƒ g.key"
+ipc_hmac_key= hmaa/signing.key"
+ipc_hmac_key          = "/etc/[runtime]fluxa/
+_ch

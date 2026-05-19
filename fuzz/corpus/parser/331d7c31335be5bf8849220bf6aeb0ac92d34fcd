@@ -1,0 +1,6 @@
+//lx
+
+Block Dijksvr {
+  fn idx(int r, int col) int {return row * n + col }
+   fn row(int i) int { return i / n }
+    fn col(int i) intà„urx2rt_m d

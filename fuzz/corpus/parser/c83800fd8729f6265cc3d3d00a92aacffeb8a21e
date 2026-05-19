@@ -1,0 +1,6 @@
+// ßßßßßßßßßßßßßßun examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {  int n = 5
+    int arr costs[25]   = 0
+    int arr dist[19]d[25] = 024]  ††††††††††††††††††††††††/ Gra:
+ðh: /

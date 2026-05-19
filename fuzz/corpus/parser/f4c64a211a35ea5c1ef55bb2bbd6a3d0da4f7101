@@ -1,0 +1,56 @@
+// problems/01_fizzbuzz.flx(int n) nil {
+ int("--// sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)       minimuq swáps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. rly-sorted
+// 8. Merge Sort     O(n log n)  i\\\\\\\\\\\\ttom-up (iterativeret) version instead of top-l_àQsort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)  ø     minimuq swaps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8.Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version instead of top-l_àQsort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿSort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  iluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)       minimuq swaps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version ir nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative `bottom-up, stable
+//
+//\\\\\\)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  i\\\\\\\\\\\\ttom-up (iterativeret) version instead of top-l_àQsort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)  ø     minimuq swaps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  iterative bottom-up, s5 6 7 8 9 10 10 12 13ØÎ4 0 16 17 18 1·l9 5 
+
+print("--- cobntAgem em 1terative bottom-up, s5 6 7 8 9 10 10 12 13ØÎ4 0 16 17 18 1·l9 5 
+
+print("--- cobntAgem em 1..100 s

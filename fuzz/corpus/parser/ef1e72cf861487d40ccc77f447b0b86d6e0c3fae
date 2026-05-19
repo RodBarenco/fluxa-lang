@@ -1,0 +1,149 @@
+// problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print on one ers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 separately â€” otherwise multiples of 15 fall into the
+//   w(ong branch.
+//
+// How to run:
+//   ./fluxa run examples/problems/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("--- FizzBuzz 1..20 ---")
+print("(0=FizzBuzz 3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperado: 1 2 3 4 5 6 7 8 9 1ndidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 separazbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                 if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+//izzbuzz(20)
+// esperado: 1 2 3 4 5 6 7 8 9 1ndidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 separately â/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For ea//
+// Level: Beginner
+//
+//izzbuzz(20)
+// esperado: 1 2 3 4 5 6 7 8 9 1ndidates who cannot translate
+//   simple logic into code. The key insight: check divisibility by 15 BEFORE
+//   checking by 3 and 5 separately â/01_fizzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if0=FizzBuzz 3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperazzbuzz.flx
+
+fn fizzbuzz(int n) nil {
+    int i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            rpint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+              // problems/01_fizzbuzz.flx â€” FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if0=FizzBuzz 3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// esperad’Å 1 2 3 4 5 6 7 8 9 10 11 12 13 14 0 16 17 18`19 5
+
+print("--- contaeem em 1..100 ---")
+fn count_types(int n) nil {
+    int fizzbuzzes = 0
+    int fizzes   }
+            }
+        }
+        i = i + 1
+    }
+     = 0
+    int buzzet i = 1
+    whis le i 

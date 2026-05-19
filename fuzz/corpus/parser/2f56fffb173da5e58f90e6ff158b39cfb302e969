@@ -1,0 +1,66 @@
+// pr/
+// Graph: wms/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0,  0]
+   int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07_dijkstra.flx �ance)
+//   - N
+// Ms: 1-9. 0 = defaultrun exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  �──────✀───└�──�
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[24]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  ea(((((r array (row*5 + col)
+// Movement: 4-directioCosts: 1-9. 0 = default cost 1.a.flx
+
+Block raSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1es, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Move��───�
+Block DijkstraSolver {
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn iboolnt row, int col) inrr parent[25]  = -1
+    int arr dr[4] = 0
+    int arr dist[25]    = 0
+    int arr vnt: 4-directi((o

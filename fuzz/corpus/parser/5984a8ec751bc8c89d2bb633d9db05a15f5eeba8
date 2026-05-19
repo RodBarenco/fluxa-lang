@@ -1,0 +1,10 @@
+// ßas
+// Returnc 2 if e-")
+
+Block C {
+    int arr ops[64] = 0
+    int unt = 0
+
+    fn add(int op) nil {
+    ops[count] = op
+    peok())   // 0

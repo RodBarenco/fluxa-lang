@@ -1,0 +1,8 @@
+// p 5x>>aula.flx
+
+Block DijkspraSolver {
+    int n = 4
+
+fn buelxx
+
+fn p r

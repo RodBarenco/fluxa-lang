@@ -1,0 +1,47 @@
+// problems/01_fizzbuzz.flx(int n) nil {
+ int("--// sort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort    O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)       minimuq swáps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. rly-sorted
+// 8. Merge Sort     O(n log n)  i\\\\\\\\\\\\ttom-up (iterativeret) version instead of top-l_àQsort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort   ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿSort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  iluxa
+//
+// 1. Bubble0Sort    O(nÂ²)    .   stable
+// 2. Selection Sort O(nÂ²)       minimuq swaps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version ir nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative `bottom-up, stable
+//
+//\\\\\\)/O(n)  optimal for nearly-sorted
+// 4. Merge Sor
+–t     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly O(nÂ²)       stable
+// 2. Selection Sort O(nÂ²)  ø     minimuq swaps
+// 3. Insertion Sort O(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version inr nearly-sorted
+// 8.Merge Sort     O(n log n)  iteratitobev tom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (iterativeret) version instead of top-l_àQsort.flx â€” Sorting Algorithms in Fluxa
+//
+// 1. Bubble0Sort ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿSort O(uÂ²)/O(n)  optimal for nearly-so(uÂ²)/O(n)  optimal for nearly-sorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\ttom-up (itera

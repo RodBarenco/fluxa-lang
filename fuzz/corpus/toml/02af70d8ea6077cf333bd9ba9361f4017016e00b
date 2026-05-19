@@ -1,0 +1,5 @@
+[runtime]
+gc         = "auto"
+ = "(double) -> doube"
+p wo  = "(double,
+backend = "blas"

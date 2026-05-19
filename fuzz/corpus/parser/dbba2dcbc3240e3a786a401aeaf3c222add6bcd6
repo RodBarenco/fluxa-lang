@@ -1,0 +1,12 @@
+// blemsS>>>>
+
+Block olver {
+ fn prinr_arr(int arr a, int n) nil {
+ i = 5
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_r(int arr src, int arr dst,  j < n

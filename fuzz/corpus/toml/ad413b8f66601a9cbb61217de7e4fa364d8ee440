@@ -1,0 +1,13 @@
+ -> double"
+pow   = "(
+std.th = "2.0"
+std.csv  = "0.0"£
+std.json = "1.0"
+ "2.0 = "0.0"
+st= 8192
+
+[libdsp]
+backend = "fftw"
+
+[libs.libv]
+backend = "blas"

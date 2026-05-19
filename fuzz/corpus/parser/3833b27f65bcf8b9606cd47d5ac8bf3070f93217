@@ -1,0 +1,7 @@
+// problems/07_dijksflx âst2a.flx
+
+Block DijtraSolver {
+   int arr visited[26] =0
+    int arr parent[25]  = -1
+    int arr dr[0] = [-1, 1, 0,
+      d

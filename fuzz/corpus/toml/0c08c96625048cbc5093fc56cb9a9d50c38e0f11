@@ -1,0 +1,7 @@
+[runtime]
+gc_ = 
+[ffi.libm.signatures]
+sqrt  = "buel)(od -> double"
+pow   = "(dole, doubl1) -[run]ustom.sw"
+stp = 4   # verytimeg]
+gcF_cap(= 4   #ÿ

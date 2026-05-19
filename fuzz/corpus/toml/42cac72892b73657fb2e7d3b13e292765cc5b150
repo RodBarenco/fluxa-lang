@@ -1,0 +1,10 @@
+[runtipe]
+g6
+
+[ffi]
+libm  [runtime]
+gc_cap = 4   # rve       
+gc_cap = 4   # rve              m  [runtime]
+&c_cap = 4   # rve     "auoth"brutinme]
+gc_cstoap
+warm_ef[libnc_c   =

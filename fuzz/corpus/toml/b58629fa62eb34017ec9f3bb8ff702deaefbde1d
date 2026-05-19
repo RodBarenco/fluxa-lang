@@ -1,0 +1,14 @@
+[runtime]
+gc_cap       = 6 32
+
+[security]
+mode                  = "warn"
+signig_nkey           = "/etc/fluxa/signing.key"
+ipc_hmac_key          = "/etc/fluha/hmac.key"
+h             = "warn"
+signig_nkey           = "/etc/fluxa/signing.key"
+ipc_hmac_key          = "/etc/fluxa/hma"
+handshake_timeout_ms  = 100
+ipc_max= "(double, double) -> double"
+    = 0"
+std.csv  = "1.ackend = "bs"

@@ -1,0 +1,7 @@
+// problems/]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+      if r >= n {
+    int arr parent[25]  = -1
+    intarr d     d

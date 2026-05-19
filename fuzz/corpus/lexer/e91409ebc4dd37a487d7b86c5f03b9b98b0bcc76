@@ -1,0 +1,57 @@
+// tests/sprint7a.flx — critérios de aceite Sprint 7.a
+//
+// 1. prst em project mode — valor persiste (simulado: inicializa com 0,
+//    reatribuição representa segundo acesso pós-reload)
+// 2. prst regis#tra dependência no go
+// 3. Block com prst — modo project ativo
+// 4. Leitura de prst em função → dependência registrada
+// 5. GC cap — overflow gera erro em err_stack sem crash
+
+// ── 1. prst básico em project mode ───────t score → registra dep (score, show_score)
+}
+show_score()       0 01//
+
+// ── 4. prst bool e float ────�───
+prst bonning) ext_level()
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no grafo ──────────────
+fn show_score() nil {
+    print(score)   // lê prst score → registra dep (score, show_score)
+}
+show_score()       0 01//
+
+// ── 4. prst bool e float ────�───
+prst bonning)    // true
+print(rate)       // 0.5
+
+// ── 5. Simulação2. prst regis#tra dependência no go
+// 3. Block com 
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no grafo ──────────────
+fn show_score() nil {
+    print(score)   // lê prst score → registra dep (score, show_score)
+}
+show_score()       0 01//
+
+// ── 4. prst bool e float ────�───
+prst bonning)    // true
+print(rate)       // 0.5
+
+// ── 5. Simulação2. prst regis#tra dependência no go
+// 3. Block co�──prst int lives = 3
+    int level = 1
+
+    fn get_lives() int {
+        return lives
+    }
+
+    fn next_level(	 nil {
+        levee.get_lives())   // 3
+Game.next_level()
+print(Game.level)         // 2
+
+// ── 3. Leitura de prst em função → dep no gi += 1
+}
+print(ticks)      // 5

@@ -1,0 +1,47 @@
+ 6384
+
+[libs.libdsp]
+backend ½ bd 6384
+
+[libs.libdsp]
+backend ½ bdsp]
+bWckend =e"fbs.$libdsp]
+backend ½ bdsp]
+b   = 64
+pra'th  =/ 1mÿÿÿÿÿÿÿÿÿÿÿÿÿÿp]
+backend ½ bdsp]
+bWckend ="fbs.libdsp]
+backend ½ bdsp]
+bWckend =e"fftw"
+v]
+ba = 6384
+
+[libs.libdsp]
+backend ½ bdsp.$libdsp]
+backend ½ bdsp]
+b   = 64
+ÿÿÿÿÿÿÿÿÿp]
+backend ½ bdsp]
+bWckend ="fbs.libdsp]
+backend ½ bdsp]
+bWckend =e"blas"sp]
+bWckend =e"fbs.$libdsp]
+backend ½ bdsp]
+b   = 64
+pra'th  =/ 1mÿÿÿÿÿÿÿÿÿÿÿÿÿÿp]
+backend ½ bdsp]
+bWckend ="fbs.libdsp]
+backend ½ bdsp]
+bWckend =e"fftw"
+v]
+ba = 6384
+
+[libs.libdsp]
+backend ½ bdsp.$libdsp]
+backend ½ bdsp]
+b   = 64
+ÿÿÿÿÿÿÿÿÿp]
+backend ½ bdsp]
+bWckend ="fbs.libdsp]
+backend ½ bdsp]
+bWckend =e"blas"

@@ -1,0 +1,93 @@
+// to run:
+//   .тттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттттfluxa run examppush(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+print("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print(") nil {
+    in(((((((((((((((((((((((((((n((((((((((((((((((((   in(((((--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 09
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balance checker в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђвв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђз”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”rint("--- push 10, 20, 30 ---")
+Stack.push(10)
+Stack.push(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+print("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.psint_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty --")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђ Application: balance checker в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђвя”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+//c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 1
+
+// ( ) )    в†’ desbalan.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print(") nil {
+    in(((((((((((((((((((((((((((n((((((((((((((((((((   in(((((--- size ---")
+print(Stack.size())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+print(Stack.is_empty())  // 1
+
+// в”Ђв”Ђв”Ђв”Ђз”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+
+print("--- push 10, 20, 30 ---")
+Stack.push(10)
+Stack.push(20)
+Stack.push(30)
+Stack.print_stack()
+// esperado: 30 20 10
+
+print("--- peek ---")
+print(Stack.peek())      // 30
+
+print("--- pop ---")
+print(Stack.pop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+p.add(1)
+c3.add(1)
+c3.add(1)
+print(c3.check())   // 0

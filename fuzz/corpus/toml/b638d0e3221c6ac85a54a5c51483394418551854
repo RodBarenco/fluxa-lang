@@ -1,0 +1,4 @@
+[runtime]
+gc_c
+warm_func_cap  = 85
+[s

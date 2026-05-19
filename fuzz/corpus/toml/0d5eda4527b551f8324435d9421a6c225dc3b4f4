@@ -1,0 +1,8 @@
+[runtap  = 32
+
+[security]
+mode                  = "warn"
+signing_key           = "/etc/fluxa-signing.key"
+ipc_hmac_key   ,       ._= 2048
+
+[ffi.1/e

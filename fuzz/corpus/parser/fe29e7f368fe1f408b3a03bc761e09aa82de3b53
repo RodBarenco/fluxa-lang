@@ -1,0 +1,10 @@
+//lems/07_dijkstra.flx — Shortest Path wi int {
+        if in_bounds(r, c) == 0 {    int v = costs[idx(r, c)]
+       while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 499
+            visited[i] = 0
+         if in_bounds(r, c) == 0 { co< n {
+      extract_min()
+            if cur == -1 {
+                d

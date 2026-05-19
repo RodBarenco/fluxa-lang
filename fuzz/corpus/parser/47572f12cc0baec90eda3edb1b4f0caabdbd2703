@@ -1,0 +1,50 @@
+// problems/01_fÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿizzbuzz.
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+                    print(i)
+                }
+    
+//ÿÿÿÿÿÿ   t i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                  } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+    }rint("--- FizzBuzz 1..20 ---")
+print("(0=FizzBuzz 3=Fizz 5=Buzz)")
+fizzbuzz(20)
+// espdidates who cannot transl  while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+               }
+            }
+        }
+        i = i + 1
+    }
+}
+
+pr  }     = 0
+    int buzzet i = 1
+    whis le i 

@@ -1,0 +1,47 @@
+// problems/07_dijkstra.flx ‚Äî Shortest Path with Dijkstra
+//
+// Level: Intermediating (lowest latency paths)
+//   - Game AI (cost-based pathfinding: road=1, forest=3, swamp=5)
+//   - Supply chain optimization (minimum cost delivery routes)
+//
+// Key insight: always expand thenunvisited node with the smallest known distance.
+// This greedy choice is optimal because edg          are non-negative.
+//
+// Why not BFS? BFS assumes all edges have equa the CHEAPEST path.
+//
+// Graph: weighted 5x5 grid, cells asupply chain optimization (minimum cost delivery routes)
+//
+// Key insight: alwa cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn ïêà◊int ô÷ﬂñnt { return i / n }
+    fn col(int i) int { return i  if c < 0  { 9
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn óet_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int // basis for man path.
+/ault() nil {
+        clear()
+        set_cost(0,0,1) set_cost(0,1,2) set_cost(0,2,1) set_cost(0,3,3) set_cost(0,4,1)
+        set_cost(1,0,1) set_cost(1,1,9) /
+// Graphset_cos:t( 

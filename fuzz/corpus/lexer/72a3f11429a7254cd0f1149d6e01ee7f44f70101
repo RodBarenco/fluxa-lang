@@ -1,0 +1,26 @@
+// Sprint 5 — critério de aceite
+// Block raiz, typeof, métodos, campos, isolamento
+
+mentar()
+Contador.incrementar()
+print(Contador.valor())      // 2
+
+// typeof cria instância isolada
+Block c2 typeof Contador
+Block c2 typeof Contador
+
+c1.incrementar()
+c1.incrementar()
+c1.incrementar()
+
+print(c1.valor())            // 3
+print(c2.valor())            // 0  — estado completamente isolado
+print(Contador.valor())      // 2  — Block raiz intocado
+
+// campo direto
+Contador.total = 10
+print(Contador.valor())      // 10
+
+// método com parâmetro
+c2.adicionar(5)
+print(c2.valor())            // 5

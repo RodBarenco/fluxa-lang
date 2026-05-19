@@ -1,0 +1,15 @@
+// data_struc expression evaluation,--
+Block Checker {
+      fn add(int op) nil {
+        ops[count] = o       count = count + 1
+    }
+
+    fn check() int {
+        Block s typeof Staceturn s.is_empty()
+    }
+}
+
+// ( ( ) )  →lanceado
+Block c1 typeof helanceado
+Block cint_s2 typeof Checker
+c22.add(-))   // 0

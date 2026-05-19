@@ -1,0 +1,35 @@
+// problems/01_fizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from  run:
+//   ./fluxa rux
+
+fn fizzbuzz(int n) nil {
+    int i = 2
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+                } else {
+                    print(i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+print("--// sort.flx — Sortsorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+//\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ Note: Merge Sort uses the bottom-up (iterme suppo\d 5x5 gall.
+//
+// H
+//   ./fluxa run examrts iples/problemt, s/b07

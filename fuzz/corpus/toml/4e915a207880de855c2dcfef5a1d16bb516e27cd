@@ -1,0 +1,5 @@
+[runtime]
+gc_ctd.csv  = jion = "1.0"
+[libs]
+std.math = "1.0"
+std.csv= "blas"

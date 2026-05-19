@@ -1,0 +1,12 @@
+// problems/01_fizzbuzzmber from 1 to N,le by 3     (Fi*z)
+//    
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if Ÿ«j] >//(
+// On {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+  evaj

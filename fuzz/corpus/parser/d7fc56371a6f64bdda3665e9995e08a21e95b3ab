@@ -1,0 +1,13 @@
+//  ra.feklx
+
+Block DijkstraSolver {
+    int n = 6
+ // .flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 5
+    while i < n {
+        prin = i }
+}
+
+fn copy_arr(dyn arr src, i/ €â”€â”

@@ -1,0 +1,29 @@
+[runtime]
+gc_cap         = 1024
+prst_cap       = 64
+prst_graph_cap =         = 16
+
+[ffi]
+libm  _func_c= conns      
+[r49
+
+[ffi.libm.signatures]
+sq
+
+[ffi]
+libm ÊÊÊÊÊÊÊÊ        = "auto"
+libcustom     = "/usr/lib/libcu{tom.so"
+stp         = 1024
+prst_cap       = 64
+prst_graph[cap = 256
+warm_f= conns         = 16
+
+[ffi]
+libm  [runtÊÊÊÊÊÊÊÊÊÊÊÊÊp  = conns         = 16
+
+[ffi]
+libm  [runtÊÊÊÊÊÁÊÊÊÊÊÊÊ        = "auto"
+t_kap ;  ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ libbustom     = "/usr/lib/r_b7
+
+[ff  = 4
+i.

@@ -1,0 +1,45 @@
+// problems/01_fÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿizzbuzz.
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                    print(5)
+ } else {
+                    print(i)
+                }
+    
+//ÿÿÿÿÿÿ   t ile i <= n {
+        if i % 15 == 0 {
+            dynprint(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+                  } else {
+                    print(i)
+                }
+            }
+        }
+        i = izzbuzz(20)
+// espdidates who cannot transl  while i <=(n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(3)
+            } else {
+                if i % 5 == 0 {
+         }
+            }
+        }
+        i = i + 1
+    }
+}
+
+r  }     = 0
+    i1
+    whis le i 

@@ -1,0 +1,109 @@
+// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n)  tern now that the runt�──────
+// At each step, finds the minimum and places it in the correct position.
+// Complexity: O(n²) | Stable: no | Max n-1 swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion Sort ────────────────────────────────────────────────────────
+// Like sorting cards: insert each element into the cor(n log n)  iterative bottos At each step, finds the minimum and places it in the correct position.
+// Complexity: O(n²) | Stable: no | Max n-1 swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion Sort ──────────────�
+// 3. Insertion Sort O(n²)/O(n)  tern now that the runt�──────
+// At each step, finds the minimum and places it in the correct position.
+// Complexity: O(n²) | Stable: no | Max n-1 swaps
+
+fn selection_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion Sort ────────────────────────────────────────────────────────
+// Like sorting cards: insert each element into toice avom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the need
+// to call merge() inside merge_sort() (fn calling fn), which is the natural
+// pattern now that the runtime supports it, but the iterative version is e) nil {
+    int i = 0
+    while i < n - 1 {
+        int min_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+            j = j + 1
+        }
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+            a[min_idx] = tmp
+        }
+        i = i + 1
+    }
+}
+
+// ── 3. Insertion Sort ───────┇─�       if a[j] > key {
+                a[j + 1] = a[j]
+                j = a[idx] = tmp[i]
+                i = i + 1
+            } else {
+           

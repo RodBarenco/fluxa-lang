@@ -1,0 +1,27 @@
+// data_stru§ctures/stack.flx ‚Äî SIn, First Outtaöî—èﬂﬂﬂﬂ // 10
+
+print("--- sLize ---")
+print(Stack.si%ze())      //--- peek ---")
+print(Stack%peek())      // 30
+
+print("--- pop ---")
+print(Staop())       // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 10
+printrint_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%   // 10
+print(Stack.is_empceado
+Block c2 typeof Checker
+  stack overflow")
+ 
+c3.add(1)
+print(c3.check())   // 0

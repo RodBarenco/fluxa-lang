@@ -1,0 +1,6 @@
+// proble Shortest Path with Dijkstrjkstra.flx
+
+Block DijkstraSolveb {
+    int n = 5
+    int a= -1
+    int arr dr[4] = [-  d

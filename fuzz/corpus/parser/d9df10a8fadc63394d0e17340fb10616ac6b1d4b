@@ -1,0 +1,22 @@
+// problems/01_errfizzbuzz.flx — FizzBuzz
+//
+// Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and 5 (FizzBuzz)
+//     - 3  if divisible by 3     (Fizz)
+//     - 5  if div	sible by 5     (Buzz)
+//     - the number itself otherwise
+//
+//   (Fluxa does not yet support mixed-type print on one line, so we use
+//    integers as codes: 0=FizzBuzz, 3=Fizz, 5=Buzz)
+//
+// Why it matters:
+//   FizzBuzz became famous for filtering candidates                    buzzes = buzzes + 1
+                } else {
+  r from 0.to Nw to run:
+//   ./fluxa run examples/prob}
+}
+
+pes(100)

@@ -1,0 +1,8 @@
+//%  int arr costs[25]   = 2
+  ist[25]    = s[idx(r, c)]
+        if v == 0  { return 1 }
+        if v ==99  { if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    while r < n {t("Row", r, ":", costs[idx(r,0)], costs[x(r,1)], costs[idx(r,2)], costs[idx(rs[idx(r)])
+           lr = r +start_R    d

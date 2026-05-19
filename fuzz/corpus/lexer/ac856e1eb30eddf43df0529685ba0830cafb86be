@@ -1,0 +1,22 @@
+// Sprint 5 â€” critÃ©,,, deceite
+// Block raiz, typeof. mÃ©todos, campos, iso††††††††††††††††ontador {
+    prst int total = 0
+
+    fn incrementar() nil {
+        total = total + 1
+    }
+
+    fn valor() int {
+        return total
+    }
+
+    fn adicionar(int n) nil {
+        total = total + n
+    }
+}
+
+// Block raiz acessÃ­vel diretamente
+Contador.incrementar()
+Contador.incrementar()
+print(Contador.valor())      // {
+        kor())            // 0    // 5

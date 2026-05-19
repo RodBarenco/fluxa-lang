@@ -46,6 +46,9 @@
 #ifndef FLUXA_MAILBOX_MAX
 #define FLUXA_MAILBOX_MAX    64
 #endif
+#ifndef FLUXA_FT_MAX_ARGS
+#define FLUXA_FT_MAX_ARGS    8   /* hard cap — configurable down via toml max_msg_args */
+#endif
 #ifndef FLUXA_LOCK_MAX
 #define FLUXA_LOCK_MAX       32
 #endif
@@ -65,9 +68,10 @@ typedef struct {
 } FlxReply;
 
 typedef struct {
-    char      method[128];  /* method name to call on the Block instance */
-    Value     arg;          /* single argument (VAL_NIL if none)          */
-    FlxReply *reply;        /* non-NULL if caller wants a return value    */
+    char      method[128];              /* method name to call on Block instance */
+    Value     args[FLUXA_FT_MAX_ARGS];  /* arguments (VAL_NIL if unused)         */
+    int       argc;                     /* number of valid args                  */
+    FlxReply *reply;                    /* non-NULL if caller wants return value */
 } FlxMessage;
 
 /* ── Per-thread state ────────────────────────────────────────────────────── */
@@ -84,6 +88,8 @@ typedef struct FlxThread {
 
     /* Global function path */
     void       *fn_node;       /* ASTNode* of the function              */
+    Value       fn_args[FLUXA_FT_MAX_ARGS]; /* initial args for ft.new(name,fn,a,b,...) */
+    int         fn_argc;       /* number of initial args                */
 
     /* Lifecycle state */
     volatile int stop_requested;  /* set by ft.stop/kill, read at back-edge */
@@ -176,7 +182,8 @@ static inline FlxThread *flx_alloc_thread(const char *name) {
 /* Push a message onto the thread's mailbox. Thread-safe. */
 /* Push a message. If reply != NULL, the thread will signal it when done. */
 static inline int flx_mailbox_push(FlxThread *t, const char *method,
-                                    Value arg, FlxReply *reply) {
+                                    const Value *args, int argc,
+                                    FlxReply *reply) {
     pthread_mutex_lock(&t->mb_mu);
     if (t->mb_count >= FLUXA_MAILBOX_MAX) {
         pthread_mutex_unlock(&t->mb_mu);
@@ -185,7 +192,9 @@ static inline int flx_mailbox_push(FlxThread *t, const char *method,
     FlxMessage *msg = &t->mb_queue[t->mb_tail];
     memset(msg, 0, sizeof(*msg));
     strncpy(msg->method, method, sizeof(msg->method)-1);
-    msg->arg   = arg;
+    int n = argc < FLUXA_FT_MAX_ARGS ? argc : FLUXA_FT_MAX_ARGS;
+    for (int i = 0; i < n; i++) msg->args[i] = args[i];
+    msg->argc  = n;
     msg->reply = reply;
     t->mb_tail = (t->mb_tail + 1) % FLUXA_MAILBOX_MAX;
     t->mb_count++;

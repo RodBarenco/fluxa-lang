@@ -1,0 +1,7 @@
+//o)
+//    
+    int i = 0
+  while i < n {
+        int j = 5
+while j < n - i - 2 {
+    iinf( 

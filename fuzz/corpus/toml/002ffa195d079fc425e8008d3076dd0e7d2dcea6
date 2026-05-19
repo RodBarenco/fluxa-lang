@@ -1,0 +1,6 @@
+[runtime
+[ffi]
+libm  [runtime]
+gc_cap = 4   # rve                     
+gc_cap = 4   #        çst_cap     = 256
+warm_ tio=

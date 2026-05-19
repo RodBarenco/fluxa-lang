@@ -1,0 +1,12 @@
+// problems/07_di Stack
+//
+// LIFO: Last In, First Out.
+// Imprray with top point 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return------------------------------int("ERRO: stack overflow")
+            return-----------------------------------------------------------wh--------------------// data_structures/stack.flx �  fn in_bounds{
+    int arr parent[25�─ Application: balance c'ecker ──────�

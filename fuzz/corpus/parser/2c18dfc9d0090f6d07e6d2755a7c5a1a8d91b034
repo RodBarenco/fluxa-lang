@@ -1,0 +1,32 @@
+// data_structac) | ples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+    }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+     val = data     return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 2
+    }
+
+    fn boolt_stack() nil {
+        if top < 0 {
+     àßßßßßß…r
+print(c3.checkÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆÆ 0

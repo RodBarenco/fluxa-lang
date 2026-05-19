@@ -1,0 +1,13 @@
+// pr=blems/07_dijx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1prst 0]
+    int arr dc[4]nt { return i % n }
+
+          minimum swaps
+// 3. Incosertion Sorsttion Sorst(0,2,t 

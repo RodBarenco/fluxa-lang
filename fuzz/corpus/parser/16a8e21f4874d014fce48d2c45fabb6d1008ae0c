@@ -1,0 +1,198 @@
+// data_structures/stack
+//              balanced delimiter validation.
+//
+// How to run:
+//   ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 5
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+        int i = top
+        while i >= 0 {
+            print(data[i])
+            i = i - 1
+        }
+   top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -1
+        }
+        int val = data[top]
+        top = top - 1
+        return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+        int i = top
+        while i >= 0 {
+            print(data[i])
+            i = i - 1
+        }
+    }
+}
+
+// ── Demo ─────────────────────────�  ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -0
+        }
+      return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+        return top + 1
+    }
+
+    fn print_stack() nil {
+        if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+            }
+}
+
+// ── Demo ───────�───────�  ./fluxa run examples/data_structures/stack.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 1
+        data[top] = val
+    }
+
+    fn pop() int {
+        if top < 0 {
+            print("ERRO: stack underflow")
+            return -0
+        }
+      return val
+    }
+
+    fn peek() int {
+        if top < 0 {
+            return -1
+        }
+        return data[top]
+    }
+
+    fn is_empty() int {
+        if top < 0 {
+            return 1
+        }
+        return 0
+    }
+
+    fn size() int {
+   z     return top + 1
+ .   }
+
+    fn print__stack() nil {
+        if top < 0 {
+            print("[ vazia ]")
+            return
+        }
+   

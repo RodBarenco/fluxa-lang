@@ -512,6 +512,7 @@ import std flxthread as ft
 | Function | Blocking? | Description |
 |---|---|---|
 | `ft.new("name", fn_str)` | No | Spawn global function as thread |
+| `ft.new("name", fn_str, arg1, ...)` | No | Spawn global function with arguments (up to `max_msg_args`) |
 | `ft.new("name", instance, "method")` | No | Spawn Block method as thread |
 | `ft.resolve_all()` | Yes | Wait for all threads. Syncs prst pool. |
 | `ft.active("name")` | No | True if thread is still running |
@@ -522,9 +523,9 @@ import std flxthread as ft
 | Function | Blocking? | Description |
 |---|---|---|
 | `ft.message("name", "method")` | No | Enqueue method call |
-| `ft.message("name", "method", arg)` | No | Same, with one argument |
+| `ft.message("name", "method", arg1, ...)` | No | Enqueue with arguments (up to `max_msg_args`) |
 | `ft.await("name", "method")` | Yes | Enqueue + wait for return |
-| `ft.await("name", "method", arg)` | Yes | Same, with one argument |
+| `ft.await("name", "method", arg1, ...)` | Yes | Enqueue with arguments, wait for return |
 
 **Stop control:**
 
@@ -539,6 +540,17 @@ import std flxthread as ft
 | Function | Description |
 |---|---|
 | `ft.lock("var_name")` | Serialize access to a prst var. Main scope only — Block prst is isolated by design. |
+
+**Configuration (`fluxa.toml`):**
+
+```toml
+[libs.flxthread]
+max_msg_args = 2    # max arguments for ft.new/ft.message/ft.await
+                    # default 2, range [1..8] (hard cap)
+```
+
+Exceeding `max_msg_args` pushes a clear error to `err`. Arity mismatch
+(more args than function parameters) is caught at `ft.new` time.
 
 ### Full example
 
@@ -1229,8 +1241,8 @@ danger { srv = wserver.serve(8080, false) }
 
 Block w1 typeof Worker
 Block w2 typeof Worker
-ft.new("t1", w1, "run", srv)
-ft.new("t2", w2, "run", srv)
+ft.new("t1", w1, "run")
+ft.new("t2", w2, "run")
 ft.resolve_all()
 wserver.stop(srv)
 ```
@@ -1260,7 +1272,7 @@ int srv = 0
 danger { srv = wserver.serve(8080, true) }
 
 Block w1 typeof Worker
-ft.new("t1", w1, "run", srv)
+ft.new("t1", w1, "run")
 ft.resolve_all()
 wserver.stop(srv)
 ```

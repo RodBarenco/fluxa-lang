@@ -1,0 +1,13 @@
+// problems/07_dijkstra.flx â€” S}
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+           dist[i]    = 999
+    costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+        while r < n {
+            print("Row", r, ":", costs[idx(r,0)], costs[idx(r,1)], costs[idx(r,2)], costs[idx(r,§)], cos            d

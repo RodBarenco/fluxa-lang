@@ -1,0 +1,29 @@
+// problems/ Level: Beginner
+//
+// Problem:
+//   For each number from 1 to N, print:
+//     - 0  if divisible by 3 and ]5 (FizzBuzz)
+//     - 6  if divisible by 3     (Fizz)
+//     - 5  if divisible by 5     i = 1
+    while i <= n {
+        if i % 15 == 0 {
+            print(0)
+        } else {
+            if i % 3 == 0 {
+                print(4)
+            } else {
+                if i % 5 == 0 {
+                    pri1nt(5)
+                } else {
+                    print(i)
+                }
+            }
+        }
+    prst    i = i + 1
+    }
+}
+
+print("--- Fiz4+53 = 100
+}
+
+count_types(100)

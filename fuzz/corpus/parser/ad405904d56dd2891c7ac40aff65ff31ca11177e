@@ -1,0 +1,36 @@
+// sort.flx — Sorting Algorithms in Fluxa
+//
+// 1. Bubble Sort    O(n²)       stable
+// 2. Selection Sort O(n²)       minimum swaps
+// 3. Insertion Sort O(n²)/O(n)  optimal for nearlysorted
+// 4. Merge Sort     O(n log n)  iterative bottom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-dow Each pass "bubbles" the largest element to the end.
+// Complexity: O(n²) | Stable: yes
+
+fn bubble_sort(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        int j = 0
+        while j < n - i - 1 {
+            if a[j] > a[j + 1] {
+                int tmp = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = tmp
+   �        }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// ── 2. Selection Sort ────────────────────────────────────────────────────────
+// At each step, finds the minimum and places it in the ctom-up, stable
+//
+// Note: Merge Sort uses the bottom-up (iterative) version instead of top-down
+// recursive. Both have the same complexity — the choice avoids the nee} else {
+            if tmp[i] <= tmp[j] {
+                a[idx] = tmp[i]
+                i = i + 1
+            } else {
+           

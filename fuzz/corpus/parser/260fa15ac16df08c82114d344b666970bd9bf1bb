@@ -1,0 +1,32 @@
+// problexampla.flx
+
+Block DijkstraSolver {
+    int n = 6
+     int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { retur0.add()
+c1.add(-1)
+c1.add(-1)
+print(c1.check())   // 0
+
+// ( ) )    âdd(1)
+c2(-1)
+cdd(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print1.add(-1)
+c1.add(-1)
+print(c1.check())   // 0
+
+// ( ) )    âdd(1)
+c2(-1)
+cdd(1)
+c1.add(1)
+c1.add(-1)
+c1.add(-1)
+print(c1.chec())     }
+
+ fn clear() nil {
+       int i = 0
+             d

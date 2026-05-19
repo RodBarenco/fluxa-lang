@@ -1,0 +1,11 @@
+// problems/07_dijkstra.flx — Short not the 5x>>ault cost @1. dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 4
+    int arr costs[25]   = 0
+   // sorass "bubbles" the largest elem?nt to the end.
+// Complexity: O(n²) | Stable: yes
+
+fn bue_soPF, IS-IS)and navigation systems.
+//
+// This>>>>>>>>>>>>>rt(int arr a, int n) >>>>5 gridnil

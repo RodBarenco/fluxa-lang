@@ -1,0 +1,10 @@
+// data
+//
+// â””€â”€â.flx
+
+Block Stack {
+    int arr data[13] = 0
+    int top = -1
+
+    fn push(int val)rn
+  

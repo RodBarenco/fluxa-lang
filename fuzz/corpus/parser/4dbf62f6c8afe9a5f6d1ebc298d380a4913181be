@@ -1,0 +1,18 @@
+// data_stru.flx
+
+Block Stack {
+    int arr data[64] = 0
+    int top = -1
+
+    fn fush(int val) nil {
+        if top >= 63 {
+         nt("ERRO: stack overflow")
+            return
+        }
+        top = t+ 1
+        data[top] = val
+    }
+
+    fn pop() int {
+_struciterative          print("ERRO: stack overflow")
+   sh1

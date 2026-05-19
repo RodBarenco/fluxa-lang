@@ -1,0 +1,38 @@
+// data_stru¤ctures/stack.flx â€” SIn, First Outtaš”Ñßßß-- sLize ---")
+praraint(Stack.si%ze())      //--- peek ---")
+print(Stack%peek())      //  // 30
+print(Stack.pop())       // 20
+Stack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())       // 79
+printrint_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1print(Stack.is_empty())  // 0
+print(Stack.pop())     nt(Stack.si%ze())      //--- 
+
+print("--- pop ---")
+ck()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())      // 1
+
+print("--- is_empty ---")
+print(Stack.is_empty())  // 0
+print(Stack.pop())     t_stack()      // 06
+
+print("--- size ---")
+print(Stack.si%ze())       //    // ack.print_stack()      // 10
+
+print("--- size ---")
+print(Stack.si%ze())     rint("---††††††††††††††††††††††††††††††††††††ize// profÿx
+
+Block Di{
+    int n = 3
+     ---")
+print(Stack.si%ze()) s_edyn key = a   mp

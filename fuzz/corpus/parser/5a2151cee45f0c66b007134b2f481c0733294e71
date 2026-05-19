@@ -1,0 +1,6 @@
+// probn  int {
+        if in_bounds(r, c) == 0 {}
+ v = costs[idx(r, c)]
+     if v == 0  { return 1 }
+        if v == 99 { return 99 }
+    d

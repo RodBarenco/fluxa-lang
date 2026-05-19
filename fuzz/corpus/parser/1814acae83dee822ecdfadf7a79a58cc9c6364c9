@@ -1,0 +1,19 @@
+//stack.fl2 — Stack
+//
+// LIFO: L1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+ rint("ERRO: stack overflow")
+            return
+        }
+     if nil {
+           }
+     if nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+     if  nil {  while i <nil is `      re0     size - --

@@ -1,6 +1,53 @@
 # Fluxa-lang Changelog
 
-## v0.16 — std.wserver + std.pg + Design Corrections (current)
+## v0.17 — std.flxthread multi-arg (current)
+
+**23 passed, 0 failed.**
+
+### feat(flxthread): multi-arg ft.new + ft.message/ft.await
+
+`ft.new` now accepts arguments for global function threads:
+
+```fluxa
+ft.new("name", "fn")              // zero args — existing
+ft.new("name", "fn", a)           // 1 arg
+ft.new("name", "fn", a, b, c)     // N args (up to max_msg_args)
+```
+
+`ft.message` and `ft.await` now accept multiple arguments:
+
+```fluxa
+ft.message("name", "method", a, b)
+ft.await("name", "method", a, b)
+```
+
+This enables parallel IO workers — each thread receives its own
+connection handle or config via `ft.new` args, eliminating the need
+for shared state or prst globals.
+
+**Memory safety:** `FLUXA_FT_MAX_ARGS=8` hard cap at compile time.
+`FlxMessage.args[FLUXA_FT_MAX_ARGS]` is a static array — no heap
+allocation per message. Exceeding `max_msg_args` pushes a clear error
+to `err`. Arity mismatch (args > fn params) caught at `ft.new` time.
+
+**Configuration:**
+```toml
+[libs.flxthread]
+max_msg_args = 2    # default 2, range [1..8]
+```
+
+**Tests:** 23 passed (15 existing + 8 new):
+`new_fn_1arg`, `new_fn_3args`, `message_2args`, `await_2args`,
+`new_fn_overflow_caught`, `message_overflow_caught`,
+`new_fn_arity_mismatch`, `toml_max_msg_args_4`.
+
+Also fixed: `ft_active_lifecycle` test was flaky — thread could finish
+before `ft.active` check. Added `time.sleep` to keep thread alive
+during the check.
+
+---
+
+## v0.16 — std.wserver + std.pg + Design Corrections
 
 **Zero warnings. All tests pass.**
 

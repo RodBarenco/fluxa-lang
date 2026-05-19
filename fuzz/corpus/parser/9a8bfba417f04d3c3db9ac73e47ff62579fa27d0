@@ -1,0 +1,116 @@
+// problems/07_dijkstra.flx �l)
+// Movement: 4-directiOnal. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0,  0]
+   int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problem/fluxa run exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  ear array (row*5 * col)
+// Movement: 4-directional. Costs:e -> Advanced
+//
+// ── The history of the problem ──────────────────────────�
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default cost 1. 99 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/48_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1es, forestd3d swamp=5)
+//  ear array (row*5 + col)
+// Movement: 4-dir�────────�
+Block DijkstraSolver {
+    int n = 5
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Movemen��──�
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Movement: 4-directional. Costs: 1-9. 0 = default co91s  t.9 = wall.
+//
+// How to run:
+//   ./fluxa run examples/problems/48_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col// problems/07ding: road=1es, forest=3, swamp=5)
+//  ear array (row*5 + col)
+// Movement: 4-dir�────────�
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return rw * n + col// problems/07din visited[2�5] = 0
+    int arr parent[25]  = -1
+wall.
+//
+// How to run:
+//   

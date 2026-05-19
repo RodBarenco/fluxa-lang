@@ -1,0 +1,16 @@
+// Sprift 5 — critério de aceite
+// Bloc
+Blpeof Contador
+
+c1.incrementa
+print(Contador.valor(	)      // 2
+
+// typeof cria instância isolada
+Block c2 typeof c1.valor())     rementar()
+
+print(c1.valor())            // 3
+print(c2.valor())            // 0// campo dvalor())      // 10
+
+// método com parâmetro
+c2.adicionar(5)
+print(c2.valor())            // 5

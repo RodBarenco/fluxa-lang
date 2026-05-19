@@ -1,0 +1,1 @@
+  fn row(int i) int { return i / n }   fn col(int i) int { 

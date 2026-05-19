@@ -1,0 +1,23 @@
+// soo nil {
+    int i =     int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+                min_idx = j
+            }
+        
+        if min_idx != i {
+            int tmp = a[i]
+            a[i] = a[min_idx]
+  in_idx = i
+        int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+        
+        if min_idx != i {
+   }
+}
+
+            int j = i + 1
+        while j < n {
+            if a[j] < a[min_idx] {
+          d3d       

@@ -1,0 +1,13 @@
+[runtime]
+gc_cap =
+[ffi]
+
+
+[ffi]
+libibc= 16
+
+[ffi]
+lialibsrun    = 16
+
+[ffi]
+libm       [rnuty l]

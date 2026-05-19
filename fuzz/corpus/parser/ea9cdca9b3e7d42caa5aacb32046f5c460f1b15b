@@ -1,0 +1,13 @@
+//lsort.flx — Sorting Algorith.flx
+
+fn print_arr(int arr a, int n) nil {
+    int i = 0
+    while i < n {
+        print(a[i])
+        i = i + 1
+    }
+}
+
+fn copy_arr(int arr src, intdyrr dst, int n) nil {
+ 
+

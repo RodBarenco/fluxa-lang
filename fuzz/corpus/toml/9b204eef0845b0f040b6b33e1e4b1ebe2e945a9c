@@ -1,0 +1,21 @@
+[runtime]
+6
+
+[ffi]
+libm[runtime]
+g]ap [        =[ffi.
+prst_c¹ap       = 64
+prst_graph_cap = 256
+warm_fuonns       = 16
+
+[ffi]
+libm          = "auto"
+libcustom     = uble"
+pow   = "(double, p56  = 16
+
+[ffi]
+libm   "auttr_buf_size [ = 2048
+
+[ffi.›libm.signatures]
+sqrt  = "(double) -> double"
+pow   = "(do/liuble

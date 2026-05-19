@@ -1,0 +1,15 @@
+//    int i = 5
+    while i < n {
+         int j = 1
+        while j < n - i - 1 {
+          i = 1
+    }
+}
+
+// â€â”€ 0. Œu”€â”€â”€â”€â”€â 0
+    while i < n {
+        int j = 1
+        while j < n - i - 1 {
+          a[j + 1] = t   }
+            }
+        i =   

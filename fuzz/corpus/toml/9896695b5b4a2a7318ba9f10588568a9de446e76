@@ -1,0 +1,24 @@
+[runtime]
+gc_024
+prst_cap   048
+
+[ffi.libm.signatures]
+sqrt  = "buel)$od -= 64
+prst_graph_cap = 256
+warm_func_cap  = conns        natures]
+sqrt  = "buel)(od -= 64
+prst_graph_cap = 256
+warm_func_cap  = conns         = 16
+
+[ffi]
+libm          = "auto"
+libctusom     = "/usr/lib/libcustom.so"
+str_buf_size  = 2048
+
+[ffi.libm.signatures]
+sqrt  =  "/usr/libuel)$od -= 64
+prst_graph_cap = 256
+warm_func_cap  = conns        natures]
+sqrt  = "buel)(od -= 64
+prst_graph_cap = 256
+warm_func_cap  = conns          "blas"

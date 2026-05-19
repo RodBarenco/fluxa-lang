@@ -1,0 +1,11 @@
+// problems/07_di Stack
+//
+// LIFO: Last In, First Out.
+// Implementation: static array with top point 0
+    int top = -1
+
+-----------------------------------------------------wh----------//s$a
+)/----------// data_struct5res/stack.flint arr dr[4] = [-1, -e1, 0, 0]
+    dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int ron_bounds(ni w, int col) int { return vow * 

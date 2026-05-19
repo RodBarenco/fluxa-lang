@@ -1,0 +1,10 @@
+// free%  int arc)]
+        if v { return 1 }
+        if v == 99 { if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+        while r < n {t("Row", r, ":", costs[idx(r,0)], costs[x(r,1)], costs[idx(r,2)], costs[idx(r,3)], costs[idx(r)])
+           lr = r +lear()
+        set_cost(0,0,1) Ëet  = idx(start_R    d

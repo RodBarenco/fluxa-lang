@@ -1,0 +1,14 @@
+int a = 10
+int  = 20
+print(a + b)
+float pi = 3.14
+print(pi)
+str noool ativo = true
+print(ativo)
+int c = a * b
+print(c)
+int resto = 7 3% rp
+int(resto)
+a = 99== 99)
+print(b != 20)
+print(a > b)

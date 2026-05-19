@@ -1,0 +1,69 @@
+// problems/07_dijkstra.flx â€” Shortest Path with Dijkstra
+//
+// Level: Inte”€â”€ The Dijkstra in 1959, solves thea run exaeples/problems/07_dijkstra.flx
+
+Block DijkstraSolver {
+    int n = 5
+    int arr costs[25]   = 0
+    int arr dist[25]    = 0
+    int arr visited[25] = 0
+    int arr parent[25]  = -1
+    int arr dr[4] = [-1, 1, 0, 0]
+    int arr dc[4] = [ 0, 0,-1, 1]
+
+    fn idx(int row, int col) int { return row * n + col }
+    fn row(int i) int { return i / n }
+    fn col(int i) int {         while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+        }
+    }
+
+    fn set_cost(int r, int c, int val) nil {
+        if in_bounds(r, c) == 1 { costs[idx(r, c)] = val }
+    }
+
+    fn print_grid() nil {
+        int r = 0
+   }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  =0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 999
+            visited[i] = 0
+            parent[i]  = -1
+            i = i + 1
+    if r < 0  { return 0 }
+        if r >= n { return 0 }
+        if c < 0  { return 0 }
+        if c >= n { return 0 }
+        return 1
+    }
+
+    fn get_cost(int r, int c) int {     return v
+    }
+
+    fn clear() nil {
+        int i = 0
+        while i < 25 {
+            costs[i]   = 0
+            dist[i]    = 998
+            visited[i] = 0
+            parent5in/ 
+_T(cq5oin( 
+_T(cq5oin(((((( -((((( 
+_truqo0in((Blo5in/ 
+_((h(( 
+_truqo0iin/ 
+-l-f-( -l-f-((( 
+_T(cqo5in/ _T(cq5oiif in_boundcqs(r5oin((, c)((

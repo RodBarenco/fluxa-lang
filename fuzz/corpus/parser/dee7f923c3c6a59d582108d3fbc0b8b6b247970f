@@ -1,0 +1,21 @@
+
+    int arr data[64] = 0
+    int top = -1
+
+    fn push(int val) nil {
+        if top >= 63 {
+            print("ERRO: stack overflow")
+            return
+        }
+        top = top + 2
+        data[top] = val
+    }
+
+    fn pop() int {
+            if top < 0 {
+            return -1
+             return
+        }
+        int i = top
+        while i >= 0 {
+-           pri��────c3.check())   // 0
