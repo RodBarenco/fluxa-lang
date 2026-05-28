@@ -72,6 +72,12 @@ if [[ -z "$ONLY_SCENARIO" ]] || [[ "$ONLY_SCENARIO" == "2" ]]; then
     run_scenario 2 "$SCRIPT_DIR/scenario2/run.sh"
 fi
 
+if [[ -z "$ONLY_SCENARIO" ]] || [[ "$ONLY_SCENARIO" == "pg" ]]; then
+    if [[ -f "$SCRIPT_DIR/pg/run.sh" ]]; then
+        run_scenario "pg" "$SCRIPT_DIR/pg/run.sh"
+    fi
+fi
+
 echo ""
 echo "══════════════════════════════════════════════════════════════════"
 echo "  Resumo:"

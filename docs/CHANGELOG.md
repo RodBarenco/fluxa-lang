@@ -1,6 +1,49 @@
 # Fluxa-lang Changelog
 
-## v0.17 — std.flxthread multi-arg (current)
+## v0.18 — stdlib hardening for HTTP/DB workloads (current)
+
+Fixes uncovered while running Fluxa as an HTTP server backend against a PostgreSQL database under sustained k6 load (1640 RPS sustained, 24 worker threads, single CPU core, 1 GB memory cap).
+
+### fix(json2): rename `json2.free` → `json2.discard`
+
+`free` is a reserved keyword in the Fluxa parser, which prevented `json2.free(doc)` from parsing — making the function unreachable from Fluxa code despite being implemented. The function is renamed to `json2.discard(doc)` with identical semantics. **This is a breaking change** for any code that called `json2.free`, but no such code existed because the call site never parsed.
+
+The function releases the heap-allocated parse tree (`Json2Doc`) behind the `dyn` wrapper. The `dyn` itself is GC-managed but the tree is opaque to the GC; without `discard`, parse trees accumulate until process exit. Calling `discard` on a `nil` or already-discarded document is a safe no-op.
+
+### fix(pg): serialize first `PQconnectdb` per process
+
+`libpq`'s GSSAPI / Kerberos initialization (`libkrb5`) is not thread-safe before the first successful `PQconnectdb`. When many worker threads called `pg.connect` concurrently at startup, this race manifested as `k5_mutex_lock: Invalid argument` and crashed the process. Fix: wrap the first connection per process in `PQinitOpenSSL(0, 0)` (called once via `pthread_once`) plus a process-wide `pg_connect_mu` mutex around `PQconnectdb` itself.
+
+### fix(wserver): high-concurrency robustness
+
+Multiple fixes for sustained-load reliability:
+- `MHD_USE_EPOLL_INTERNAL_THREAD` + `MHD_OPTION_THREAD_POOL_SIZE` for proper kernel-level connection multiplexing
+- `MHD_OPTION_LISTEN_BACKLOG_SIZE` and `MHD_OPTION_LISTENING_ADDRESS_REUSE` for burst handling and quick restart
+- Idempotent `reply_json` (first reply wins; subsequent calls are no-ops, eliminating a race where multiple reply paths could double-queue)
+- 30s outer-bound timeout in `ws_finish_reply` to detect stuck handlers
+- `lib.mk` now falls back to a direct header probe when `pkg-config` lacks an entry for `libmicrohttpd`
+- Move the non-static `fluxa_std_wserver_call` into its own TU (`fluxa_std_wserver.c`) so the linker sees the symbol exactly once
+
+### feat(strings): `strings.hash(str s) → int`
+
+FNV-1a 32-bit hash, suitable for hash-table indexing. Used by the benchmark SUT's response cache. Pure function, no `danger` required.
+
+### tweak(flxthread): bump `FLUXA_THREAD_MAX` to 64
+
+Was 16. The new compile-time cap allows one worker per CPU core on machines up to 64 cores, plus headroom for auxiliary threads. Embedded targets that need a tighter cap can override at build time.
+
+### docs
+
+- `STDLIB.md`: document `json2.discard` and its memory contract; document `strings.hash`; document the `FLUXA_THREAD_MAX` cap and its implications for HTTP-style workloads
+- `FLUXA_GUIDE.md`: new section **12.5 Memory in Long-Running Loops** describing how `VAL_STRING` scope cleanup interacts with worker loops, the residual leak this produces, and the mitigations available within the current runtime
+
+### Known limitation
+
+`VAL_STRING` values assigned inside the body of a `while` loop in a worker function are not released until the function returns. Since worker functions run forever, this produces a slow accumulation that glibc consolidates under memory pressure but does not fully reclaim. A `free(x)` built-in or automatic-free-on-overwrite scheme would close this gap; both require runtime changes and are tracked separately.
+
+---
+
+## v0.17 — std.flxthread multi-arg
 
 **23 passed, 0 failed.**
 

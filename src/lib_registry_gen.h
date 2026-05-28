@@ -103,6 +103,10 @@
 extern Value fluxa_std_flxthread_call(const char *, const Value *, int,
                             ErrStack *, int *, int, void *);
 #endif
+#ifdef FLUXA_STD_WSERVER
+extern Value fluxa_std_wserver_call(const char *, const Value *, int,
+                            ErrStack *, int *, int, void *);
+#endif
 
 /* ── Registry entry ───────────────────────────────────────────────── */
 #include "toml_config.h"
@@ -261,9 +265,9 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
     { "websocket", "std.websocket", "websocket", NULL, NULL, NULL, 0, 0, 0 },
 #endif
 #ifdef FLUXA_STD_WSERVER
-    { "wserver", "std.wserver", "wserver", NULL, NULL, fluxa_std_wserver_call, 0, 1, 1 },
+    { "wserver", "std.wserver", "wserver", NULL, fluxa_std_wserver_call, NULL, 1, 0, 1 },
 #else
-    { "wserver", "std.wserver", "wserver", NULL, NULL, NULL, 0, 1, 0 },
+    { "wserver", "std.wserver", "wserver", NULL, NULL, NULL, 1, 0, 0 },
 #endif
 #ifdef FLUXA_STD_ZLIB
     { "zlib", "std.zlib", "zlib", fluxa_std_zlib_call, NULL, NULL, 0, 0, 1 },

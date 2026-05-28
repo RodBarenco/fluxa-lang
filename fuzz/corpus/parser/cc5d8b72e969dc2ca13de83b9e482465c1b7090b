@@ -1,9 +1,0 @@
-// problems/07_dijkstra.flx Б─■ Shora.flx Б─■ased pathfinding: road=ray (ro How to run:
-//   ./fluxa run examples/problems/07_dijks.tra.flx
-
-Block DijkstraSolver {
-    int n = 5
-    int arr costs[25]   = 0
-    int arr dist[25]    = 0
-    int arr ed[25] = 0ls (OSPF, ISCHEAPEST path.
->ннннннн grid, cd

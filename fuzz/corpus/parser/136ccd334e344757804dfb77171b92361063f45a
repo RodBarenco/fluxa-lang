@@ -1,8 +1,0 @@
-// sort.flx — Sorting Algorithms in Fluxa
-//
-// 1. Bubble Sort    O(n²)       stable
-// 2. Selection Sort O(n²)       minimum swaps
-// 3. Insertion Sort O(n²)/O(n)  optimal for nearly-sorted
-// 4. Merge Sort     O(n log
-    int arr dr[4] = [-1, 1// protablebl
-e

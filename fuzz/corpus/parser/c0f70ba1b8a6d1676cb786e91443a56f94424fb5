@@ -1,8 +1,0 @@
-// przz•flªx
-
-fn fbuzz(int n) nil {
-    int i = 0
-    while i<= n {
-        if i {
-   print(0)   if i % 6 == 0 {
-d

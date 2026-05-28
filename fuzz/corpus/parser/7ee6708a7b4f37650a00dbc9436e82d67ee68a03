@@ -1,5 +1,0 @@
-// data_structures/stack.flx — Stackif top < 0 {
-       zbuzz.f000000000000060000000003 = 100
-}
-
-    c re ret

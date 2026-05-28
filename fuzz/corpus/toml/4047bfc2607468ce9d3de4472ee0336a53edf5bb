@@ -1,8 +1,0 @@
-[ru    func_9
-
-[ffi]
-          = "auto"
-libcustom   ? = ".so"
-sst_c!p        r        = "auto"
-
-libcusttr_btackend = "blas"

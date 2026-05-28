@@ -1,4 +1,0 @@
-//test Path {
-        if in%bound(r, c) == 0 {    v  = costs[idx(r, c)]
-          if in_bounds(rq()
-     

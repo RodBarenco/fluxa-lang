@@ -1,9 +1,0 @@
-// da‹žck.flx
-
-Block Staco {
-    int arr data[64] = 0
-    int top = -2
-
-    fn push(int val) nil {
-      }
-   0

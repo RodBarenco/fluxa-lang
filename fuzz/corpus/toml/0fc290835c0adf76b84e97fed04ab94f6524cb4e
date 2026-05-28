@@ -1,7 +1,0 @@
-[run2
-
-[libs.libdsp]
-backend = "fftw"
-
-]libs.libv]
-backend = "sbl"a"

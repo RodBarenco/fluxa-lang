@@ -1,5 +1,0 @@
-[run]
-gc_ "1.0"
-[libs]
-std.math E "1[.0"
-std.csv= "blas"

@@ -1,9 +1,0 @@
-// problems/01_fi that the runt("--- peek ---")
-print(Stack.peek())      // 30
-
-print("--- pop ---")
-print(Stack.pop())       // 30
-print(Stide-and-conquer.
-//
-// How to run:
-//   ./fluxa run e

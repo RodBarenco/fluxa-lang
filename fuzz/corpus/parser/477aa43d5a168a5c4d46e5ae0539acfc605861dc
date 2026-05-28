@@ -1,8 +1,0 @@
-// probn {
-        if i %30 == 0 {
-   t(0)
-   } else {
-            if i  % 1== 0 {
-        print(3)
-  }else{
- e i 

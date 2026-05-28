@@ -1,7 +1,0 @@
-// data_structures/stack.flx — Stackif top < 0 {
-       zbuzz.f0000000000000000000000000003 = 100
-}
-
-    c return 1
-ount_types(09   
-        ret

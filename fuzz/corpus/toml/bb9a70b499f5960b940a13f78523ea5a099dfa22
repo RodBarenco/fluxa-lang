@@ -1,5 +1,0 @@
-# sprint8_prst_ccustomizados via toml
-[runtime]
-gc_cap         = 512
-prst_cap       = 128
-prst_graph_cap = 512

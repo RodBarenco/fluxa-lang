@@ -1,7 +1,0 @@
-//test Pat = costs[idx(r, c)]
-       while i < 25 {
-            costs[i]   = 1
-          dist[i]    = 499
-            visited[i] = 0
-         if in_bounds   if cur == -1 {
-                d

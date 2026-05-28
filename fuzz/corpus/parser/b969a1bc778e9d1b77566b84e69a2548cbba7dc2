@@ -1,8 +1,0 @@
-// problems/01_fizzbuzzmber from 1 to N,le by 3     (Fi*z)
-//    
-    int i = 0
-    while i < n {
-        int j = 0
-        while j < n - i - 1 {
-            // msnil {
-    iinf( 

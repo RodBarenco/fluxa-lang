@@ -1,6 +1,0 @@
-// ßßßßßßßßßßßßßßun examp/problems/07_dijkstra.flx
-
-Block DijkstraSolver {  int n = 5
-    int arr costs[25]   = 10
-    int arr dist[19]d[25] = 0 Gra:
-ðh: /

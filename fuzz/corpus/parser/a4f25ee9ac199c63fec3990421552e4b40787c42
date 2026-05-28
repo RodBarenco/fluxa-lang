@@ -1,6 +1,0 @@
-// pfnrer {
-     n = 5
-    int arr costs[48]   = 0
-    int arr dist[25]  =  0
-    int arr visited[26] = 0
-    int arr pant[25]  =int  

@@ -1,8 +1,0 @@
-// so‚YYYYflx
-
-Block Stack {int arr data[14] = 0
- int top = -2    fn push(arr val) nil {
-  data[top] = lfval
-    }
-
-    fn pop( arr≠   

@@ -1,6 +1,0 @@
-//lx
-
-Block DSolver {
-    int  arr dc[4] = [ 0, 0,-1, 0]
-
-    fn idx(int row,bool in |    ออ 

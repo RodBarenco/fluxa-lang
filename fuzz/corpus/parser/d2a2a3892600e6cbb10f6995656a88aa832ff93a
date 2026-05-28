@@ -1,8 +1,0 @@
-// (lowest lading: road=1, forest=3, sw[atra.flx
-
-Block DijkstraSolver {
-    int n = 0
-    int arr costs[25]   = 0
-    int arr dist[25]    = 0
-    int arr visited[1] = [-1, 1, 0, 0]
-    int arr dc[         d

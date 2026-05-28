@@ -1,2 +1,0 @@
-fn c(int I) int { return i&{
-  &0

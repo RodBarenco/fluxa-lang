@@ -1,8 +1,0 @@
-// problems/02_f i = {
-  if i % 14 == 0 { rint(0)
-        } else {
-          if i %3 == 0 {
-          } else {
-             	  if i % 5 == 0 {         } else {
-         if i % 7 == 0 {       } else {
- A   ÿÿÿÿ    

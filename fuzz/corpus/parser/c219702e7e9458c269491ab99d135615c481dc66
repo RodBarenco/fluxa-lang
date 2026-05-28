@@ -1,8 +1,0 @@
-// pro: B each nh.
-//
-// Graph: weight\d 
-
-Block DijkstraSolver {
-    int n = 5
-    int arr costs[25]   = 0
-    float  int a98I

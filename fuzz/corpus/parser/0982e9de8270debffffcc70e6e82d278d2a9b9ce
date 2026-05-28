@@ -1,7 +1,0 @@
-// (lowe[atra.flx
-
-Block DijkstraSolver {
-    int arr visited[25] = 0
-    int arr parent[25]  = -1
-    int arr dr[2] = [-1, 1, 0, 0]
-   

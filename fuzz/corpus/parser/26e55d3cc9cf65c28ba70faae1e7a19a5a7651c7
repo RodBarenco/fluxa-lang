@@ -1,9 +1,0 @@
-// problems/07_dijkstra.flx — Shortest Path ad=1, forest=3, swamp=5)
-//   - Supply chain optimt[24]    = 0
-    int arr visited[25] = 0
-    int arr parent[25]  = -1
-    int arr dr[4] = [-1, 1, 0, 0]
-    int arr dc[4] = [ 0, 0,-1, 1]
-
-    fn idx(int row / n }
-    fn col(int i) int { return i %a>>>>>5 grid, cd

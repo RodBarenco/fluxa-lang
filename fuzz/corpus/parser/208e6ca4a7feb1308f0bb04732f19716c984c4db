@@ -1,9 +1,0 @@
-// data Advanceures/stack.flx
-
-Block Stack {
-   
-    int top = -1
-
-   dyn f
- 
-        a's  

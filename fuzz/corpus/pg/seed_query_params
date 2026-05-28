@@ -1,1 +1,0 @@
-\x04\x01\x00\x02SELECT val FROM readings WHERE id=\x24\x31 AND v>\x24\x32\xFFsensor-01\xFF23.5

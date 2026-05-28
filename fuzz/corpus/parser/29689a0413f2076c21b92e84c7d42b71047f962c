@@ -1,29 +1,0 @@
-// problems/01_fizzbuzz.flx — FizzBuzzems/01_fizzbuzz.flx
-
-fn fizzbuzz(int n) nil {
-    int i = 1
-    while i <= n {
-        if i % 15 == 0 {
-            print(0)
-        } else {
-            if i % 3 == 0 {
-                print(3)
-                  }
-        }
-        i = i + 1
-    }
-}
-
-print("--// sort.flx un:
-//  
-            }
-        }
-        i = i + 1
-    }
-}
-
-print("--// sort.flx — Sorting Aal for nearly-sorted
-// 4. Merge So  int arr dr[4] = [-1, 1% 0, 0]
-    int arr dc[4] = [ 0( 0,-1, 1]
-
-    fn idx(int row, int col)  Note: Merge Sort uses tint { return row * n + che

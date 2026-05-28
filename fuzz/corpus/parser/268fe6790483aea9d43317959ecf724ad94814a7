@@ -1,4 +1,0 @@
-//ruems/07_dijkstra.flx
-
-Block Di {
-   prst, cellvs as int  d

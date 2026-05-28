@@ -131,8 +131,25 @@ static inline Value pg_str(const char *s) {
 #include <libpq-fe.h>
 #include <pthread.h>
 
+/* ── libpq one-time initialization ────────────────────────────────
+ * Called once via pthread_once before the first PQconnectdb. Without this,
+ * libpq lazily initializes OpenSSL, libcrypto, and libkrb5 on the first
+ * connection — and if multiple threads do that concurrently, the inits
+ * race and leave libkrb5's internal mutexes corrupted. Symptoms: assertion
+ * "k5_mutex_lock: Invalid argument" and glibc fortify "%n in writable
+ * segment detected".
+ *
+ * PQinitOpenSSL(0, 0) tells libpq we (the application) are responsible for
+ * OpenSSL/libcrypto setup. Since the SUT does not use SSL connections
+ * (sslmode=disable in the connstr), this is safe and avoids the races. */
+static void pg_libpq_init(void) {
+    PQinitOpenSSL(0, 0);
+}
+
 /* ── Module-level state ──────────────────────────────────────────── */
 static pthread_mutex_t pg_mu          = PTHREAD_MUTEX_INITIALIZER;
+/* Serializes PQconnectdb calls. See pg.connect for rationale. */
+static pthread_mutex_t pg_connect_mu  = PTHREAD_MUTEX_INITIALIZER;
 static PGconn        **pg_conns       = NULL;
 static PGresult      **pg_results     = NULL;
 static int             pg_max_conns   = 0;
@@ -290,7 +307,28 @@ static inline Value fluxa_std_pg_call(const char *fn_name,
         NEED(1); REQ_STR(0, connstr);
         if (strlen(connstr) > 1024) PG_ERR("connection string too long (max 1024 bytes)");
 
+        /* Thread-safe libpq initialization. libpq lazily inits OpenSSL,
+         * libcrypto, libgssapi, and libkrb5 on the first PQconnectdb. None
+         * of those inits are individually thread-safe, and PQconnectdb makes
+         * no attempt to serialize them. With many threads doing concurrent
+         * connect attempts at startup (24 workers × retry-every-second), the
+         * inits race and corrupt libkrb5's internal mutex state.
+         *
+         * Symptoms without this:
+         *   "k5_mutex_lock: Received error 22 (Invalid argument)"
+         *   "%n in writable segment detected" (glibc fortify)
+         *
+         * Fix: PQinitOpenSSL(0, 0) once (we don't use SSL), then serialize
+         * ALL PQconnectdb calls with pg_connect_mu. After the first successful
+         * connect, all lazy init paths are warm and subsequent connects are
+         * safe — but serializing them costs almost nothing (a few ms each)
+         * since it only matters at startup. */
+        static pthread_once_t pg_init_once = PTHREAD_ONCE_INIT;
+        pthread_once(&pg_init_once, pg_libpq_init);
+
+        pthread_mutex_lock(&pg_connect_mu);
         PGconn *conn = PQconnectdb(connstr);
+        pthread_mutex_unlock(&pg_connect_mu);
         if (!conn || PQstatus(conn) != CONNECTION_OK) {
             char msg[512];
             snprintf(msg, sizeof(msg), "pg.connect: %.400s",

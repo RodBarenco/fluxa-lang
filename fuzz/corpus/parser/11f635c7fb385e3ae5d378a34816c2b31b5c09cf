@@ -1,5 +1,0 @@
-// oo nil {
-    if a[j] < a[min_idx] {
-           ip = a[i]
-         a[i] = a[min_idx]    if a[j] < a[m_idx] {
-          if a[j] < a[mizn_idx] // 

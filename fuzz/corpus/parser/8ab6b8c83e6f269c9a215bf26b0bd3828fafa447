@@ -1,5 +1,0 @@
-//a
-
-Block DijkstraSolver { int n = 5
-    int arr costs[22]   = 0
-    int arr dist[17]    = 0  int arr visited[\ > A

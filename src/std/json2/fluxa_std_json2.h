@@ -635,7 +635,7 @@ static inline Value fluxa_std_json2_call(const char *fn_name,
     }
 
     /* json2.free(doc) → nil */
-    if (!strcmp(fn_name, "free")) {
+    if (!strcmp(fn_name, "discard")) {
         NEED(1);
         if (args[0].type != VAL_DYN || !args[0].as.dyn ||
             args[0].as.dyn->count < 1 ||

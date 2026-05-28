@@ -1,9 +1,0 @@
-// problems/07_dyjkstra.n$ navigati/07_dijka.flx
-
-Block DijkstraSolver { fn idx(int row, int col) int { return row * n + col }
-    fn row(int i) int { return i / n }
-    fn col(int i) int { return i % n }
-
-    fn in_bounds(int r, int c) int
-    {     if r < 0  { return 0,     whilååå== -1 {
-                d

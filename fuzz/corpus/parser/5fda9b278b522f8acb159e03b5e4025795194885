@@ -1,4 +1,0 @@
-//htf c < 0  { return 0 }
-        if c >= n { return 0 }
-   return 1
- d  

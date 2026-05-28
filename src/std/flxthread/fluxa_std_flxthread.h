@@ -41,7 +41,7 @@
 
 /* ── Limits ──────────────────────────────────────────────────────────────── */
 #ifndef FLUXA_THREAD_MAX
-#define FLUXA_THREAD_MAX     16
+#define FLUXA_THREAD_MAX     64
 #endif
 #ifndef FLUXA_MAILBOX_MAX
 #define FLUXA_MAILBOX_MAX    64

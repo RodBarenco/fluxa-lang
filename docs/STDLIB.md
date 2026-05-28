@@ -415,7 +415,9 @@ Use `prst dyn doc` in main scope to keep the document across hot reloads. **Neve
 | `json2.delete(doc, path)` | `nil` | Delete node |
 | `json2.valid(doc)` | `bool` | Document parsed without error |
 | `json2.error(doc)` | `str` | Parse error message |
-| `json2.free(doc)` | `nil` | Release document memory |
+| `json2.discard(doc)` | `nil` | Release the parsed document tree (see note below) |
+
+> **Memory:** `json2.parse()` allocates a heap-resident document tree behind the `dyn` wrapper. The `dyn` itself is GC-managed (swept at `while` back-edges when unpinned), but the underlying tree is opaque to the GC and is only freed by `json2.discard(doc)`. **Always call `discard` at the end of the `danger` block that owns the document**, otherwise the tree leaks until process exit. The function is named `discard` (not `free`) because `free` is a reserved keyword in the Fluxa parser.
 
 ```fluxa
 import std json2
@@ -427,7 +429,7 @@ danger {
     int count  = json2.length(doc, "readings")
     json2.set_float(doc, "sensor.temp", 23.1)
     str updated = json2.stringify(doc)
-    json2.free(doc)
+    json2.discard(doc)
 }
 ```
 
@@ -464,6 +466,7 @@ max_out_bytes = 8192
 | `strings.repeat(str s, int n)` | str | Repeat n times. |
 | `strings.from_int(int n)` | str | int or float to string. |
 | `strings.to_int(str s)` | int | Parse as integer (atol). Returns 0 if not parseable. |
+| `strings.hash(str s)` | int | FNV-1a 32-bit hash. Useful for hash-table indexing. |
 
 ---
 
@@ -551,6 +554,12 @@ max_msg_args = 2    # max arguments for ft.new/ft.message/ft.await
 
 Exceeding `max_msg_args` pushes a clear error to `err`. Arity mismatch
 (more args than function parameters) is caught at `ft.new` time.
+
+> **Thread cap:** the runtime tracks a compile-time hard limit on
+> concurrently-active threads (`FLUXA_THREAD_MAX`, currently 64). This is
+> generous for embedded targets but may be insufficient for HTTP servers
+> dispatching one worker per CPU core × N. If you hit the cap, `ft.new`
+> returns an error in `err` and the thread is not spawned.
 
 ### Full example
 

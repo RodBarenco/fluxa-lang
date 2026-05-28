@@ -1,5 +1,0 @@
-[runtimustom     =_b34buf_size  = 2048
-
-[ffi.libm.signatures]
-sqrt  = "(double) -> double"
-pow   = "(ÿouble, doubl[ÿe) -> druno

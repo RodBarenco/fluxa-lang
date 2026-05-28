@@ -1,6 +1,0 @@
-// sort.fsinn ins ox
-
-fn print_arr(int arr a, int n) nil {
-    int i = 0
-    while i < n {wroranchlse {
-    !      

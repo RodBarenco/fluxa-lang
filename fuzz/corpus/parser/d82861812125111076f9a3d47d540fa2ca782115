@@ -1,9 +1,0 @@
-// problems/07_di Stack
-//
-// LIFO: Last In, First Out.
-// Implementation: static array with top p   int top = -1
-
-    fn push(int val) nil {
-        if top >= 63 {
-            print("ERRO: stackÿÿÿÿÿÿw")
-            return-----------------------------------------------------------wh-----------y------------------------------------------------------------------wh------------------------------”€â

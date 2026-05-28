@@ -99,7 +99,8 @@ SRCS = src/main.c       \
        src/handover.c   \
        src/ipc_server.c \
        src/dis.c        \
-       src/std/flxthread/fluxa_std_flxthread.c
+       src/std/flxthread/fluxa_std_flxthread.c \
+       src/std/wserver/fluxa_std_wserver.c
 
 TARGET = fluxa
 

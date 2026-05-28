@@ -1,4 +1,0 @@
-// problems­­­oblems/07_dijkstra.flx
-
-Block DijkstraSolver {
-    int n^? d, cd

@@ -129,6 +129,7 @@ typedef struct {
     int          wserver_max_threads;      /* max pool threads,         default 16   */
     int          wserver_scale_up_queue;   /* queue depth to trigger scale-up, def 4 */
     int          wserver_scale_down_idle;  /* idle seconds to scale down,      def 10*/
+    int          wserver_workers;         /* worker threads for serve(p,true,fn), default 4, hard cap 64 */
     int          ft_max_msg_args;    /* [libs.flxthread] max_msg_args, default 2, hard cap 8 */
     char         libdsp_backend[16]; /* [libs.libdsp] backend = "native"|"fftw"  */
     char         libv_backend[16];   /* [libs.libv]   backend = "native"|"blas"  */
@@ -555,6 +556,7 @@ static inline void fluxa_config_load_libs(FluxaConfig *cfg, const char *toml_pat
                     else if (strncmp(p, "max_threads",       11) == 0) cfg->wserver_max_threads      = v;
                     else if (strncmp(p, "scale_up_queue",    14) == 0) cfg->wserver_scale_up_queue   = v;
                     else if (strncmp(p, "scale_down_idle",   15) == 0) cfg->wserver_scale_down_idle  = v;
+                    else if (strncmp(p, "workers",            7) == 0 && v >= 1 && v <= 64) cfg->wserver_workers = v;
                 }
             }
         }

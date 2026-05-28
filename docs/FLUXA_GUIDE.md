@@ -537,6 +537,33 @@ danger { srv     = wserver.serve(8080) }
 
 ---
 
+## 12.5 Memory in Long-Running Loops
+
+Fluxa's GC sweeps `dyn` objects at every `while` back-edge when their pin count is zero. **String values (`VAL_STRING`) are not GC-managed**: a `str` is freed when the scope that owns it is released, which only happens when the surrounding function returns.
+
+This matters for HTTP servers and other long-running workers. Inside
+
+```fluxa
+fn worker(int srv) nil {
+    while !ft.should_stop() {
+        // ... per-request work that allocates strings ...
+    }
+}
+```
+
+every `str` assigned inside the loop lives in the worker's scope until the function returns — which it never does. Each iteration's strings accumulate.
+
+**Mitigations within the current runtime:**
+
+1. **Use `json2.discard(doc)`** at the end of every `danger` block that calls `json2.parse(...)`. The `dyn` wrapper is GC-managed but the underlying parse tree is opaque and must be released explicitly.
+2. **Build response bodies with multi-step `strings.concat`** chains. Each step allocates one string; the previous step's intermediate falls out of usage but the trailing `wserver.reply_json(req, status, body)` only needs the final string.
+3. **Cache aggressively** when possible. A `Block` field `prst str arr` honors deep-copy semantics on write and proper free-on-overwrite via the prst pool.
+4. **Accept a residual leak.** glibc's malloc consolidates arenas under memory pressure, producing a bounded steady state under sustained load. In practice this is ~50 MB residual per 100 RPS over 10 minutes of benchmarking.
+
+A documented gap exists in the runtime: there is no `free(x)` built-in that releases an arbitrary `str` slot, and no automatic free on `rt_set` overwrite. Adding either would let workers reach near-zero residual memory. This is tracked as a runtime enhancement; see the issue tracker.
+
+---
+
 ## 13. Modules
 
 Organize code across files using `import live` and `import static`.

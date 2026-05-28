@@ -1,7 +1,0 @@
-// porbblems«08_dijkst/ra.flx
-
-Block DijkstraSolver {
-    int n = 5
-     int arr dr[4] = [-1, 1, , 0,-,]1 1
-
-    ~fi

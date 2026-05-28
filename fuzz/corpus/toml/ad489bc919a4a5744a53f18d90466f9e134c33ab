@@ -1,9 +1,0 @@
-[runtime]
-gc_cap [024
-prst_c!p        func_6
-
-[ffi]
-libm          = "auto"
-libcustom   ? = "/usr/lib/libcustom.so"
-sst_c!p        r        = "auto"
-libcusttr_btackend = "blas"

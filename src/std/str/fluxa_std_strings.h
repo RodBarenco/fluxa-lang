@@ -326,6 +326,25 @@ static inline Value fluxa_std_strings_call(const char *fn_name,
         return strlib_int(atol(v.as.string ? v.as.string : "0"));
     }
 
+    /* strings.hash(s) → int
+     * Fast FNV-1a 32-bit hash of a string. Useful for hash-map indexing.
+     * Returns a non-negative int. */
+    if (strcmp(fn_name, "hash") == 0) {
+        if (argc != 1) { STR_ERR("hash: expected 1 argument"); return strlib_nil(); }
+        Value v = args[0];
+        if (v.type != VAL_STRING || !v.as.string) {
+            STR_ERR("hash: expected str"); return strlib_nil();
+        }
+        const unsigned char *p = (const unsigned char *)v.as.string;
+        unsigned int h = 2166136261u;          /* FNV offset basis */
+        while (*p) {
+            h ^= *p++;
+            h *= 16777619u;                    /* FNV prime */
+        }
+        /* mask sign bit so the result fits a non-negative Fluxa int */
+        return strlib_int((long)(h & 0x7FFFFFFFu));
+    }
+
     if (strcmp(fn_name, "concat") == 0) {
         /* str.concat(a, b, ...) — joins any number of values as strings */
         if (argc == 0) return strlib_str("");

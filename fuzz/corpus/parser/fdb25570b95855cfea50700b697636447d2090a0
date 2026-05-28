@@ -1,6 +1,0 @@
-// plx
-
-Block DijkstraSolver {
-    int n = 5
-    int arr costs[25]   = 0
-fn •ˆ      secost(0,0,1) set_cost(0-1,2) s:t( 

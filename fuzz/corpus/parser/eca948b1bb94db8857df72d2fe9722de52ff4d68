@@ -1,4 +1,0 @@
-// probn t {
-   if in_bounds0 {}
- v = costs  if v == 0  { return 1 }
-        if v == 99 { return 99 }  d

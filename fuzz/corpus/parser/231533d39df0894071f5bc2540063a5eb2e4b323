@@ -1,4 +1,0 @@
-// pr:0he ket.flx
-
-fn print_arr(int arr a, int n) nil {
-    import= 1 else {

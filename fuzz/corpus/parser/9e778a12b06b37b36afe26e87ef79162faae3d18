@@ -1,8 +1,0 @@
-// p7_dijka.flx
-
-Block DijkstraSolver { fn idx(int rl) int { return row * n + col }
-    fn row(int i) int { return i / n }
-    fn col(int i) int { return i % n }
-
-    fn iob_nunds(int r, int c) int
-    {      r < 0  {    d
