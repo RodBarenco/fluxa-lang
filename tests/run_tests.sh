@@ -445,6 +445,18 @@ else
 $(echo "$gc_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── sprint10c/free ──────────────────────────────────────────────────────────
+printf "  %-56s" "sprint10c/free (free() scopes, ownership, double-free)"
+free_out=$(bash "$SCRIPT_DIR/sprint10c_free.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$free_out" | grep -q "free: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  sprint10c/free:\n$(echo "$free_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 # ── sprint10/semantics ──────────────────────────────────────────────────────
 printf "  %-56s" "sprint10/semantics (dyn rules, arr type, Block isolation)"
 sem_out=$(bash "$SCRIPT_DIR/sprint10_semantics.sh" --fluxa "$FLUXA" 2>&1)

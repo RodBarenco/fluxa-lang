@@ -423,6 +423,99 @@ if (!cur) { fclose(fp); LIB_ERR("out of memory"); } // close fp first
 
 ---
 
+## Memory ownership contract
+
+The runtime and your lib share a single ownership rule that makes memory predictable end-to-end. Following it correctly is most of what separates a clean lib from a leaky one.
+
+### Inputs — what `args[]` carries
+
+`args[]` is a read-only view of caller-evaluated `Value`s. The runtime decides which entries are heap-owned (strdup of a literal, return of another call) and which alias caller storage (a variable read, a Block field). **You do not need to know which is which.** The runtime releases owned `VAL_STRING` args automatically after your dispatch function returns.
+
+What this means in practice:
+
+```c
+// CORRECT — treat args[] as read-only borrowed views
+if (strcmp(fn_name, "echo") == 0) {
+    NEED(1); GET_STR(0, msg);
+    return mylib_str(msg);                  // mylib_str strdups — your output owns its char*
+}
+
+// WRONG — never write through args[]
+args[0].as.string = strdup(something);      // corrupts caller's slot, may double-free
+
+// WRONG — never call free() on args[]
+free((char*)args[0].as.string);             // runtime owns args[]; double-free
+```
+
+`GET_STR` extracts `const char *` from `args[idx].as.string`. Treat that pointer as borrowed for the duration of your call. If you need to keep a copy past return (e.g. storing in a global table), `strdup` it.
+
+### Outputs — what your dispatch returns
+
+The dispatch function returns a single `Value`. Ownership rules per type:
+
+| Return type | What you must do |
+|---|---|
+| `VAL_NIL` / `VAL_BOOL` / `VAL_INT` / `VAL_FLOAT` | Nothing — by-value types are free. |
+| `VAL_STRING` | The `char*` must be heap-allocated and owned solely by this return (use `mylib_str(...)` which `strdup`s). |
+| `VAL_DYN` | Heap-allocated `FluxaDyn`. The runtime's dispatch layer automatically calls `gc_register` for any `VAL_DYN` returned to it — you do not call `gc_register` yourself. |
+| `VAL_ARR` | Heap-allocated `data` array with `owned = 1` (default via `val_arr(...)`). Element strings must each be `strdup`'d copies. |
+
+After your dispatch returns, the runtime decides whether the caller will store the value, drop it (statement expression), use it as a comparison operand, etc., and releases the heap data accordingly. **You do not need to think about the caller's usage.**
+
+### Common pitfalls
+
+**Stack-allocated string passed through `mylib_str` — fine. Pointer-only — leaks or UAF:**
+
+```c
+// CORRECT
+char buf[256];
+snprintf(buf, sizeof(buf), "result: %d", n);
+return mylib_str(buf);                      // strdup, return owned
+
+// WRONG — UAF
+char buf[256];
+snprintf(buf, sizeof(buf), "result: %d", n);
+Value v; v.type = VAL_STRING; v.as.string = buf;
+return v;                                   // buf goes out of scope
+```
+
+**Returning literal `const char *` — also fine when wrapped:**
+
+```c
+// CORRECT
+return mylib_str("ok");                     // strdup of the literal
+
+// WRONG — runtime will free a string constant
+Value v; v.type = VAL_STRING; v.as.string = (char*)"ok";
+return v;                                   // SEGV when runtime tries to free
+```
+
+**Returning a pre-allocated buffer you'll re-use:**
+
+```c
+// WRONG — caller and your next call both point at the same buf
+static char shared_buf[256];
+snprintf(shared_buf, sizeof(shared_buf), ...);
+Value v; v.type = VAL_STRING; v.as.string = shared_buf;
+return v;                                   // next call clobbers caller's data
+```
+
+Always `strdup` (via `mylib_str`). If allocation is a hot-path concern, expose an arena like `std.cache.arena_*` and let the caller manage release timing.
+
+**Manually calling `gc_register` on a returned `VAL_DYN` — harmless but redundant:**
+
+The runtime registers any unregistered `VAL_DYN` it sees at the dispatch return boundary. Calling `gc_register` yourself is idempotent (the second register is a no-op) but adds no value.
+
+**`VAL_DYN` whose `cap` lies about size:**
+
+`gc_register` reads `_ret.as.dyn->cap` to size the GC bookkeeping. If you return a `FluxaDyn` with `cap = 0` but `items` allocated for N elements, sweep accounting is wrong. Always set `cap` to the actual allocation size, `count` to the populated prefix.
+
+### One-line summary
+
+> Borrow `args[]`, return owned. The runtime handles everything else.
+
+---
+
 ## Thread-spawning libs (rt_aware)
 
 If your lib spawns background threads (like `std.flxthread`):

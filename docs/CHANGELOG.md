@@ -1,6 +1,112 @@
 # Fluxa-lang Changelog
 
-## v0.18 — stdlib hardening for HTTP/DB workloads (current)
+## v0.19 — Memory ownership: from leaks to bounded (current)
+
+Eight latent memory leaks in the AST evaluator, stdlib dispatch, and built-ins. Each one was bounded per allocation but cumulative across the per-request workload of a long-running HTTP worker. Together they caused a 24-worker SUT under sustained k6 load to grow from ~12 MB idle to >300 MB after ten minutes of traffic. Fixed here.
+
+**Headline result.** The reference HTTP+DB SUT (24 workers, 1k+ req/s, PostgreSQL via libpq) now runs at 30–40 MB resident under load and returns to ~28 MB when traffic stops. Stable across hours of operation. **About a 10x improvement over the equivalent workload in Python.**
+
+### fix(runtime): release owned `VAL_STRING` lib-call arguments after dispatch
+
+Every `lib.fn("literal", x)` evaluates the literal via `eval(NODE_STRING_LIT)` which calls `val_string(s)` — a `strdup`. That `strdup` was passed to the lib and then dropped when the dispatch returned, leaking once per literal per call. In an HTTP worker doing 5–15 literal-bearing lib calls per request, ~50 bytes/req leak compounded to ~300 MB residual per 600k-request run.
+
+Fix in `NODE_MEMBER_CALL`, `NODE_FUNC_CALL`, and `NODE_FFI_CALL` evaluation: classify each arg's source node as **owned** (literal, call return, identifier read — see ownership classifier below) or **aliased** (member/array access). After the lib call returns, free owned `VAL_STRING` args. Aliased args are left untouched.
+
+### fix(runtime): register lib-returned `VAL_DYN` with the GC
+
+`json2.parse`, `csv.open`, `pg.connect`, and similar functions return a `FluxaDyn *` wrapper. The wrapper was constructed by the lib's helper (e.g. `j2_wrap`) but never registered with the runtime GC. Each new dyn returned was outside the sweeper's reach — when the holding slot was overwritten, the wrapper became unreachable and unfreeable.
+
+Fix in `NODE_MEMBER_CALL` and `vm_call_callback`: at the dispatch return boundary, any `VAL_DYN` not already in the GC table is registered with `cap`-derived size. Subsequent slot reassignment can then drop the pin and let `gc_sweep` collect it.
+
+### fix(runtime): symmetric pin/unpin of `VAL_DYN` slots in `rt_set`
+
+`NODE_VAR_DECL` pinned a new `VAL_DYN` after writing it to the stack slot. `NODE_ASSIGN` did neither — the assigned `VAL_DYN` was unpinned (`pin_count == 0`), the next `gc_sweep` would collect it, and the next read would hit freed memory.
+
+Fix in `rt_set`: when overwriting a slot, unpin the old `VAL_DYN` if present (pointer-difference guard against self-assignment), write the new value, then pin the new `VAL_DYN`. The pre-existing explicit `rt_gc_pin` calls in `NODE_VAR_DECL` were removed to prevent double-pinning. `rt_set` now maintains the invariant **"every slot holds exactly one strong reference to its `VAL_DYN`"** automatically.
+
+### fix(runtime): release owned `VAL_STRING` slot contents on `rt_set` overwrite
+
+`str x = ""` initializes the slot with `strdup("")`. The subsequent `x = call_result` overwrote the slot without releasing the original `""` strdup — every HTTP worker doing `str out_name = ""` followed by `out_name = json2.get(...)` leaked one strdup per request.
+
+Fix in `rt_set`: detect overwrite of `VAL_STRING` and `VAL_ARR` slots and call `free` / `value_free_data` before storing the new value. Pointer-difference guard prevents double-free on self-assignment. To make this safe in the presence of aliased reads, `NODE_IDENTIFIER` was changed to `strdup` its `VAL_STRING` result — every reader now becomes the sole owner of its copy. Cost: O(strlen) per identifier-as-string read.
+
+`NODE_FOR` was updated in tandem: loop variables binding to `VAL_STRING` array/dyn elements are now bound to a `strdup` of the element, so iteration cannot corrupt the source on slot reassignment.
+
+### fix(runtime): release owned `VAL_STRING` operands in `eval_binary`
+
+`if cached == ""` evaluates `""` to a strdup'd `VAL_STRING`, runs `strcmp`, returns `val_bool(...)`, and drops the operand without freeing. Every literal-bearing comparison in a worker loop leaked one strdup. The SUT had 5–15 such comparisons per request.
+
+Fix in `eval_binary`: ownership-classify both operands at entry. Wrap every return path with `_BIN_RET` macro which frees owned `VAL_STRING` operands before returning.
+
+### fix(runtime): release owned `VAL_STRING` / `VAL_DYN` returns discarded by `NODE_BLOCK_STMT`
+
+`json2.get(doc, "name")` called as a statement (its return discarded for side effect) leaked the owned strdup. `NODE_BLOCK_STMT` evaluated each child statement and dropped its `Value` without releasing heap data.
+
+Fix in `NODE_BLOCK_STMT`: classify each child node by AST type. For owned `VAL_STRING` returns, free the buffer; for owned `VAL_DYN` returns with `pin_count == 0`, unregister and free immediately.
+
+### fix(builtins): `len()` and `print()` release transient owned strings
+
+After the `NODE_IDENTIFIER` strdup change, `len(path)` in a worker loop strdup'd `path`, returned an `int`, and dropped the `char *`. Same for `print(var)`. Both leaked once per call.
+
+Fix in `builtins.c`: added a `builtin_release_owned(v, node)` helper and applied it to `builtin_len` and `builtin_print` so the transient strdup is released before the builtin returns.
+
+### fix(runtime): `NODE_ARR_DECL` element strdup is now conditional
+
+Once `NODE_IDENTIFIER` returned an owned strdup, `NODE_ARR_DECL`'s defensive `data[i].as.string = strdup(data[i].as.string)` became a second strdup over an already-owned buffer — the first strdup leaked once per element per array literal. The `str arr params[3] = [out_name, out_email, hash]` pattern that every SUT path uses for `pg.query_params` leaked 3 strdups per request: ~100 bytes/req × 600k req = ~60 MB residual per 10-minute run.
+
+Fix in `NODE_ARR_DECL`: classify each element's source node. Skip the redundant strdup when the source already produced an owned copy (literal, call, identifier read). Keep the defensive strdup for aliased reads (member/array access) so the array continues to own its elements safely.
+
+### feat(stdlib): `std.cache` — sharded k/v cache + bump-pointer arena
+
+Two independent subsystems in one lib for HTTP workers building responses.
+
+**Sharded cache.** 16 shards × 64 slots × 8-probe linear addressing = 1024 entries max. Per-shard `pthread_mutex`. FNV-1a 32-bit hash. Functions: `put`, `get` (returns owned copy), `del`, `clear`, `size`. Designed for response memoization across worker threads with minimal lock contention.
+
+**Bump-pointer arena.** Up to 64 concurrent arenas, each a linked list of 64 KB slabs with 8-byte alignment. Functions: `arena_new`, `arena_str`, `arena_concat`, `arena_concat3`, `arena_concat5`, `arena_reset` (free all slabs except first, reset bump pointer), `arena_drop`. Arena strings live until the next `arena_reset` or `arena_drop` — `free()` rejects them.
+
+The lib is zero-init with `pthread_once` lazy construction — no startup or steady-state cost when enabled but unused.
+
+Replaces the GCC range-init pattern (`[0 ... CACHE_SHARDS - 1] = {...}`) with ISO C `pthread_once` to keep the build at zero warnings.
+
+### Ownership classifier (for lib authors and tooling)
+
+The runtime classifies AST node types as producing owned or aliased values:
+
+| Owned (heap-allocated by this eval, single owner) | Aliased (shares storage with a slot or stable backing) |
+|---|---|
+| `NODE_STRING_LIT` | `NODE_MEMBER_ACCESS` |
+| `NODE_MEMBER_CALL` | `NODE_ARR_ACCESS` |
+| `NODE_FUNC_CALL` | `NODE_INDEXED_MEMBER_ACCESS` |
+| `NODE_FFI_CALL` | identifier reads of non-string types |
+| `NODE_IDENTIFIER` reading `VAL_STRING` (new) | |
+
+This classifier appears in `NODE_MEMBER_CALL` arg release, `eval_binary` operand release, `NODE_BLOCK_STMT` discard release, `NODE_ARR_DECL` element handling, and `builtins.c` arg release. See [spec §13.6](fluxa_spec_v16.md#136-slot-ownership-and-the-free-operator) for the full contract.
+
+### Tests
+
+- `tests/sprint10c_free.sh` — 19 tests covering every fix. Stable across re-runs.
+- SUT smoke (24 workers, 100k mixed POST/GET/PATCH requests across 5 rounds): baseline 1.7 MB → final 1.7 MB. Zero growth.
+- `tests/libs/cache.sh` — 10 tests for the new lib.
+- Full suite: 30 known environmental fails (crypto/httpc/sqlite — backend deps unavailable in CI), zero regressions vs upstream.
+- `make bench` — within container variance of pre-fix baseline.
+
+### Docs
+
+- [STDLIB.md](STDLIB.md) — new "Memory Ownership Model" section in Design Principles. New `std.cache` section. `std.wserver` and `std.pg` examples updated to the production `free()`-per-request pattern.
+- [FLUXA_GUIDE.md](FLUXA_GUIDE.md) — §12.5 fully rewritten. Common Mistakes table updated.
+- [CREATING_LIBS.md](CREATING_LIBS.md) — new "Memory ownership contract" section for lib authors.
+- [fluxa_spec_v16.md](fluxa_spec_v16.md) — new §13.6 "Slot Ownership and the `free` Operator" with the full runtime contract.
+
+### Known limitations carried forward
+
+Discovered while investigating the leak chain; not fixed in v0.19, tracked for follow-up:
+
+- **Bytecode VM `vm_compare` does not handle `VAL_STRING`.** `s == "literal"` inside a function body that compiles to bytecode falls through to a double-cast. The SUT works because `free()` and `danger { }` inside worker loops force AST fallback. The bytecode path is reached only by pure-arithmetic loops where the bug cannot manifest.
+- **`ft.new(instance, "method")` for HTTP workers using `wserver.accept`** produces an unresponsive server. The function-based `ft.new("name", "fn_name", arg)` pattern works correctly and is used in all SUT examples.
+- **Same-name Block instances across threads race on `g_block_instances`.** Worker isolation by `typeof` requires distinct instance names per thread.
+- **Concurrent `prst arr` writes (`NODE_ARR_ASSIGN`) are not atomic** across threads. Reading is safe; concurrent writes to the same `prst arr` from multiple workers can race.
+
+## v0.18 — stdlib hardening for HTTP/DB workloads
 
 Fixes uncovered while running Fluxa as an HTTP server backend against a PostgreSQL database under sustained k6 load (1640 RPS sustained, 24 worker threads, single CPU core, 1 GB memory cap).
 

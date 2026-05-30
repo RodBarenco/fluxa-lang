@@ -1,7 +1,7 @@
 # Fluxa Standard Library
-**v0.16**
+**v0.19**
 
-Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`.
+Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`.
 
 ---
 
@@ -22,6 +22,84 @@ All stdlib libs share the same design contract:
 **`dyn` cursors for in-process state.** Libs that manage state entirely within the Fluxa process (file cursors, DB result sets from SQLite, JSON documents, PID controllers) use `dyn` cursors — opaque `VAL_PTR` wrappers. Use `prst dyn cursor` to keep these alive across hot reloads. `dyn` cursors are valid in the main program scope. They are **never** valid as Block fields.
 
 **No `dyn` inside Block.** Block fields must have a declared type (`int`, `float`, `str`, `bool`, `arr`). `dyn` is not a valid Block field type. Pass `dyn` cursors as arguments to Block methods if needed.
+
+---
+
+## Memory Ownership Model
+
+Most Fluxa programs do not need to think about memory: scoped declarations clean themselves up when their containing block ends, and the runtime handles owned heap data on every assignment. The model below matters only for **long-running hot loops** — typically HTTP workers, IoT sample loops, or any function that runs millions of iterations without returning.
+
+### The two heap-allocating types
+
+Only two value types carry heap data:
+
+- **`str`** — every string value owns its own `char*` buffer.
+- **`dyn`** — wraps an external resource or in-process collection. Tracked by the runtime GC.
+
+All other types (`int`, `float`, `bool`) are by-value and free.
+
+### Automatic releases — what you do not need to free
+
+The runtime releases heap data automatically in all of these cases:
+
+| Pattern | What's freed |
+|---|---|
+| `str x = "lit"; x = call()` (slot reassignment) | The previous `char*` in slot `x` |
+| `dyn d = lib.parse(); d = lib.parse()` | The previous `dyn` is unpinned; sweeper collects it |
+| `str arr p[N] = [...]; p = [...]` | The previous array storage and its element strings |
+| `lib.fn("literal", x)` | The strdup of `"literal"` after `lib.fn` returns |
+| `if s == "literal" { }` | The strdup of `"literal"` after the comparison |
+| `lib.fn(doc, "k")` called as a statement | The owned string the lib returned |
+| `len(s)`, `print(s)` on a string variable | The transient copy the read produced |
+| End of `danger { }` block | All unpinned `dyn` objects via `gc_sweep` |
+| Function return | All heap data in the function's scope and stack |
+
+These releases were added in v0.19. Earlier versions leaked in each of these patterns. You can write idiomatic Fluxa without `free()` in most code.
+
+### When to use `free()` explicitly
+
+`free(x)` is **only required** when a long-running loop allocates heap data that is not covered by an automatic release. In practice this is exactly one pattern:
+
+```fluxa
+fn worker() nil {
+    while !ft.should_stop() {
+        str j1 = strings.concat("{\"id\":\"", id)
+        str j2 = strings.concat(j1, "\",\"name\":\"")
+        str j3 = strings.concat(j2, name)
+        wserver.reply_json(req, 200, j3)
+        free(j1); free(j2); free(j3)
+    }
+}
+```
+
+Each intermediate `j1`, `j2`, `j3` is declared with a fresh name on every iteration. The slot already exists from the first iteration onward, so reassignment would auto-release. But these are **new declarations**, not reassignments — the previous iteration's strings live on the heap and were already accumulated in earlier slots that no `=` overwrote. `free()` releases them deterministically.
+
+**Rule of thumb:** if a heap value is built once and immediately consumed, the runtime handles it. If you build a chain of intermediate strings and the loop will run for hours, `free()` each one when you're done with it.
+
+`free(x)` after the variable goes out of scope is harmless (no-op). `free(x)` twice on the same value is harmless (slot is nil'd after the first call).
+
+### What `free()` cannot be used on
+
+`free()` rejects:
+- `prst` variables (state preservation across reloads owns the heap)
+- Block instance fields (instance scope owns them)
+- Anything that's not a stack-resolved local
+
+Attempting these produces a clear runtime error.
+
+### Cursors and external resources
+
+`dyn` cursors returned by libs (`csv.open`, `sqlite.open`, `pg.connect`, `json2.parse`) carry an external resource. Use the matching `close` / `discard` / `free_result` to release the resource, then let the runtime collect the wrapper. **Do not** call `free()` on a `dyn` cursor — use the lib's release function.
+
+```fluxa
+danger {
+    dyn doc = json2.parse(body)
+    // ...use doc...
+    json2.discard(doc)        // releases the parse tree
+    // The FluxaDyn wrapper is collected automatically when doc's slot is
+    // reassigned or when the danger block ends.
+}
+```
 
 ---
 
@@ -467,6 +545,118 @@ max_out_bytes = 8192
 | `strings.from_int(int n)` | str | int or float to string. |
 | `strings.to_int(str s)` | int | Parse as integer (atol). Returns 0 if not parseable. |
 | `strings.hash(str s)` | int | FNV-1a 32-bit hash. Useful for hash-table indexing. |
+
+---
+
+## std.cache — Sharded K/V Cache + Arena Allocator
+
+Thread-safe key/value cache with sharded locks and a bump-pointer arena allocator. Designed for HTTP workers that need response memoization and short-lived per-request scratch storage without the malloc/free overhead of `strings.concat` chains.
+
+Two independent subsystems share one library:
+- **Cache** — 16 shards × 64 slots each = 1024 entries. Per-shard `pthread_mutex` keeps contention bounded under heavy concurrency. Keys and values are owned copies (caller can free their inputs immediately after `cache.put`).
+- **Arena** — up to 64 concurrent arenas, each a linked list of 64 KB slabs with 8-byte aligned bump allocation. `arena_reset` returns the arena to one fresh slab in O(slabs); `arena_drop` releases everything. Strings allocated in an arena are **not** released by `free()` — only by `arena_reset` or `arena_drop`.
+
+**Enable:**
+```toml
+[libs]
+std.cache = "1.0"
+```
+
+The cache and arena tables are zero-init and lazily constructed on first call from any thread (`pthread_once`). No global state cost when the lib is enabled but unused.
+
+### Cache functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `cache.put(str key, str value)` | nil | Insert or overwrite. Both strings are copied. |
+| `cache.get(str key)` | str | Returns an owned copy of the value, or `""` if missing. Caller frees. |
+| `cache.del(str key)` | bool | Remove the entry. Returns `true` if removed. |
+| `cache.clear()` | nil | Empty all shards. |
+| `cache.size()` | int | Total populated entries across all shards. |
+
+**Probe behavior.** Each shard holds 64 slots probed linearly up to 8 steps. When all 8 probes are taken on a `put`, the insertion is silently dropped (no error, no eviction). Keep working-set size well below 1024.
+
+**Hash.** FNV-1a 32-bit — same as `strings.hash` — so a key produces the same shard whether you hash it manually or let the cache do it.
+
+### Arena functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `cache.arena_new()` | int | Create a fresh arena. Returns handle `> 0` or 0 on table-full. |
+| `cache.arena_str(int h, str src)` | str | Copy `src` into the arena. Returned pointer is owned by the arena. |
+| `cache.arena_concat(int h, str a, str b)` | str | Concatenate into the arena. |
+| `cache.arena_concat3(int h, a, b, c)` | str | Three-way concat. |
+| `cache.arena_concat5(int h, a, b, c, d, e)` | str | Five-way concat (common for JSON building). |
+| `cache.arena_reset(int h)` | nil | Free all slabs except the first; reset bump pointer. O(slabs). |
+| `cache.arena_drop(int h)` | nil | Release the arena entirely. Handle becomes invalid. |
+
+**Lifetime rule.** Strings returned by `arena_str` / `arena_concat*` live until the next `arena_reset` or `arena_drop` on that handle. **Do not** pass them to `free()` — `free()` rejects arena-allocated pointers (they were never `malloc`'d directly).
+
+### Example — response cache
+
+```fluxa
+import std cache
+import std strings
+import std wserver
+
+fn worker(int srv) nil {
+    while !ft.should_stop() {
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            str path = wserver.req_path(req)
+            str id = strings.slice(path, 7, len(path))  // strip "/users/"
+            str cached = cache.get(id)
+            if cached != "" {
+                wserver.reply_json(req, 200, cached)
+            }
+            if cached == "" {
+                // ...build response from DB...
+                str row = build_user_row(id)
+                cache.put(id, row)              // cache stores its own copy
+                wserver.reply_json(req, 200, row)
+                free(row)
+            }
+            free(cached); free(id); free(path)
+        }
+    }
+}
+```
+
+### Example — per-request arena (eliminates per-iter malloc/free chain)
+
+```fluxa
+import std cache
+import std strings
+
+fn worker(int srv) nil {
+    int arena = cache.arena_new()
+    while !ft.should_stop() {
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            str id   = wserver.req_path(req)
+            str name = "alice"
+            // No free() needed for j; arena owns it until reset.
+            str j = cache.arena_concat5(arena,
+                "{\"id\":\"", id, "\",\"name\":\"", name, "\"}")
+            wserver.reply_json(req, 200, j)
+            cache.arena_reset(arena)            // O(slabs) wipe, ready for next
+            free(id)
+        }
+    }
+    cache.arena_drop(arena)
+}
+```
+
+### When to use which
+
+| Pattern | Use |
+|---|---|
+| Cross-request memoization (auth tokens, DB rows by ID) | Cache |
+| Per-request response building (5–15 string pieces) | Arena |
+| Both at once (cache a built response) | `arena_concat*` to build, `cache.put` to store (cache copies in) |
+| One-off concat outside a hot loop | Plain `strings.concat` + `free` |
 
 ---
 
@@ -1225,36 +1415,47 @@ scale_down_idle   = 10     # idle seconds to trigger scale-down
 
 ### Manual mode — user controls workers
 
+Worker functions own the request loop. Spawn one or more via `ft.new("name", "fn_name", arg)`. In long-running workers, release per-request heap strings explicitly so memory stays bounded indefinitely — see [Memory Ownership Model](#memory-ownership-model).
+
 ```fluxa
 import std wserver
 import std flxthread as ft
 
-fn worker_loop(int srv) nil {
+fn worker(int srv) nil {
     while !ft.should_stop() {
-        danger {
-            int req = wserver.accept(srv, 100)
-            if req != 0 {
-                str method = wserver.req_method(req)
-                if method == "GET"    { wserver.reply(req, 200, "ok") }
-                if method == "POST"   { wserver.reply(req, 201, wserver.req_body(req)) }
-                if method == "PUT"    { wserver.reply(req, 200, wserver.req_body(req)) }
-                if method == "PATCH"  { wserver.reply(req, 200, wserver.req_body(req)) }
-                if method == "DELETE" { wserver.reply(req, 204, "") }
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            str method = wserver.req_method(req)
+            str path   = wserver.req_path(req)
+
+            if method == "GET" {
+                wserver.reply(req, 200, "ok")
             }
+            if method == "POST" {
+                str body = wserver.req_body(req)
+                wserver.reply(req, 201, body)
+                free(body)                  // explicit: long-lived loop
+            }
+            if method == "DELETE" {
+                wserver.reply(req, 204, "")
+            }
+            free(method); free(path)        // explicit: long-lived loop
         }
     }
 }
 
 int srv = 0
 danger { srv = wserver.serve(8080, false) }
-
-Block w1 typeof Worker
-Block w2 typeof Worker
-ft.new("t1", w1, "run")
-ft.new("t2", w2, "run")
-ft.resolve_all()
+ft.new("w1", "worker", srv)
+ft.new("w2", "worker", srv)
+ft.new("w3", "worker", srv)
+ft.new("w4", "worker", srv)
+wserver.wait(srv)
 wserver.stop(srv)
 ```
+
+**Why `free` here.** The runtime auto-releases heap strings on slot reassignment and at scope end. In a worker loop that never returns, each `str method = wserver.req_method(req)` reassigns the slot, which IS auto-released. But intermediate strings built inside the request handler (`body`, response builders, JSON pieces) accumulate in the worker's frame until the function returns — which it never does. Calling `free()` after each use keeps the worker at constant memory regardless of uptime.
 
 ### Auto-scaling mode — lib manages MHD thread pool
 
@@ -1405,33 +1606,30 @@ danger {
 }
 ```
 
-### Example — multi-threaded with std.flxthread
+### Example — multi-threaded poll loop
 
-IO stays in functions with `danger`. Block holds pure state. Each worker fetches data independently using its own connection handle.
+IO stays in functions with `danger`. Each worker holds its own connection. `free()` after the consumer releases the result string so memory stays flat over millions of iterations.
 
 ```fluxa
 import std pg
 import std flxthread as ft
 
 fn fetch(int conn, str sql) str {
+    str val = ""
     danger {
         int res = pg.query(conn, sql)
-        str val = ""
         if pg.rows(res) > 0 { val = pg.get(res, 0, 0) }
         pg.free_result(res)
-        return val
     }
-    return ""
+    return val
 }
 
-Block Worker {
-    prst int   count = 0
-    prst float sum   = 0.0
-    fn record(float v) nil {
-        sum   = sum + v
-        count = count + 1
+fn poller(int conn) nil {
+    while !ft.should_stop() {
+        str v = fetch(conn, "SELECT val FROM readings ORDER BY ts DESC LIMIT 1")
+        // ...record v into shared state via ft.message or a sharded cache...
+        free(v)
     }
-    fn avg() float { return sum / count }
 }
 
 int c1 = 0
@@ -1440,27 +1638,89 @@ danger {
     c1 = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t")
     c2 = pg.connect("host=localhost dbname=sensors user=fluxa password=s3cr3t")
 }
+ft.new("p1", "poller", c1)
+ft.new("p2", "poller", c2)
+ft.resolve_all()
+pg.close(c1); pg.close(c2)
+```
 
-Block w1 typeof Worker
-Block w2 typeof Worker
-ft.new("t1", w1, "record")
-ft.new("t2", w2, "record")
+### Example — HTTP + DB worker (the production pattern)
 
-int tick = 0
-while tick < 1000 {
-    danger {
-        str v1 = fetch(c1, "SELECT val FROM readings ORDER BY ts DESC LIMIT 1")
-        str v2 = fetch(c2, "SELECT val FROM readings ORDER BY ts DESC LIMIT 1")
-        ft.message("t1", "record", v1)
-        ft.message("t2", "record", v2)
+This is the canonical pattern for HTTP services backed by Postgres. Each worker has its own connection, accepts requests with `wserver.accept`, runs parameterized queries with `pg.query_params`, and releases per-request strings explicitly. Memory stays bounded at runtime — typically tens of MB regardless of throughput.
+
+```fluxa
+import std wserver
+import std pg
+import std strings
+import std flxthread as ft
+
+fn worker(int srv) nil {
+    str dsn = "host=postgres port=5432 dbname=app user=app password=secret connect_timeout=1 sslmode=disable"
+    int conn = 0
+    danger { conn = pg.connect(dsn) }
+    if conn == 0 { print("worker: pg connect failed"); return }
+
+    while !ft.should_stop() {
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            str method = wserver.req_method(req)
+            str path   = wserver.req_path(req)
+
+            if method == "GET" {
+                bool is_user = strings.starts_with(path, "/users/")
+                if is_user {
+                    str id = strings.slice(path, 7, len(path))
+                    str out_uid = ""
+                    str out_nm  = ""
+                    int out_rows = -1
+                    danger {
+                        str arr params[1] = [id]
+                        int res = pg.query_params(conn,
+                            "SELECT id::text, name FROM users WHERE id = $1::uuid",
+                            params, 1)
+                        out_rows = pg.rows(res)
+                        if out_rows > 0 {
+                            out_uid = pg.get(res, 0, 0)
+                            out_nm  = pg.get(res, 0, 1)
+                        }
+                        pg.free_result(res)
+                    }
+                    if out_rows > 0 {
+                        str p1 = strings.concat("{\"id\":\"", out_uid)
+                        str p2 = strings.concat(p1, "\",\"name\":\"")
+                        str p3 = strings.concat(p2, out_nm)
+                        str row = strings.concat(p3, "\"}")
+                        wserver.reply_json(req, 200, row)
+                        free(p1); free(p2); free(p3); free(row)
+                    }
+                    if out_rows == 0 {
+                        wserver.reply_json(req, 404, "{\"error\":\"not found\"}")
+                    }
+                    free(out_uid); free(out_nm); free(id)
+                }
+                if !is_user {
+                    wserver.reply_json(req, 404, "{\"error\":\"not found\"}")
+                }
+            }
+            free(method); free(path)
+        }
     }
-    tick = tick + 1
+
+    pg.close(conn)
 }
 
-ft.resolve_all()
-pg.close(c1)
-pg.close(c2)
+int srv = 0
+danger { srv = wserver.serve(8080, false) }
+ft.new("w01", "worker", srv); ft.new("w02", "worker", srv)
+ft.new("w03", "worker", srv); ft.new("w04", "worker", srv)
+ft.new("w05", "worker", srv); ft.new("w06", "worker", srv)
+ft.new("w07", "worker", srv); ft.new("w08", "worker", srv)
+wserver.wait(srv)
+wserver.stop(srv)
 ```
+
+**Memory profile under load:** baseline (workers idle) ~12 MB, under 1k+ req/s ~30–40 MB, falls back to ~28 MB when traffic stops. Stable across hours of operation.
 
 ### Notes
 
@@ -1549,6 +1809,13 @@ str_buf_size = 64
 - Prepared statements (use `query_params` instead)
 - Async queries
 - COPY protocol
+
+**std.cache:**
+- Eviction policy. When all 8 probe slots in a shard are taken, `put` is a silent no-op. Keep working set well below 1024.
+- TTL. Entries live until `del`, `clear`, or process exit.
+- Iteration. No `cache.keys()` or `cache.foreach` — by design; iteration on a sharded table during concurrent writes is unsafe.
+- Persistence across reload. The cache is process-local and rebuilt on every restart. Use `prst dyn` cursors for state that must survive reloads.
+- `free()` on arena strings. Arena strings are not `malloc`'d directly — only `arena_reset` / `arena_drop` releases them.
 
 **std.wserver:**
 - WebSocket upgrade (use `std.websocket` for WebSocket)

@@ -1,8 +1,8 @@
 # Fluxa-lang
 
-**v0.16 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.19 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
-Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 28 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
+Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 29 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 
 ---
 
@@ -91,6 +91,7 @@ print(utils.double(7))
 - No `danger` inside Block methods. Handle fallible operations in functions.
 - No Block declaration inside a Block.
 - `prst` only marks variables for persistence across reloads — it does not change ownership.
+- Long-running workers should `free()` intermediate strings built by `strings.concat` chains. Everything else (variable reassignment, lib literal args, comparison literals, `dyn` cursors, end-of-scope) is auto-released by the runtime. See [FLUXA_GUIDE §12.5](docs/FLUXA_GUIDE.md#125-memory-in-long-running-loops).
 
 ---
 
@@ -110,7 +111,7 @@ Tier 2 — Compiled fn bodies   vm_run_fn with isolated register file
 
 ---
 
-## Standard library — 28 libs
+## Standard library — 29 libs
 
 ```toml
 # fluxa.toml — runtime selection
@@ -120,6 +121,7 @@ std.csv        = "1.0"   # CSV streaming parser
 std.json       = "1.0"   # JSON streaming (no DOM)
 std.json2      = "1.0"   # JSON full DOM — path nav, typed getters
 std.strings    = "1.0"   # split, join, trim, find
+std.cache      = "1.0"   # sharded k/v cache + bump-pointer arena
 std.time       = "1.0"   # sleep, now_ms, elapsed
 std.fs         = "1.0"   # read, write, listdir, mkdir (POSIX)
 std.zlib       = "1.0"   # deflate, gzip, crc32, adler32

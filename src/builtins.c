@@ -54,17 +54,40 @@ static void print_value(Value v) {
     }
 }
 
+/* True when an AST node evaluates to a heap-owned VAL_STRING (literal,
+ * identifier — now strdups its read — or call return). Aliased reads
+ * (member/array access) and non-string types: false. */
+static inline int builtin_arg_owned(ASTNode *n) {
+    if (!n) return 0;
+    return (n->type == NODE_STRING_LIT)  ||
+           (n->type == NODE_MEMBER_CALL) ||
+           (n->type == NODE_FUNC_CALL)   ||
+           (n->type == NODE_FFI_CALL)    ||
+           (n->type == NODE_IDENTIFIER);
+}
+static inline void builtin_release_owned(Value *v, ASTNode *n) {
+    if (builtin_arg_owned(n) && v->type == VAL_STRING && v->as.string)
+        free(v->as.string);
+}
+
 static Value builtin_print(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
     /* Sprint 7.b: dry_run suppresses all output (used during handover validation) */
     if (rt->dry_run) {
-        for (int i = 0; i < call->as.list.count; i++)
-            eval_fn(rt, call->as.list.children[i]); /* evaluate for side-effects only */
+        for (int i = 0; i < call->as.list.count; i++) {
+            ASTNode *_an = call->as.list.children[i];
+            Value v = eval_fn(rt, _an);
+            builtin_release_owned(&v, _an);   /* evaluated for side-effects only */
+        }
         return val_nil();
     }
     for (int i = 0; i < call->as.list.count; i++) {
-        Value v = eval_fn(rt, call->as.list.children[i]);
+        ASTNode *_an = call->as.list.children[i];
+        Value v = eval_fn(rt, _an);
         print_value(v);
         if (i < call->as.list.count - 1) printf(" ");
+        /* Free the strdup'd char* the caller's read produced — without this,
+         * `print(some_str_var)` in a worker loop leaks the read's copy. */
+        builtin_release_owned(&v, _an);
     }
     printf("\n");
     return val_nil();
@@ -76,17 +99,22 @@ static Value builtin_len(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
         fprintf(stderr, "[fluxa] Runtime error: len() expects exactly 1 argument\n");
         return val_nil();
     }
-    Value v = eval_fn(rt, call->as.list.children[0]);
+    ASTNode *_an = call->as.list.children[0];
+    Value v = eval_fn(rt, _an);
     if (rt->had_error) return val_nil();
+    /* Release the owned strdup before returning the length — len() consumes
+     * its argument and discards the data. Without this, every `len(str_var)`
+     * inside a hot loop leaks the read's strdup. */
+    long result_len = -1;
     if (v.type == VAL_STRING) {
-        return val_int((long)strlen(v.as.string ? v.as.string : ""));
+        result_len = (long)strlen(v.as.string ? v.as.string : "");
+    } else if (v.type == VAL_ARR) {
+        result_len = (long)v.as.arr.size;
+    } else if (v.type == VAL_DYN) {
+        result_len = (long)(v.as.dyn ? v.as.dyn->count : 0);
     }
-    if (v.type == VAL_ARR) {
-        return val_int((long)v.as.arr.size);
-    }
-    if (v.type == VAL_DYN) {
-        return val_int((long)(v.as.dyn ? v.as.dyn->count : 0));
-    }
+    builtin_release_owned(&v, _an);
+    if (result_len >= 0) return val_int(result_len);
     rt->had_error = 1;
     fprintf(stderr, "[fluxa] Runtime error: len() called on non-iterable value (got %s)\n",
             v.type == VAL_INT   ? "int"   :

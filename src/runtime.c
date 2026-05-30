@@ -300,7 +300,39 @@ static inline void rt_set(Runtime *rt, ASTNode *node,
     if (node && node->resolved_offset >= 0) {
         if (node->resolved_offset >= rt->stack_size)
             rt->stack_size = node->resolved_offset + 1;
+        /* Drop the previous slot's GC reference before overwriting. Only
+         * checked when at least one dyn is alive — keeps the rt_set hot
+         * path free for int/str/bench workloads. Without this, reassigning
+         * a dyn variable in a loop keeps every prior dyn pinned and the
+         * sweep skips them, producing a slow accumulating leak. */
+        /* Slot overwrite: detach from old GC reference, attach new. Symmetric
+         * pin/unpin keeps every slot=>dyn invariant maintained even across
+         * NODE_ASSIGN (which doesn't carry an explicit pin step like
+         * NODE_VAR_DECL does). Then release any owned heap data on the slot
+         * — strings and array data — so initialization patterns like
+         *   `str x = ""` followed by `x = call()`
+         *   `str arr p[N] = [...]` in a worker loop
+         * don't leak the previous strdup'd buffer or arr storage. */
+        {
+            Value *_old = &rt->stack[node->resolved_offset];
+            if (_old->type == VAL_DYN && _old->as.dyn &&
+                !(v.type == VAL_DYN && v.as.dyn == _old->as.dyn))
+                gc_unpin(&rt->gc, _old->as.dyn);
+            if (_old->type == VAL_STRING && _old->as.string &&
+                !(v.type == VAL_STRING && v.as.string == _old->as.string))
+                free(_old->as.string);
+            else if (_old->type == VAL_ARR && _old->as.arr.data &&
+                     _old->as.arr.owned &&
+                     !(v.type == VAL_ARR && v.as.arr.data == _old->as.arr.data))
+                value_free_data(_old);
+        }
         rt->stack[node->resolved_offset] = v;
+        /* Pin the new VAL_DYN — symmetric with the unpin above so the slot
+         * holds exactly one strong reference, allowing gc_sweep to collect
+         * orphaned dyns produced by intermediate calls without touching the
+         * one we still hold. */
+        if (v.type == VAL_DYN && v.as.dyn)
+            gc_pin(&rt->gc, v.as.dyn);
         return;
     }
     if (rt->current_instance) {
@@ -373,29 +405,57 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
         return val_bool(r_truthy);
     }
 
-    /* ── All other ops: evaluate both sides first ──────────────────────── */
-    Value      left  = eval(rt, node->as.binary.left);
+    /* ── All other ops: evaluate both sides first ──────────────────────── *
+     * Track ownership: VAL_STRING produced by a literal or by a call is
+     * heap-owned by this eval and must be released before we return; the
+     * binary ops below (==, !=, arithmetic) never store the operands into
+     * the result so freeing them is safe. Without this, every
+     * `s == "literal"` comparison inside a worker loop leaks the strdup of
+     * the literal. Aliased operands (variable refs, member/array access) are
+     * NOT freed — they share storage with their owner. */
+    ASTNode *_ln = node->as.binary.left;
+    ASTNode *_rn = node->as.binary.right;
+    int _lown = (_ln->type == NODE_STRING_LIT)  ||
+                (_ln->type == NODE_MEMBER_CALL) ||
+                (_ln->type == NODE_FUNC_CALL)   ||
+                (_ln->type == NODE_FFI_CALL)    ||
+                (_ln->type == NODE_IDENTIFIER);
+    int _rown = (_rn->type == NODE_STRING_LIT)  ||
+                (_rn->type == NODE_MEMBER_CALL) ||
+                (_rn->type == NODE_FUNC_CALL)   ||
+                (_rn->type == NODE_FFI_CALL)    ||
+                (_rn->type == NODE_IDENTIFIER);
+    Value      left  = eval(rt, _ln);
     if (rt->had_error) return val_nil();
-    Value      right = eval(rt, node->as.binary.right);
-    if (rt->had_error) return val_nil();
+    Value      right = eval(rt, _rn);
+    if (rt->had_error) {
+        if (_lown && left.type == VAL_STRING && left.as.string) free(left.as.string);
+        return val_nil();
+    }
+    #define _BIN_RET(v) do { \
+        Value _vv = (v); \
+        if (_lown && left.type  == VAL_STRING && left.as.string)  free(left.as.string); \
+        if (_rown && right.type == VAL_STRING && right.as.string) free(right.as.string); \
+        return _vv; \
+    } while (0)
 
     if (strcmp(op, "==") == 0) {
-        if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(1);
-        if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(0);
-        if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer==right.as.integer);
-        if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) return val_bool(left.as.real==right.as.real);
-        if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  return val_bool(left.as.boolean==right.as.boolean);
-        if (left.type==VAL_STRING&& right.type==VAL_STRING) return val_bool(strcmp(left.as.string,right.as.string)==0);
-        return val_bool(0);
+        if (left.type==VAL_NIL   && right.type==VAL_NIL)   _BIN_RET(val_bool(1));
+        if (left.type==VAL_NIL   || right.type==VAL_NIL)   _BIN_RET(val_bool(0));
+        if (left.type==VAL_INT   && right.type==VAL_INT)   _BIN_RET(val_bool(left.as.integer==right.as.integer));
+        if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) _BIN_RET(val_bool(left.as.real==right.as.real));
+        if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  _BIN_RET(val_bool(left.as.boolean==right.as.boolean));
+        if (left.type==VAL_STRING&& right.type==VAL_STRING) _BIN_RET(val_bool(strcmp(left.as.string,right.as.string)==0));
+        _BIN_RET(val_bool(0));
     }
     if (strcmp(op, "!=") == 0) {
-        if (left.type==VAL_NIL   && right.type==VAL_NIL)   return val_bool(0);
-        if (left.type==VAL_NIL   || right.type==VAL_NIL)   return val_bool(1);
-        if (left.type==VAL_INT   && right.type==VAL_INT)   return val_bool(left.as.integer!=right.as.integer);
-        if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) return val_bool(left.as.real!=right.as.real);
-        if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  return val_bool(left.as.boolean!=right.as.boolean);
-        if (left.type==VAL_STRING&& right.type==VAL_STRING) return val_bool(strcmp(left.as.string,right.as.string)!=0);
-        return val_bool(1);
+        if (left.type==VAL_NIL   && right.type==VAL_NIL)   _BIN_RET(val_bool(0));
+        if (left.type==VAL_NIL   || right.type==VAL_NIL)   _BIN_RET(val_bool(1));
+        if (left.type==VAL_INT   && right.type==VAL_INT)   _BIN_RET(val_bool(left.as.integer!=right.as.integer));
+        if (left.type==VAL_FLOAT && right.type==VAL_FLOAT) _BIN_RET(val_bool(left.as.real!=right.as.real));
+        if (left.type==VAL_BOOL  && right.type==VAL_BOOL)  _BIN_RET(val_bool(left.as.boolean!=right.as.boolean));
+        if (left.type==VAL_STRING&& right.type==VAL_STRING) _BIN_RET(val_bool(strcmp(left.as.string,right.as.string)!=0));
+        _BIN_RET(val_bool(1));
     }
 
     double l, r;
@@ -407,7 +467,7 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
         snprintf(buf, sizeof(buf), "arithmetic on non-numeric value (got %s for '%s')",
                  val_type_name(left.type), op);
         rt_error_line(rt, buf, node->line);
-        return val_nil();
+        _BIN_RET(val_nil());
     }
     if      (right.type==VAL_INT)   r = (double)right.as.integer;
     else if (right.type==VAL_FLOAT) r = right.as.real;
@@ -416,26 +476,27 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
         snprintf(buf, sizeof(buf), "arithmetic on non-numeric value (got %s for '%s')",
                  val_type_name(right.type), op);
         rt_error_line(rt, buf, node->line);
-        return val_nil();
+        _BIN_RET(val_nil());
     }
 
     if (strcmp(op,"+")==0) { double res=l+r; return both_int?val_int((long)res):val_float(res); }
     if (strcmp(op,"-")==0) { double res=l-r; return both_int?val_int((long)res):val_float(res); }
     if (strcmp(op,"*")==0) { double res=l*r; return both_int?val_int((long)res):val_float(res); }
     if (strcmp(op,"/")==0) {
-        if (r==0) { rt_error(rt, "division by zero"); return val_nil(); }
+        if (r==0) { rt_error(rt, "division by zero"); _BIN_RET(val_nil()); }
         double res=l/r; return both_int?val_int((long)res):val_float(res);
     }
     if (strcmp(op,"%")==0) {
-        if (!both_int) { rt_error(rt, "modulo requires integer operands"); return val_nil(); }
-        if ((long)r==0) { rt_error(rt, "modulo by zero"); return val_nil(); }
-        return val_int((long)l % (long)r);
+        if (!both_int) { rt_error(rt, "modulo requires integer operands"); _BIN_RET(val_nil()); }
+        if ((long)r==0) { rt_error(rt, "modulo by zero"); _BIN_RET(val_nil()); }
+        _BIN_RET(val_int((long)l % (long)r));
     }
-    if (strcmp(op,"<")==0)  return val_bool(l< r);
-    if (strcmp(op,">")==0)  return val_bool(l> r);
-    if (strcmp(op,"<=")==0) return val_bool(l<=r);
-    if (strcmp(op,">=")==0) return val_bool(l>=r);
-    rt_error(rt, "unknown operator"); return val_nil();
+    if (strcmp(op,"<")==0)  _BIN_RET(val_bool(l< r));
+    if (strcmp(op,">")==0)  _BIN_RET(val_bool(l> r));
+    if (strcmp(op,"<=")==0) _BIN_RET(val_bool(l<=r));
+    if (strcmp(op,">=")==0) _BIN_RET(val_bool(l>=r));
+    rt_error(rt, "unknown operator"); _BIN_RET(val_nil());
+    #undef _BIN_RET
 }
 
 /* ── Function call with TCO trampoline ───────────────────────────────────── */
@@ -638,6 +699,29 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
          * and become dangling. This is an OOM edge case — better than a
          * silent use-after-free on every arr return. */
     }
+
+    /* ── str return ownership fix (Block methods) ────────────────────────
+     * A Block method may return a string that is owned by the block
+     * instance scope (e.g. `fn get() str { return field }`). The returned
+     * Value shares that char* with the still-live instance. If the caller
+     * then calls free() on the result, it frees a pointer the block still
+     * holds → double-free when the block is later torn down.
+     *
+     * Fix: when a Block method (method_inst != NULL) returns a VAL_STRING,
+     * hand the caller an independent strdup'd copy. The instance keeps its
+     * own field intact; the caller owns a freeable copy.
+     *
+     * Scope: only Block-method returns. Plain function locals live in stack
+     * slots (never aliased by a persistent owner), so they need no copy.
+     * Cost: one strdup per string-returning method call — zero impact on the
+     * make-bench suite, which returns only int from methods. */
+    if (method_inst && result.type == VAL_STRING && result.as.string) {
+        char *dup = strdup(result.as.string);
+        if (dup) result.as.string = dup;
+        /* strdup failure: leave the shared pointer; the OOM path is no worse
+         * than before this fix existed. */
+    }
+
     scope_free(&rt->scope);
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
@@ -981,24 +1065,39 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         const char *owner_str = (owner_kv->type == VAL_STRING)
                                 ? owner_kv->as.string : NULL;
 
-        /* 1. Stdlib dispatch — only when we have a string owner name */
+        /* 1. Stdlib dispatch — only when we have a string owner name.
+         * Capture the result so we can register VAL_DYN returns with the GC
+         * (same as NODE_MEMBER_CALL in eval). Without this, a dyn returned
+         * by a lib call from bytecode-VM context would live outside the GC
+         * and leak on slot reassignment. */
         if (owner_str) for (int _ri = 0; _ri < FLUXA_LIB_COUNT; _ri++) {
             const FluxaLibEntry *_e = &fluxa_lib_registry[_ri];
             if (!_e->enabled) continue;
             if (!fluxa_std_lib_enabled(&rt->config.std_libs, _e->name)) continue;
             if (strcmp(owner_str, _e->owner) != 0) continue;
+            Value _ret;
             if (_e->cfg_aware && _e->call_cfg)
-                return _e->call_cfg(method_or_func, args, argc,
+                _ret = _e->call_cfg(method_or_func, args, argc,
                                     &rt->err_stack, &rt->had_error,
                                     rt->current_line, &rt->config);
-            if (_e->rt_aware && _e->call_rt)
-                return _e->call_rt(method_or_func, args, argc,
+            else if (_e->rt_aware && _e->call_rt)
+                _ret = _e->call_rt(method_or_func, args, argc,
                                    &rt->err_stack, &rt->had_error,
                                    rt->current_line, rt);
-            if (_e->call)
-                return _e->call(method_or_func, args, argc,
+            else if (_e->call)
+                _ret = _e->call(method_or_func, args, argc,
                                 &rt->err_stack, &rt->had_error,
                                 rt->current_line);
+            else continue;
+            if (_ret.type == VAL_DYN && _ret.as.dyn) {
+                GCEntry *_gce = gc_find_slot(&rt->gc, _ret.as.dyn);
+                if (!_gce) {
+                    gc_register(&rt->gc, _ret.as.dyn,
+                        sizeof(FluxaDyn) + sizeof(Value) * (size_t)_ret.as.dyn->cap,
+                        &rt->err_stack);
+                }
+            }
+            return _ret;
         }
 
         /* 2. Block instance method — use inline cache via resolve_inst_cached */
@@ -1029,8 +1128,16 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         /* ── Fase 3: try inline execution first (zero frame overhead) ─── */
         {
             Value inline_result;
-            if (method_try_inline(rt, fn_node, inst, args, argc, &inline_result))
+            if (method_try_inline(rt, fn_node, inst, args, argc, &inline_result)) {
+                /* str return ownership fix (see call_function): a method that
+                 * inlines `return field` aliases the instance's char*. Hand
+                 * the caller an owned copy so free() on the result is safe. */
+                if (inline_result.type == VAL_STRING && inline_result.as.string) {
+                    char *dup = strdup(inline_result.as.string);
+                    if (dup) inline_result.as.string = dup;
+                }
                 return inline_result;
+            }
         }
         /* ── Fallback: full frame save/restore ──────────────────────── */
         /* Save caller frame */
@@ -1273,6 +1380,13 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     prst_graph_record(&rt->prst_graph, name, ctx);
                 }
             }
+            /* Detach the result string so the caller becomes the sole owner.
+             * Without this, `str y = x` would alias x's char* and a later
+             * `x = ...` (which now frees the old slot string in rt_set) would
+             * leave y dangling. Cost: O(strlen) per identifier-as-string read;
+             * the alternative (no free in rt_set) is the original leak. */
+            if (v.type == VAL_STRING && v.as.string)
+                v.as.string = strdup(v.as.string);
             return v;
         }
 
@@ -1371,7 +1485,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     int ok = prst_pool_set(RT_POOL(rt), vname, v, &rt->err_stack);
                     if (ok >= 0) {
                         rt_set(rt, node, vname, v);
-                        rt_gc_pin(rt, &v);
+                        /* GC pin is handled by rt_set: a VAL_DYN landing in
+                         * a stack slot is pinned automatically. Adding a
+                         * second rt_gc_pin here would create a leak (pin
+                         * count stays >0 forever on this slot). */
                         /* Record stack offset so post-VM sync can read rt->stack */
                         prst_pool_set_offset(RT_POOL(rt), vname,
                                               node->resolved_offset);
@@ -1394,8 +1511,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
             if (!rt_type_check(rt, node, node->as.var_decl.type_name, v, vname))
                 return val_nil();
             rt_set(rt, node, vname, v);
-            /* GC: pin dyn when scope takes ownership */
-            rt_gc_pin(rt, &v);
+            /* GC pin is handled by rt_set: a VAL_DYN landing in a stack slot
+             * is pinned automatically (symmetric with the unpin of the old
+             * slot value). Adding a second rt_gc_pin here would leak. */
             return val_nil();
         }
 
@@ -1557,7 +1675,31 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
         case NODE_BLOCK_STMT:
             for (int i = 0; i < node->as.list.count; i++) {
-                eval(rt, node->as.list.children[i]);
+                ASTNode *_ch = node->as.list.children[i];
+                Value _sv = eval(rt, _ch);
+                /* Statement-expression: the Value is discarded. If it holds
+                 * heap data that this eval newly produced (lib call result
+                 * or function call result returning a VAL_STRING/VAL_DYN),
+                 * release it now — otherwise it leaks once per iteration
+                 * (e.g. `json2.get(doc, "name")` called for its side-effect). */
+                int _own = (_ch->type == NODE_MEMBER_CALL) ||
+                           (_ch->type == NODE_FUNC_CALL)   ||
+                           (_ch->type == NODE_FFI_CALL)    ||
+                           (_ch->type == NODE_IDENTIFIER);   /* now strdups */
+                if (_own) {
+                    if (_sv.type == VAL_STRING && _sv.as.string) {
+                        free(_sv.as.string);
+                    } else if (_sv.type == VAL_DYN && _sv.as.dyn) {
+                        /* For dyn returns, GC owns it now (registered by the
+                         * lib dispatch). Unregister and free immediately
+                         * since no slot references it. */
+                        GCEntry *_e = gc_find_slot(&rt->gc, _sv.as.dyn);
+                        if (_e && _e->pin_count == 0) {
+                            gc_unregister(&rt->gc, _sv.as.dyn);
+                            fluxa_dyn_free(_sv.as.dyn);
+                        }
+                    }
+                }
                 if (rt->had_error || rt->ret.active) break;
             }
             return val_nil();
@@ -1748,8 +1890,25 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 Value *data = (Value*)malloc((size_t)(size * (int)sizeof(Value)));
                 if (!data) { rt_error(rt, "out of memory allocating array"); return val_nil(); }
                 for (int i = 0; i < size; i++) {
-                    data[i] = eval(rt, node->as.arr_decl.elements[i]);
+                    ASTNode *_en = node->as.arr_decl.elements[i];
+                    data[i] = eval(rt, _en);
                     if (rt->had_error) { free(data); return val_nil(); }
+                    /* Ownership: VAL_STRING elements need an independent
+                     * copy so freeing the array doesn't double-free a
+                     * shared pointer. Skip the strdup when the source node
+                     * already produced an owned copy (literals, calls,
+                     * identifier reads — NODE_IDENTIFIER now strdups its
+                     * VAL_STRING result). Aliased reads (member/array
+                     * access) still need the defensive strdup. */
+                    if (data[i].type == VAL_STRING && data[i].as.string) {
+                        int _src_owned = (_en->type == NODE_STRING_LIT)  ||
+                                         (_en->type == NODE_MEMBER_CALL) ||
+                                         (_en->type == NODE_FUNC_CALL)   ||
+                                         (_en->type == NODE_FFI_CALL)    ||
+                                         (_en->type == NODE_IDENTIFIER);
+                        if (!_src_owned)
+                            data[i].as.string = strdup(data[i].as.string);
+                    }
                     /* type enforcement on each element */
                     if (arr_type && data[i].type != VAL_NIL) {
                         int ok = 1;
@@ -2337,18 +2496,26 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
 
             if (arr_val.type == VAL_ARR) {
-                /* for x in arr */
+                /* for x in arr — copy strings so the loop var owns its
+                 * own buffer (slot reassignment in rt_set frees the old
+                 * string; if x aliased arr.data[i].as.string we'd corrupt
+                 * the source array). */
                 for (int i = 0; i < arr_val.as.arr.size; i++) {
-                    rt_set(rt, node, node->as.for_stmt.var_name,
-                           arr_val.as.arr.data[i]);
+                    Value _el = arr_val.as.arr.data[i];
+                    if (_el.type == VAL_STRING && _el.as.string)
+                        _el.as.string = strdup(_el.as.string);
+                    rt_set(rt, node, node->as.for_stmt.var_name, _el);
                     eval(rt, node->as.for_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
                 }
             } else if (arr_val.type == VAL_DYN && arr_val.as.dyn) {
-                /* for x in dyn — iterate over all elements */
+                /* for x in dyn — same ownership rule as VAL_ARR above. */
                 FluxaDyn *d = arr_val.as.dyn;
                 for (int i = 0; i < d->count; i++) {
-                    rt_set(rt, node, node->as.for_stmt.var_name, d->items[i]);
+                    Value _el = d->items[i];
+                    if (_el.type == VAL_STRING && _el.as.string)
+                        _el.as.string = strdup(_el.as.string);
+                    rt_set(rt, node, node->as.for_stmt.var_name, _el);
                     eval(rt, node->as.for_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
                 }
@@ -2638,16 +2805,47 @@ static Value eval(Runtime *rt, ASTNode *node) {
              * No lib names hardcoded here. New libs register via              *
              * FLUXA_LIB_EXPORT in their header + lib.mk. Zero changes here.  */
             {
-                /* Evaluate arguments once (shared by all libs) */
+                /* Evaluate arguments once (shared by all libs).
+                 *
+                 * Argument ownership rules — needed to release transient
+                 * heap allocations after the lib call returns. Without this
+                 * release, every literal/expression VAL_STRING passed to a
+                 * std lib leaks until the program ends (a high-volume HTTP
+                 * server with 5-15 literals per request leaks tens of MB
+                 * per minute). Conservative classification:
+                 *   - NODE_STRING_LIT      — we strdup'd it via val_string()
+                 *   - NODE_MEMBER_CALL     — callee returned an owned VAL_STRING
+                 *   - NODE_FUNC_CALL       — callee returned an owned VAL_STRING
+                 *   - NODE_FFI_CALL        — FFI-returned strings are owned
+                 *   - everything else      — assume aliased, do NOT free
+                 *     (NODE_IDENTIFIER, NODE_ARR_ACCESS, NODE_MEMBER_ACCESS,
+                 *      etc. read shared slot pointers). */
                 int _argc = node->as.member_call.arg_count;
                 if (_argc > 16) _argc = 16;
                 Value _args[16];
+                int   _args_owned[16];
                 for (int _i = 0; _i < _argc; _i++) {
-                    _args[_i] = eval(rt, node->as.member_call.args[_i]);
-                    if (rt->had_error) return val_nil();
+                    ASTNode *_an = node->as.member_call.args[_i];
+                    _args[_i] = eval(rt, _an);
+                    if (rt->had_error) {
+                        /* Free any already-owned args before bailing. */
+                        for (int _j = 0; _j < _i; _j++)
+                            if (_args_owned[_j] && _args[_j].type == VAL_STRING && _args[_j].as.string)
+                                free(_args[_j].as.string);
+                        return val_nil();
+                    }
+                    _args_owned[_i] =
+                        (_an->type == NODE_STRING_LIT)  ||
+                        (_an->type == NODE_MEMBER_CALL) ||
+                        (_an->type == NODE_FUNC_CALL)   ||
+                        (_an->type == NODE_FFI_CALL)    ||
+                        (_an->type == NODE_IDENTIFIER);   /* now strdups */
                 }
 
-                /* Walk registry — find the lib whose owner matches */
+                /* Walk registry — find the lib whose owner matches.
+                 * Capture the result in _ret then free owned VAL_STRING args. */
+                Value _ret  = val_nil();
+                int   _hit  = 0;
                 for (int _ri = 0; _ri < FLUXA_LIB_COUNT; _ri++) {
                     const FluxaLibEntry *_e = &fluxa_lib_registry[_ri];
                     if (!_e->enabled) continue;
@@ -2655,24 +2853,49 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         continue;
                     if (strcmp(owner, _e->owner) != 0) continue;
 
-                    /* cfg_aware: lib receives FluxaConfig* for toml settings */
-                    if (_e->cfg_aware && _e->call_cfg)
-                        return _e->call_cfg(method, _args, _argc,
+                    if (_e->cfg_aware && _e->call_cfg) {
+                        _ret = _e->call_cfg(method, _args, _argc,
                                             &rt->err_stack, &rt->had_error,
                                             rt->current_line, &rt->config);
-
-                    /* rt_aware: lib receives Runtime* for thread spawning */
-                    if (_e->rt_aware && _e->call_rt)
-                        return _e->call_rt(method, _args, _argc,
+                    } else if (_e->rt_aware && _e->call_rt) {
+                        _ret = _e->call_rt(method, _args, _argc,
                                            &rt->err_stack, &rt->had_error,
                                            rt->current_line, rt);
-
-                    /* Standard dispatch */
-                    if (_e->call)
-                        return _e->call(method, _args, _argc,
+                    } else if (_e->call) {
+                        _ret = _e->call(method, _args, _argc,
                                         &rt->err_stack, &rt->had_error,
                                         rt->current_line);
+                    }
+                    _hit = 1;
+                    break;
                 }
+                if (_hit) {
+                    /* Release transient heap allocations from owned args. */
+                    for (int _i = 0; _i < _argc; _i++)
+                        if (_args_owned[_i] && _args[_i].type == VAL_STRING && _args[_i].as.string)
+                            free(_args[_i].as.string);
+                    /* Register VAL_DYN returns with the GC so a later
+                     * reassignment of the holding slot drops the dyn to
+                     * pin_count 0 and a sweep can free it. Without this,
+                     * lib-returned dyn wrappers (e.g. json2.parse) live
+                     * outside the GC and accumulate across iterations. */
+                    if (_ret.type == VAL_DYN && _ret.as.dyn) {
+                        GCEntry *_gce = gc_find_slot(&rt->gc, _ret.as.dyn);
+                        if (!_gce) {
+                            gc_register(&rt->gc, _ret.as.dyn,
+                                sizeof(FluxaDyn) + sizeof(Value) * (size_t)_ret.as.dyn->cap,
+                                &rt->err_stack);
+                        }
+                    }
+                    return _ret;
+                }
+                /* No lib matched — owned args still need to be freed if any
+                 * other code path is about to consume the result. The fall-
+                 * through (FFI, Block instance method, etc.) below evaluates
+                 * args again, so release ours here to avoid leaking. */
+                for (int _i = 0; _i < _argc; _i++)
+                    if (_args_owned[_i] && _args[_i].type == VAL_STRING && _args[_i].as.string)
+                        free(_args[_i].as.string);
             }
 
             BlockInstance *inst = resolve_instance(rt, owner);

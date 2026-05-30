@@ -179,8 +179,128 @@ else
     fail "gc_sweep_orphan" "99 (dyn freed at safe point)" "$out"
 fi
 
+# ── CASO 11: free() in global scope frees a str and nils the slot ────────────
+cat > "$WORK_DIR/free_global.flx" << 'FLX'
+str g = "global_string_value"
+free(g)
+print("ok")
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/free_global.flx" 2>&1 || true)
+if echo "$out" | grep -q "^ok$" && ! echo "$out" | grep -qi "error\|double free\|corrupt"; then
+    pass "free_global_scope"
+else
+    fail "free_global_scope" "ok (no crash)" "$out"
+fi
+
+# ── CASO 12: free() in function scope ────────────────────────────────────────
+cat > "$WORK_DIR/free_fn.flx" << 'FLX'
+fn worker() nil {
+    str s = "function_local_string"
+    free(s)
+    print("ok")
+}
+worker()
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/free_fn.flx" 2>&1 || true)
+if echo "$out" | grep -q "^ok$" && ! echo "$out" | grep -qi "error\|double free\|corrupt"; then
+    pass "free_function_scope"
+else
+    fail "free_function_scope" "ok (no crash)" "$out"
+fi
+
+# ── CASO 13: free() of a method-local str inside a Block ─────────────────────
+cat > "$WORK_DIR/free_block_local.flx" << 'FLX'
+Block W {
+    str label = "w"
+    fn process() nil {
+        str tmp = "block_method_local"
+        free(tmp)
+        print("ok")
+    }
+}
+fn run() nil { W.process() }
+run()
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/free_block_local.flx" 2>&1 || true)
+if echo "$out" | grep -q "^ok$" && ! echo "$out" | grep -qi "error\|double free\|corrupt"; then
+    pass "free_block_method_local"
+else
+    fail "free_block_method_local" "ok (no crash)" "$out"
+fi
+
+# ── CASO 14: free() a str returned from a Block scalar field (issue #144) ────
+# The method return must hand the caller an OWNED copy; freeing it must NOT
+# corrupt the Block's field, which stays readable afterward.
+cat > "$WORK_DIR/free_block_field_scalar.flx" << 'FLX'
+Block C {
+    str field = "stored_value"
+    fn get() str { return field }
+}
+fn t() nil {
+    str x = C.get()
+    free(x)
+    print(C.get())
+}
+t()
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/free_block_field_scalar.flx" 2>&1 || true)
+if echo "$out" | grep -q "^stored_value$" && ! echo "$out" | grep -qi "double free\|corrupt\|abort"; then
+    pass "free_block_field_scalar_no_doublefree"
+else
+    fail "free_block_field_scalar_no_doublefree" "stored_value (field intact, no crash)" "$out"
+fi
+
+# ── CASO 15: free() a str returned from a Block str-arr element (issue #144) ──
+cat > "$WORK_DIR/free_block_field_arr.flx" << 'FLX'
+Block C {
+    str arr vals[3] = ""
+    fn set() nil { vals[0] = "cached" }
+    fn get() str { return vals[0] }
+}
+fn t() nil {
+    C.set()
+    str cached = C.get()
+    free(cached)
+    print(C.get())
+}
+t()
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/free_block_field_arr.flx" 2>&1 || true)
+if echo "$out" | grep -q "^cached$" && ! echo "$out" | grep -qi "double free\|corrupt\|abort"; then
+    pass "free_block_field_arr_no_doublefree"
+else
+    fail "free_block_field_arr_no_doublefree" "cached (field intact, no crash)" "$out"
+fi
+
+# ── CASO 16: free() repeatedly on a Block-field-derived str in a tight loop ──
+# Mirrors the HTTP-server cache-hit pattern that crashed before the fix.
+cat > "$WORK_DIR/free_loop_cachehit.flx" << 'FLX'
+Block C {
+    str arr vals[4] = ""
+    fn seed() nil { vals[0] = "hit" }
+    fn get() str { return vals[0] }
+}
+fn run() nil {
+    C.seed()
+    int i = 0
+    while i < 10000 {
+        str cached = C.get()
+        free(cached)
+        i = i + 1
+    }
+    print(C.get())
+}
+run()
+FLX
+out=$(timeout 8s "$FLUXA" run "$WORK_DIR/free_loop_cachehit.flx" 2>&1 || true)
+if echo "$out" | grep -q "^hit$" && ! echo "$out" | grep -qi "double free\|corrupt\|abort"; then
+    pass "free_loop_cachehit_bounded"
+else
+    fail "free_loop_cachehit_bounded" "hit (field intact after 10k free, no crash)" "$out"
+fi
+
 echo "────────────────────────────────────────────────────────────────────"
-total=10
+total=16
 if [ "$FAILS" -eq 0 ]; then
     echo "  Results: ${total} passed, 0 failed"
     echo "  → gc: PASS"

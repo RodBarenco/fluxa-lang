@@ -13,6 +13,9 @@
 #include "toml_config.h"
 
 /* ── Conditional lib includes ─────────────────────────────────────── */
+#ifdef FLUXA_STD_CACHE
+#  include "std/cache/fluxa_std_cache.h"
+#endif
 #ifdef FLUXA_STD_CRYPTO
 #  include "std/crypto/fluxa_std_crypto.h"
 #endif
@@ -134,6 +137,11 @@ typedef struct {
 
 /* ── Registry array ───────────────────────────────────────────────── */
 static const FluxaLibEntry fluxa_lib_registry[] = {
+#ifdef FLUXA_STD_CACHE
+    { "cache", "std.cache", "cache", fluxa_std_cache_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "cache", "std.cache", "cache", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_CRYPTO
     { "crypto", "std.crypto", "crypto", fluxa_std_crypto_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -276,7 +284,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 28
+#define FLUXA_LIB_COUNT 29
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

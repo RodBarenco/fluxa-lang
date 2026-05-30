@@ -188,6 +188,8 @@ The only cross-call state mechanisms are:
 - `prst` — survives hot reloads, stored in PrstPool. Belongs to the scope where it was declared (main program, module, or Block). Not shared globally — each scope owns its own `prst` variables.
 - `Block` members — state encapsulated within a Block, accessible through that Block's methods
 
+The runtime maintains the invariant that **every slot is the sole owner of its heap-bearing contents** through automatic release on reassignment and at scope teardown. For the full implementation contract and the `free(x)` operator, see [§13.6 Slot Ownership and the `free` Operator](#136-slot-ownership-and-the-free-operator).
+
 ```fluxa
 int   a    = 10
 float pi   = 3.14
@@ -1397,6 +1399,119 @@ synchronized via the pool's own lock, not via the GC.
 - **Does not touch `int arr`.** Fixed arrays are scope-managed. When the
   scope that owns an `int arr` is freed, `value_free_data` frees the data
   array directly — no GC involvement.
+
+---
+
+## 13.6 Slot Ownership and the `free` Operator
+
+This section defines the runtime contract for heap-bearing slot lifetimes. The contract is observable from Fluxa code through three mechanisms — automatic release on slot reassignment, automatic release of transient values produced by reads/calls/comparisons, and the explicit `free(x)` operator. Together they guarantee that a long-running worker can run indefinitely at bounded memory.
+
+### Heap-bearing types
+
+Two value types carry heap data:
+
+- `VAL_STRING` — a `char *` buffer owned by the slot or by the producer of the Value.
+- `VAL_DYN` — a `FluxaDyn *` registered with the GC and tracked by pin count.
+
+Fixed arrays (`VAL_ARR` with `owned = 1`) also carry heap data (the `data` pointer and any string elements). The same rules apply, but `VAL_ARR` is a value type, not a separate identity tracked by the GC.
+
+### Automatic release on slot reassignment (`rt_set`)
+
+When the runtime writes to `rt->stack[offset]` via `rt_set`, the previous slot contents are released before the new value is stored. This applies to **every** assignment that targets a resolved local slot:
+
+| Old slot type | Action before overwrite |
+|---|---|
+| `VAL_STRING` | `free(old.as.string)` unless the new value aliases the same pointer (self-assignment guard) |
+| `VAL_DYN` | `gc_unpin(old.as.dyn)` so a later sweep can collect orphans |
+| `VAL_ARR` (owned) | `value_free_data(old)` — releases the data array and each owned element |
+| `VAL_INT`, `VAL_FLOAT`, `VAL_BOOL`, `VAL_NIL` | No-op |
+
+After the new value is stored, `rt_set` re-establishes ownership invariants:
+
+- New `VAL_DYN`: `gc_pin(new.as.dyn)` so the slot holds exactly one strong reference.
+
+This produces the invariant **"every slot is the sole owner of its heap-bearing contents"** at all times outside the body of `rt_set` itself.
+
+### Automatic release of transient produced values
+
+Any expression evaluation produces a `Value`. When that value would be discarded — used once and dropped — the runtime releases its heap data if it owns the data.
+
+The runtime classifies the producer node as **owned** (the runtime allocated the heap data and no slot took ownership) or **aliased** (the value shares storage with a slot or with a stable backing structure). Aliased values are never freed by the consumer; owned values are released at the consumer's edge.
+
+Owned producers (by AST node type):
+- `NODE_STRING_LIT` — eval calls `val_string(s)` which `strdup`s the literal.
+- `NODE_MEMBER_CALL`, `NODE_FUNC_CALL`, `NODE_FFI_CALL` — call return values are owned by the caller.
+- `NODE_IDENTIFIER` reading a `VAL_STRING` — the eval path `strdup`s the slot's string so the reader becomes the sole owner.
+
+Aliased producers:
+- `NODE_MEMBER_ACCESS` (Block instance field read)
+- `NODE_ARR_ACCESS`, `NODE_INDEXED_MEMBER_ACCESS` (array/dyn element read)
+- Identifier reads of non-string types.
+
+Consumers that perform automatic release:
+
+| Consumer | When |
+|---|---|
+| `NODE_MEMBER_CALL` / `NODE_FUNC_CALL` / `NODE_FFI_CALL` arg evaluation | After the called function returns. Owned `VAL_STRING` args are freed. |
+| `eval_binary` (comparison, arithmetic) | At every return path. Owned `VAL_STRING` operands of `==`, `!=`, `+`, `-`, `*`, `/` are freed. |
+| `NODE_BLOCK_STMT` statement loop | After each child statement returns a value. Owned `VAL_STRING` returns are freed; owned `VAL_DYN` returns are unregistered and freed if `pin_count == 0`. |
+| `builtin_len`, `builtin_print` | After the body uses the value. The transient string is freed. |
+| `NODE_FOR` element binding | Loop var is given a `strdup` of `VAL_STRING` elements so iteration does not corrupt the source. |
+| `NODE_ARR_DECL` element evaluation | Already-owned producers are stored as-is; aliased producers are `strdup`'d defensively. |
+| End of `danger { }` | `gc_sweep` collects unpinned `dyn` objects. |
+| Function return | `rt_scope_free` walks the scope and releases everything. |
+
+### Explicit `free(x)`
+
+`free(x)` releases the heap data in slot `x` and sets the slot to `nil`. It is required only for intermediate local bindings that the compiler cannot infer are dead — typically a chain of `strings.concat` calls building a response body in a worker loop that never returns.
+
+```fluxa
+str p1 = strings.concat("{\"id\":\"", id)
+str p2 = strings.concat(p1, "\",\"name\":\"")
+str p3 = strings.concat(p2, name)
+str p4 = strings.concat(p3, "\"}")
+wserver.reply_json(req, 200, p4)
+free(p1); free(p2); free(p3); free(p4)
+```
+
+Each `p1..p4` is a fresh declaration: no reassignment releases the previous one, and the function never returns to release the scope. `free()` is the only way to release these in bounded memory.
+
+`free(x)` behavior by target:
+
+| Target | Behavior |
+|---|---|
+| Local stack slot holding `VAL_STRING` | `free(as.string)`, slot → nil |
+| Local stack slot holding `VAL_DYN` | `gc_unregister + fluxa_dyn_free`, slot → nil |
+| Local stack slot holding `VAL_ARR` (owned) | `value_free_data`, slot → nil |
+| Local stack slot holding a by-value type | No-op, slot → nil |
+| Slot already `nil` | No-op |
+| `prst` variable | Runtime error (`free` rejects prst — persistence layer owns the heap) |
+| Block instance field | Runtime error (instance scope owns the heap) |
+| Anything not resolved to a stack slot | Runtime error (cannot infer target) |
+
+`free(x)` is idempotent. Calling it twice in a row on the same slot is harmless.
+
+### Interaction with `prst`
+
+`prst` variables are owned by the per-program `PrstPool`, not by their stack slots. Writes to a `prst` go through the pool's deep-copy or overwrite path (see §10.4). `free()` rejects `prst` because releasing the slot would break the pool's snapshot/restore guarantees during hot reload.
+
+To clear a `prst` value, assign a replacement: `my_prst = ""` for strings, `my_prst = nil` for dyn — the pool's set path handles the previous value's release.
+
+### Interaction with `dyn` cursors
+
+Library-returned `VAL_DYN` cursors (e.g. `json2.parse`, `csv.open`, `sqlite.open`, `pg.connect` results) are registered with the GC by the dispatch layer at return time. Use the library's release function for the external resource (`json2.discard`, `csv.close`, `pg.free_result`, `sqlite.close`). The `FluxaDyn` wrapper itself is collected automatically when the holding slot is reassigned or when the surrounding scope ends.
+
+Calling `free()` on a `dyn` cursor is permitted and triggers both the wrapper release and slot nilling, but it does **not** release the underlying external resource — the library's release function must still be called first.
+
+### Memory bound for long-running workers
+
+Combining the above rules, a worker function that:
+
+1. Reassigns every per-request local (`str method = wserver.req_method(req)`, etc.)
+2. Frees each intermediate in any `strings.concat` chain (`free(p1); free(p2); ...`)
+3. Calls the matching release function for every `dyn` cursor (`json2.discard`, `pg.free_result`, ...)
+
+runs at bounded memory indefinitely. Measured profile for the reference HTTP+DB server: 24 worker threads, 1k+ req/s sustained, resident ~30–40 MB peak, returning to ~28 MB when traffic stops.
 
 ---
 

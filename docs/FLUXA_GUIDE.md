@@ -539,28 +539,88 @@ danger { srv     = wserver.serve(8080) }
 
 ## 12.5 Memory in Long-Running Loops
 
-Fluxa's GC sweeps `dyn` objects at every `while` back-edge when their pin count is zero. **String values (`VAL_STRING`) are not GC-managed**: a `str` is freed when the scope that owns it is released, which only happens when the surrounding function returns.
+Long-running workers — HTTP request handlers, IoT sensor loops, polling agents — never exit their `while` block. Without care, every per-iteration heap allocation lives until the process dies. Fluxa v0.19 makes the common cases automatic and gives you `free(x)` for the few that aren't.
 
-This matters for HTTP servers and other long-running workers. Inside
+### The mental model
+
+Two value types carry heap data: `str` and `dyn`. Everything else (`int`, `float`, `bool`) is by-value.
+
+**The runtime auto-releases heap data in every common pattern:**
 
 ```fluxa
 fn worker(int srv) nil {
     while !ft.should_stop() {
-        // ... per-request work that allocates strings ...
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            str method = wserver.req_method(req)  // slot reassign → previous freed
+            str path   = wserver.req_path(req)    // slot reassign → previous freed
+
+            if method == "POST" {
+                if path == "/healthz" {           // "/healthz" literal: freed after compare
+                    wserver.reply(req, 200, "ok")
+                }
+            }
+            danger {
+                dyn doc = json2.parse("{}")       // new dyn pinned; previous unpinned/swept
+                json2.discard(doc)                // releases the parse tree
+            }                                     // gc_sweep at danger-end collects orphans
+        }
     }
 }
 ```
 
-every `str` assigned inside the loop lives in the worker's scope until the function returns — which it never does. Each iteration's strings accumulate.
+Every reassignment of `method`, `path`, `doc` releases the prior value. Every literal passed to a lib call (`"/healthz"`, `"{}"`) is freed after the call returns. Every comparison with a literal (`path == "/healthz"`) releases the literal's temporary buffer. `json2.discard` releases the parse tree; the wrapper is collected automatically. **You never have to think about these.**
 
-**Mitigations within the current runtime:**
+### When `free(x)` is required
 
-1. **Use `json2.discard(doc)`** at the end of every `danger` block that calls `json2.parse(...)`. The `dyn` wrapper is GC-managed but the underlying parse tree is opaque and must be released explicitly.
-2. **Build response bodies with multi-step `strings.concat`** chains. Each step allocates one string; the previous step's intermediate falls out of usage but the trailing `wserver.reply_json(req, status, body)` only needs the final string.
-3. **Cache aggressively** when possible. A `Block` field `prst str arr` honors deep-copy semantics on write and proper free-on-overwrite via the prst pool.
-4. **Accept a residual leak.** glibc's malloc consolidates arenas under memory pressure, producing a bounded steady state under sustained load. In practice this is ~50 MB residual per 100 RPS over 10 minutes of benchmarking.
+Exactly one pattern requires explicit `free()`: **building intermediate values that you don't reassign**.
 
-A documented gap exists in the runtime: there is no `free(x)` built-in that releases an arbitrary `str` slot, and no automatic free on `rt_set` overwrite. Adding either would let workers reach near-zero residual memory. This is tracked as a runtime enhancement; see the issue tracker.
+```fluxa
+str p1 = strings.concat("{\"id\":\"", id)
+str p2 = strings.concat(p1, "\",\"name\":\"")
+str p3 = strings.concat(p2, name)
+str p4 = strings.concat(p3, "\"}")
+wserver.reply_json(req, 200, p4)
+free(p1); free(p2); free(p3); free(p4)
+```
+
+Each `p1..p4` is a fresh `str` declaration — no reassignment releases its predecessor. Without `free()`, all four heap buffers stay alive until the worker returns (which it never does). The same pattern shows up when assembling SQL parameter arrays, JSON arrays, or anything you compose piece by piece.
+
+### When `free(x)` does nothing
+
+- After a reassignment: `str x = a; x = b; free(x)` — runtime already released the old `a` on reassignment; `free(x)` releases `b`.
+- After scope ends: irrelevant — the runtime already released everything in the scope.
+- On a `dyn` cursor: use the lib's release function (`json2.discard`, `csv.close`, `pg.free_result`, `sqlite.close`).
+- On `prst` variables: `free()` rejects — the persistence layer owns them across reloads.
+- On Block instance fields: `free()` rejects — the instance scope owns them.
+- On arena strings (from `std.cache`): `free()` rejects — arenas are bulk-released via `arena_reset` / `arena_drop`.
+
+### Where the runtime helps you
+
+The runtime's automatic releases cover:
+
+| Action | Released |
+|---|---|
+| `str x = ...; x = ...` | Old slot contents |
+| `dyn d = ...; d = ...` | Old `dyn` (unpinned + swept) |
+| `str arr p[N] = [...]; p = [...]` | Old array storage + element strings |
+| `lib.fn("literal", x)` | The literal's transient copy |
+| `if a == "literal" { }` | The literal's transient copy |
+| `lib.fn(x, y)` as a statement (return discarded) | Owned return value |
+| `len(s)`, `print(s)` | Transient string copies the read produced |
+| End of `danger { }` | Unpinned dyns via `gc_sweep` |
+| Function return | Everything in the function frame |
+
+### Profile expectations
+
+A well-written HTTP worker hitting 1k+ req/s should plateau at **20–40 MB resident** within seconds and stay there indefinitely. If your memory grows linearly with request count, check:
+
+1. Did you `free()` the per-request intermediates (the `p1..pN` chain)?
+2. Did you `discard` JSON documents and `free_result` query results?
+3. Are you accumulating into a `prst dyn` collection by mistake? `prst` data persists across reloads — never use it as a transient buffer.
+
+If the answers are all yes and memory still grows, `fluxa dis main.flx -proj .` will show the runtime forecast and identify any hot path that bypasses bytecode.
 
 ---
 
@@ -613,4 +673,8 @@ A quick checklist of the most frequent errors:
 | `int res = pg.query(conn, sql)` outside `danger` | pg operations can fail | Wrap in `danger {}` |
 | `if res != nil { ... }` for int handles | pg/wserver return `int`, not `dyn` | `if res != 0 { ... }` |
 | Passing `dyn` cursor as Block field | `dyn` not valid in Block | Keep cursor at program level, pass as method arg |
+| Forgot `free(p1); free(p2); ...` on a `strings.concat` chain in a worker | Each intermediate accumulates over millions of iterations | Free each piece after `reply` — see §12.5 |
+| `free(some_prst_var)` | `prst` belongs to the persistence layer, not the slot | Mutate the value; the pool tracks it |
+| `free(s)` where `s` came from `cache.arena_str` | Arena strings are bulk-released | Use `cache.arena_reset(arena)` |
+| `dyn doc = json2.parse(...)` then no `json2.discard(doc)` | The parse tree leaks even though the wrapper is GC'd | Always `json2.discard(doc)` inside the `danger` block |
 
