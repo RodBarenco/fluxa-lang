@@ -1,6 +1,62 @@
 # Fluxa-lang Changelog
 
-## v0.19 — Memory ownership: from leaks to bounded (current)
+## v0.19.2 — std.cache eviction + capacity (current)
+
+The cache implementation in v0.19 silently dropped inserts once all 8 probe slots in a key's natural shard were taken. Under sustained high-cardinality workloads — HTTP services with UUID-keyed records, in particular — this meant the cache filled in the first few hundred POSTs and then **stopped accepting new entries entirely**. Every subsequent GET missed cache and went to the backing database, saturating the worker pool and producing pathological P99 latency.
+
+This release fixes the eviction policy and bumps capacity. The runtime code is unchanged — this is purely a stdlib change.
+
+### perf(stdlib): random eviction in `std.cache` when probe slots fill
+
+`shard_locate` now returns a random slot from the 8-probe window when no match and no empty slot are found. The caller (`cache.put`) frees the old key/value and reuses the slot. This approximates Random Replacement (RR) at the per-bucket level — close in behavior to per-shard LRU without the overhead of maintaining an access-order list. Each `CacheShard` carries its own xorshift32 state, so eviction-slot selection has zero cross-thread coordination cost.
+
+The previous "silent drop" behavior was the worst case: caches that look right at startup but become useless after the working set exceeds capacity, with no error signal.
+
+### feat(stdlib): `cache.stats()` and `cache.stats_reset()`
+
+Diagnostic counters tracking puts (inserts, updates, evictions, failures), gets (hits, misses), and current size. Returned as a `key=value` string for easy grepping. Atomic via `__sync_fetch_and_add`, so reading them is safe under concurrent traffic.
+
+`cache.stats_reset()` zeroes the counters for clean before/after measurements (typically called after warm-up traffic, before the measured load).
+
+### perf(stdlib): bump cache capacity to 8192 entries (32 shards × 256 slots)
+
+Previous limits were 16 × 64 = 1024 entries — adequate for IoT scenarios but undersized for HTTP services. Doubled shard count (32) reduces per-shard contention with high concurrent worker counts, and quadrupled per-shard slots (256) increases the effective working set that can be cached before random eviction starts.
+
+Memory cost: ~8 KB of static globals (`CacheShard` array) + ~1 MB peak heap when all 8192 slots are populated with typical UUID keys + small JSON values. The previous footprint was ~256 KB peak.
+
+### Measurement notes
+
+Local stress test with simulated 2 ms backing-store cost per cache miss, 96 concurrent clients, k6-like access pattern (60% writes, 40% reads from a per-VU pool of IDs grown over time):
+
+| | OLD cache (v0.19) | NEW cache (v0.19.2) | Delta |
+|---|---|---|---|
+| RPS median | 880 | 1127 | **+28%** |
+| Median latency | ~101 ms | ~77 ms | **-23%** |
+| P99 latency | ~140 ms | ~120 ms | **-14%** |
+
+Synthetic isolation test (50 000 distinct keys inserted, then query most-recent 1 000):
+
+| | OLD cache | NEW cache |
+|---|---|---|
+| Inserts succeeded | 1 024 | 8 192 |
+| Silent failures | 48 976 | 0 |
+| Recent-key hit ratio | **0 / 1 000 (0%)** | **930 / 1 000 (93%)** |
+
+The user-visible impact under real-world high-cardinality load is expected to be much larger than the synthetic +28% because production k6 generates ~100 000 distinct UUIDs over a 12-minute run, far exceeding even the new 8 192 capacity. With the previous silent-drop behavior, the hit ratio collapsed to essentially zero; with random eviction it stays proportional to recent traffic.
+
+### Tests
+
+- 3 new tests in `tests/libs/cache.sh` (now 13/13):
+  - `overflow_random_eviction_keeps_recent` — 30 000 puts, recent 1 000 keys still mostly hit
+  - `stats_returns_counters` — round-trip of put/get counters via `cache.stats()`
+  - `stats_reset_zeroes` — verifies `stats_reset()` clears the snapshot
+- All 19 sprint10c free tests still pass.
+- Full suite: 30 known-environmental fails (unchanged from v0.19).
+- `make bench` within container variance of v0.19 baseline.
+
+---
+
+## v0.19 — Memory ownership: from leaks to bounded
 
 Eight latent memory leaks in the AST evaluator, stdlib dispatch, and built-ins. Each one was bounded per allocation but cumulative across the per-request workload of a long-running HTTP worker. Together they caused a 24-worker SUT under sustained k6 load to grow from ~12 MB idle to >300 MB after ten minutes of traffic. Fixed here.
 

@@ -1,6 +1,6 @@
 # Fluxa-lang
 
-**v0.19 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.19.2 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
 Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 29 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 

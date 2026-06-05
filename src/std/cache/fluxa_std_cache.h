@@ -62,9 +62,18 @@
 
 /* ── Sharded cache ──────────────────────────────────────────────────────── */
 
-#define CACHE_SHARDS    16          /* must be power of 2 */
-#define CACHE_PER_SHARD 64          /* slots per shard */
-#define CACHE_PROBE     8
+#define CACHE_SHARDS     32         /* must be power of 2 — doubled in v0.19.2
+                                       to reduce per-shard contention with more
+                                       worker threads */
+#define CACHE_PER_SHARD  256        /* slots per shard — was 64 in v0.19; bumped
+                                       to keep cache useful under high-cardinality
+                                       workloads (k6 generates ~100k distinct
+                                       UUIDs over a benchmark run). Random
+                                       eviction now retires old entries when
+                                       probes fill, so capacity directly
+                                       controls hit-ratio under load. */
+#define CACHE_PROBE       8         /* probe distance unchanged — eviction
+                                       handles the case where probes fill */
 
 typedef struct {
     char *key;     /* NULL = empty slot */
@@ -75,12 +84,23 @@ typedef struct {
     pthread_mutex_t mu;
     CacheEntry      entries[CACHE_PER_SHARD];
     int             populated;
+    uint32_t        rand_state;        /* xorshift32 for random eviction */
 } CacheShard;
 
 /* Zero-initialised by the C standard. Mutexes are constructed at first use
  * via pthread_once to keep this header strictly ISO C (no GCC range-init). */
 static CacheShard      g_cache_shards[CACHE_SHARDS];
 static pthread_once_t  g_cache_shards_once = PTHREAD_ONCE_INIT;
+
+/* Diagnostic counters (atomic via __sync) — exposed via cache.stats() */
+static volatile unsigned long g_cache_put_calls    = 0;
+static volatile unsigned long g_cache_put_inserts  = 0;  /* new entries */
+static volatile unsigned long g_cache_put_updates  = 0;  /* overwrites */
+static volatile unsigned long g_cache_put_evicts   = 0;  /* random eviction */
+static volatile unsigned long g_cache_put_failures = 0;  /* silent drops (legacy) */
+static volatile unsigned long g_cache_get_calls    = 0;
+static volatile unsigned long g_cache_get_hits     = 0;
+static volatile unsigned long g_cache_get_misses   = 0;
 
 static void cache_shards_init(void) {
     for (int i = 0; i < CACHE_SHARDS; i++)
@@ -203,9 +223,38 @@ static inline Value cache_str_arena(char *s) {
 }
 
 /* ── Shard probe: returns slot index within shard, or -1 ────────────────── */
-static int shard_locate(CacheShard *sh, const char *key, uint32_t h, int create_if_missing) {
-    int idx = (int)((h >> 4) & (CACHE_PER_SHARD - 1));   /* >>4 to decorrelate from shard pick */
+/* Cheap xorshift-based PRNG for eviction slot selection. Each shard maintains
+ * its own state (no cross-shard contention) since rand_state lives on
+ * CacheShard. Output is used only to pick which slot to evict — quality is
+ * not critical. */
+static inline uint32_t shard_rand(CacheShard *sh) {
+    uint32_t x = sh->rand_state;
+    if (x == 0) x = 0x9E3779B9u;          /* golden-ratio seed */
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    sh->rand_state = x;
+    return x;
+}
+
+/* shard_locate — find or place an entry within CACHE_PROBE slots starting
+ * from h's natural position. Modes:
+ *   create_if_missing == 0  → lookup only. Returns idx if key found, else -1.
+ *   create_if_missing == 1  → return idx for insert/update:
+ *       - existing key       → returns its idx, *was_evict = 0
+ *       - empty probe slot   → returns it, *was_evict = 0
+ *       - all 8 probes taken → returns a random probe slot, *was_evict = 1
+ *                              (caller must free the old key+val before reuse)
+ * Random eviction lets the cache stay useful when distinct-key load exceeds
+ * CACHE_PROBE per bucket (the common case under sustained traffic with high
+ * key cardinality). Previously such inserts were silent drops, defeating the
+ * cache after a few minutes of real load. */
+static int shard_locate(CacheShard *sh, const char *key, uint32_t h,
+                         int create_if_missing, int *was_evict) {
+    int base = (int)((h >> 4) & (CACHE_PER_SHARD - 1));
     int first_empty = -1;
+    int idx = base;
+    if (was_evict) *was_evict = 0;
     for (int probe = 0; probe < CACHE_PROBE; probe++) {
         CacheEntry *e = &sh->entries[idx];
         if (e->key == NULL) {
@@ -216,7 +265,16 @@ static int shard_locate(CacheShard *sh, const char *key, uint32_t h, int create_
         }
         idx = (idx + 1) & (CACHE_PER_SHARD - 1);
     }
-    return create_if_missing ? first_empty : -1;
+    if (!create_if_missing) return -1;
+    if (first_empty >= 0) return first_empty;
+    /* All probes occupied — evict a random probe slot. Picking uniformly from
+     * the 8 probed positions gives a 1/8 chance per slot, which is close to
+     * random replacement (RR) and keeps the working set roughly proportional
+     * to recent traffic. */
+    if (was_evict) *was_evict = 1;
+    int evict_slot = (int)(shard_rand(sh) & (CACHE_PROBE - 1));
+    int evict_idx  = (base + evict_slot) & (CACHE_PER_SHARD - 1);
+    return evict_idx;
 }
 
 /* ── Main dispatch ──────────────────────────────────────────────────────── */
@@ -273,14 +331,33 @@ static inline Value fluxa_std_cache_call(const char *fn_name,
         uint32_t h = cache_hash(key);
         CacheShard *sh = &g_cache_shards[h & (CACHE_SHARDS - 1)];
 
+        __sync_fetch_and_add(&g_cache_put_calls, 1);
         pthread_mutex_lock(&sh->mu);
-        int idx = shard_locate(sh, key, h, 1);
-        if (idx >= 0) {
-            CacheEntry *e = &sh->entries[idx];
-            if (e->key == NULL) {
-                e->key = strdup(key);
-                sh->populated++;
-            }
+        int was_evict = 0;
+        int idx = shard_locate(sh, key, h, 1, &was_evict);
+        if (idx < 0) {
+            /* Shouldn't happen — shard_locate with create=1 always returns
+             * a slot (eviction is the fallback). Defensive. */
+            __sync_fetch_and_add(&g_cache_put_failures, 1);
+            pthread_mutex_unlock(&sh->mu);
+            return cache_nil();
+        }
+        CacheEntry *e = &sh->entries[idx];
+        if (was_evict) {
+            /* Random eviction — replace the existing key + value entirely. */
+            __sync_fetch_and_add(&g_cache_put_evicts, 1);
+            free(e->key); free(e->val);
+            e->key = strdup(key);
+            e->val = strdup(val);
+        } else if (e->key == NULL) {
+            /* Fresh insert into empty slot */
+            __sync_fetch_and_add(&g_cache_put_inserts, 1);
+            e->key = strdup(key);
+            e->val = strdup(val);
+            sh->populated++;
+        } else {
+            /* Update existing key — reuse key slot, replace val */
+            __sync_fetch_and_add(&g_cache_put_updates, 1);
             if (e->val) free(e->val);
             e->val = strdup(val);
         }
@@ -294,14 +371,17 @@ static inline Value fluxa_std_cache_call(const char *fn_name,
         uint32_t h = cache_hash(key);
         CacheShard *sh = &g_cache_shards[h & (CACHE_SHARDS - 1)];
 
+        __sync_fetch_and_add(&g_cache_get_calls, 1);
         pthread_mutex_lock(&sh->mu);
-        int idx = shard_locate(sh, key, h, 0);
+        int idx = shard_locate(sh, key, h, 0, NULL);
         if (idx < 0) {
             pthread_mutex_unlock(&sh->mu);
+            __sync_fetch_and_add(&g_cache_get_misses, 1);
             return cache_str_heap("");
         }
         Value out = cache_str_heap(sh->entries[idx].val ? sh->entries[idx].val : "");
         pthread_mutex_unlock(&sh->mu);
+        __sync_fetch_and_add(&g_cache_get_hits, 1);
         return out;
     }
 
@@ -312,7 +392,7 @@ static inline Value fluxa_std_cache_call(const char *fn_name,
         CacheShard *sh = &g_cache_shards[h & (CACHE_SHARDS - 1)];
 
         pthread_mutex_lock(&sh->mu);
-        int idx = shard_locate(sh, key, h, 0);
+        int idx = shard_locate(sh, key, h, 0, NULL);
         if (idx >= 0) {
             CacheEntry *e = &sh->entries[idx];
             if (e->key) { free(e->key); e->key = NULL; }
@@ -347,6 +427,53 @@ static inline Value fluxa_std_cache_call(const char *fn_name,
             pthread_mutex_unlock(&sh->mu);
         }
         return cache_int(n);
+    }
+
+    /* cache.stats() → str — diagnostic snapshot of put/get/evict counters.
+     * Format is one key=value pair per line, easy to grep. Useful for
+     * confirming whether a workload is saturating the cache before
+     * deciding on capacity changes. */
+    if (strcmp(fn_name, "stats") == 0) {
+        long size = 0;
+        for (int s = 0; s < CACHE_SHARDS; s++) {
+            CacheShard *sh = &g_cache_shards[s];
+            pthread_mutex_lock(&sh->mu);
+            size += sh->populated;
+            pthread_mutex_unlock(&sh->mu);
+        }
+        unsigned long put_calls    = g_cache_put_calls;
+        unsigned long put_inserts  = g_cache_put_inserts;
+        unsigned long put_updates  = g_cache_put_updates;
+        unsigned long put_evicts   = g_cache_put_evicts;
+        unsigned long put_failures = g_cache_put_failures;
+        unsigned long get_calls    = g_cache_get_calls;
+        unsigned long get_hits     = g_cache_get_hits;
+        unsigned long get_misses   = g_cache_get_misses;
+        double hit_ratio = get_calls ? (double)get_hits / (double)get_calls : 0.0;
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "size=%ld capacity=%d shards=%d probe=%d "
+            "puts=%lu inserts=%lu updates=%lu evicts=%lu failures=%lu "
+            "gets=%lu hits=%lu misses=%lu hit_ratio=%.4f",
+            size, CACHE_SHARDS * CACHE_PER_SHARD, CACHE_SHARDS, CACHE_PROBE,
+            put_calls, put_inserts, put_updates, put_evicts, put_failures,
+            get_calls, get_hits, get_misses, hit_ratio);
+        Value v; v.type = VAL_STRING; v.as.string = strdup(buf);
+        return v;
+    }
+
+    /* cache.stats_reset() → nil — zero out diagnostic counters. Useful for
+     * isolating measurements from warm-up traffic. */
+    if (strcmp(fn_name, "stats_reset") == 0) {
+        g_cache_put_calls    = 0;
+        g_cache_put_inserts  = 0;
+        g_cache_put_updates  = 0;
+        g_cache_put_evicts   = 0;
+        g_cache_put_failures = 0;
+        g_cache_get_calls    = 0;
+        g_cache_get_hits     = 0;
+        g_cache_get_misses   = 0;
+        return cache_nil();
     }
 
     /* ─────────────────────────── ARENA ALLOCATOR ──────────────────────── */

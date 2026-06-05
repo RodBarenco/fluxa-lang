@@ -1,5 +1,5 @@
 # Fluxa Standard Library
-**v0.19**
+**v0.19.2**
 
 Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`.
 
@@ -553,7 +553,7 @@ max_out_bytes = 8192
 Thread-safe key/value cache with sharded locks and a bump-pointer arena allocator. Designed for HTTP workers that need response memoization and short-lived per-request scratch storage without the malloc/free overhead of `strings.concat` chains.
 
 Two independent subsystems share one library:
-- **Cache** — 16 shards × 64 slots each = 1024 entries. Per-shard `pthread_mutex` keeps contention bounded under heavy concurrency. Keys and values are owned copies (caller can free their inputs immediately after `cache.put`).
+- **Cache** — 32 shards × 256 slots each = **8192 entries**. Per-shard `pthread_mutex` keeps contention bounded under heavy concurrency. Keys and values are owned copies (caller can free their inputs immediately after `cache.put`). When the 8-probe window in a shard fills, `cache.put` performs **random eviction** of one of the probed slots — recent writes always succeed.
 - **Arena** — up to 64 concurrent arenas, each a linked list of 64 KB slabs with 8-byte aligned bump allocation. `arena_reset` returns the arena to one fresh slab in O(slabs); `arena_drop` releases everything. Strings allocated in an arena are **not** released by `free()` — only by `arena_reset` or `arena_drop`.
 
 **Enable:**
@@ -568,13 +568,24 @@ The cache and arena tables are zero-init and lazily constructed on first call fr
 
 | Function | Returns | Description |
 |---|---|---|
-| `cache.put(str key, str value)` | nil | Insert or overwrite. Both strings are copied. |
+| `cache.put(str key, str value)` | nil | Insert, update, or evict-and-insert. Both strings are copied. |
 | `cache.get(str key)` | str | Returns an owned copy of the value, or `""` if missing. Caller frees. |
 | `cache.del(str key)` | bool | Remove the entry. Returns `true` if removed. |
 | `cache.clear()` | nil | Empty all shards. |
 | `cache.size()` | int | Total populated entries across all shards. |
+| `cache.stats()` | str | Snapshot of put/get counters as `key=value ...` for diagnostics. |
+| `cache.stats_reset()` | nil | Zero the counters. Typically called after warm-up. |
 
-**Probe behavior.** Each shard holds 64 slots probed linearly up to 8 steps. When all 8 probes are taken on a `put`, the insertion is silently dropped (no error, no eviction). Keep working-set size well below 1024.
+**Probe behavior.** Each shard holds 256 slots probed linearly up to 8 steps from the key's natural position. When all 8 probes are taken on a `put`, one of the probed slots is **randomly evicted** to make room for the new entry. Hot keys tend to displace cold ones over time. Each shard maintains its own xorshift32 PRNG state — no cross-thread coordination cost.
+
+**Diagnostic output of `cache.stats()`:**
+```
+size=N capacity=8192 shards=32 probe=8
+puts=N inserts=N updates=N evicts=N failures=N
+gets=N hits=N misses=N hit_ratio=0.XXXX
+```
+
+Under healthy operation, `failures` stays at 0 (random eviction never fails). `evicts` rising while `hit_ratio` stays high indicates the working set is larger than capacity but recent traffic is still served — this is the expected steady state for HTTP caches with high-cardinality keys.
 
 **Hash.** FNV-1a 32-bit — same as `strings.hash` — so a key produces the same shard whether you hash it manually or let the cache do it.
 

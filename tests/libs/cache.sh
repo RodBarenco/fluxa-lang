@@ -192,8 +192,87 @@ if echo "$out" | grep -q "^ok$" && ! echo "$out" | grep -qi "double free\|corrup
     pass "del_absent_safe"
 else fail "del_absent_safe" "ok" "$out"; fi
 
+# ── 11: overflow load → random eviction keeps cache useful ───────────────────
+# Insert far more distinct keys than capacity. Old v0.19 silently dropped
+# inserts after probes filled (1024 cap, ~600 effective). New behavior:
+# random eviction retires old entries, so recent keys remain hittable.
+# Predict: ~50%+ hit ratio for the most recent capacity-sized window.
+cat > "$WORK_DIR/main.flx" << 'FLX'
+import std cache
+import std strings
+int target = 30000
+int i = 0
+while i < target {
+    str k = strings.concat("k_", i)
+    str v = strings.concat("v_", k)
+    cache.put(k, v)
+    free(k) free(v)
+    i = i + 1
+}
+// Query the most-recent 1000 keys.
+int hits = 0
+int j = target - 1000
+while j < target {
+    str k = strings.concat("k_", j)
+    str got = cache.get(k)
+    if got != "" { hits = hits + 1 }
+    free(got) free(k)
+    j = j + 1
+}
+print(hits)
+FLX
+out=$(timeout 30s "$FLUXA" run "$WORK_DIR/main.flx" -proj "$WORK_DIR" 2>&1 || true)
+hits=$(echo "$out" | tr -d -c '0-9\n' | tail -1)
+if [ -n "$hits" ] && [ "$hits" -ge 500 ]; then
+    pass "overflow_random_eviction_keeps_recent"
+else
+    fail "overflow_random_eviction_keeps_recent" "hits >= 500" "$out"
+fi
+
+# ── 12: stats() returns a snapshot with the expected counters ────────────────
+cat > "$WORK_DIR/main.flx" << 'FLX'
+import std cache
+cache.stats_reset()
+cache.put("a", "1")
+cache.put("b", "2")
+cache.put("a", "3")   // update
+str hit = cache.get("a")
+str miss = cache.get("z")
+free(hit) free(miss)
+print(cache.stats())
+FLX
+out=$(timeout 5s "$FLUXA" run "$WORK_DIR/main.flx" -proj "$WORK_DIR" 2>&1 || true)
+if echo "$out" | grep -q "puts=3" \
+   && echo "$out" | grep -q "inserts=2" \
+   && echo "$out" | grep -q "updates=1" \
+   && echo "$out" | grep -q "gets=2" \
+   && echo "$out" | grep -q "hits=1" \
+   && echo "$out" | grep -q "misses=1"; then
+    pass "stats_returns_counters"
+else
+    fail "stats_returns_counters" "puts=3 inserts=2 updates=1 gets=2 hits=1 misses=1" "$out"
+fi
+
+# ── 13: stats_reset zeroes the counters ──────────────────────────────────────
+cat > "$WORK_DIR/main.flx" << 'FLX'
+import std cache
+cache.put("x", "y")
+str v = cache.get("x")
+free(v)
+cache.stats_reset()
+print(cache.stats())
+FLX
+out=$(timeout 5s "$FLUXA" run "$WORK_DIR/main.flx" -proj "$WORK_DIR" 2>&1 || true)
+if echo "$out" | grep -q "puts=0" \
+   && echo "$out" | grep -q "gets=0" \
+   && echo "$out" | grep -q "hits=0"; then
+    pass "stats_reset_zeroes"
+else
+    fail "stats_reset_zeroes" "puts=0 gets=0 hits=0" "$out"
+fi
+
 echo "────────────────────────────────────────────────────────────────────"
-total=10
+total=13
 if [[ $FAILS -eq 0 ]]; then
     echo "  Results: $total passed, 0 failed"
     echo "  → std.cache: PASS"

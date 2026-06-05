@@ -22,6 +22,20 @@
 #include <math.h>
 #include "../../scope.h"
 #include "../../err.h"
+#include "vknn.h"   /* approximate KD-tree 5-NN (int16, exact) for vector search */
+
+/* Single process-wide reference index, loaded once via libv.kd_load(). */
+static VkIndex g_vknn_ix;
+
+/* days since 1970-01-01 (Howard Hinnant's algorithm) — for libv.dow/daymin */
+static inline long vk_days_from_civil(long y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153u * (m + (m > 2 ? -3u : 9u)) + 2u) / 5u + d - 1u;
+    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097L + (long)doe - 719468L;
+}
 
 #ifdef FLUXA_LIBV_BLAS
 #  include <cblas.h>
@@ -457,6 +471,53 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         if (idx<0||(int)idx*no+no>nt) LV_ERR("tens_slice: index out of range");
         for (int i=0;i<no;i++) lv_setf(out,i,lv_get(t,(int)idx*no+i));
         return lv_nil();
+    }
+
+    /* ── fraud-detection vector search (Rinha 2026) ──────────────────── */
+    if (!strcmp(fn_name,"kd_load")) {              /* mmap + warm the index */
+        const char *path = getenv("FLUXA_KD_INDEX");
+        if (!path || !*path) path = "kdtree.bin";
+        int rc = vk_load(&g_vknn_ix, path);
+        if (rc == 0) vk_warm(&g_vknn_ix);
+        return lv_int(rc);                         /* 0 = ok, <0 = error    */
+    }
+    if (!strcmp(fn_name,"kd_ready")) {
+        return lv_int(g_vknn_ix.map ? 1 : 0);
+    }
+    if (!strcmp(fn_name,"kd_count")) {             /* frauds among k nearest */
+        NEED(1); GET_ARR(0,q,sz);
+        if (sz < VKNN_DIM) LV_ERR("kd_count: query needs 14 dims");
+        if (!g_vknn_ix.map) LV_ERR("kd_count: index not loaded");
+        int k = 5, budget = 0;                     /* budget<=0 => EXACT     */
+        if (argc>=2 && args[1].type==VAL_INT) k = (int)args[1].as.integer;
+        if (argc>=3 && args[2].type==VAL_INT) budget = (int)args[2].as.integer;
+        float qf[VKNN_DIM];
+        for (int i=0;i<VKNN_DIM;i++) qf[i] = (q[i].type==VAL_FLOAT)
+            ? (float)q[i].as.real : (float)q[i].as.integer;
+        return lv_int(vk_count(&g_vknn_ix, qf, k, budget));
+    }
+    if (!strcmp(fn_name,"kd_score")) {             /* fraud_score = count/k  */
+        NEED(1); GET_ARR(0,q,sz);
+        if (sz < VKNN_DIM) LV_ERR("kd_score: query needs 14 dims");
+        if (!g_vknn_ix.map) LV_ERR("kd_score: index not loaded");
+        int k = 5, budget = 0;
+        if (argc>=2 && args[1].type==VAL_INT) k = (int)args[1].as.integer;
+        if (argc>=3 && args[2].type==VAL_INT) budget = (int)args[2].as.integer;
+        float qf[VKNN_DIM];
+        for (int i=0;i<VKNN_DIM;i++) qf[i] = (q[i].type==VAL_FLOAT)
+            ? (float)q[i].as.real : (float)q[i].as.integer;
+        return lv_float(vk_score(&g_vknn_ix, qf, k, budget));
+    }
+    if (!strcmp(fn_name,"dow")) {                  /* day_of_week mon=0..sun=6 */
+        NEED(3); GET_INT(0,Y); GET_INT(1,M); GET_INT(2,D);
+        long days = vk_days_from_civil((long)Y,(unsigned)M,(unsigned)D);
+        long w = ((days % 7) + 3) % 7; if (w < 0) w += 7;
+        return lv_int(w);
+    }
+    if (!strcmp(fn_name,"daymin")) {               /* minutes since civil epoch */
+        NEED(5); GET_INT(0,Y); GET_INT(1,M); GET_INT(2,D); GET_INT(3,H); GET_INT(4,Mi);
+        long days = vk_days_from_civil((long)Y,(unsigned)M,(unsigned)D);
+        return lv_int(days * 1440L + (long)H * 60L + (long)Mi);
     }
 
 #undef LV_ERR
