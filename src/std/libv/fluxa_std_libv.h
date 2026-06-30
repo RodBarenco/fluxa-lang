@@ -26,6 +26,7 @@
 
 /* Single process-wide reference index, loaded once via libv.kd_load(). */
 static VkIndex g_vknn_ix;
+static int     g_vknn_env_budget = 0;  /* FLUXA_KD_BUDGET (deployment default; 0 = exact) */
 
 /* days since 1970-01-01 (Howard Hinnant's algorithm) — for libv.dow/daymin */
 static inline long vk_days_from_civil(long y, unsigned m, unsigned d) {
@@ -477,6 +478,13 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
     if (!strcmp(fn_name,"kd_load")) {              /* mmap + warm the index */
         const char *path = getenv("FLUXA_KD_INDEX");
         if (!path || !*path) path = "kdtree.bin";
+        /* FLUXA_KD_BUDGET: deployment-level default leaf budget, used only
+         * when the script passes budget<=0. Caps the worst-case search cost
+         * (off-manifold exact KNN can scan most of the tree); unset/0 keeps
+         * budget<=0 meaning EXACT, exactly as before. */
+        const char *bs = getenv("FLUXA_KD_BUDGET");
+        g_vknn_env_budget = (bs && *bs) ? atoi(bs) : 0;
+        if (g_vknn_env_budget < 0) g_vknn_env_budget = 0;
         int rc = vk_load(&g_vknn_ix, path);
         if (rc == 0) vk_warm(&g_vknn_ix);
         return lv_int(rc);                         /* 0 = ok, <0 = error    */
@@ -488,9 +496,10 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         NEED(1); GET_ARR(0,q,sz);
         if (sz < VKNN_DIM) LV_ERR("kd_count: query needs 14 dims");
         if (!g_vknn_ix.map) LV_ERR("kd_count: index not loaded");
-        int k = 5, budget = 0;                     /* budget<=0 => EXACT     */
+        int k = 5, budget = 0;                     /* budget<=0 => env default or EXACT */
         if (argc>=2 && args[1].type==VAL_INT) k = (int)args[1].as.integer;
         if (argc>=3 && args[2].type==VAL_INT) budget = (int)args[2].as.integer;
+        if (budget <= 0) budget = g_vknn_env_budget;
         float qf[VKNN_DIM];
         for (int i=0;i<VKNN_DIM;i++) qf[i] = (q[i].type==VAL_FLOAT)
             ? (float)q[i].as.real : (float)q[i].as.integer;
@@ -503,6 +512,7 @@ static inline Value fluxa_std_libv_call(const char *fn_name,
         int k = 5, budget = 0;
         if (argc>=2 && args[1].type==VAL_INT) k = (int)args[1].as.integer;
         if (argc>=3 && args[2].type==VAL_INT) budget = (int)args[2].as.integer;
+        if (budget <= 0) budget = g_vknn_env_budget;
         float qf[VKNN_DIM];
         for (int i=0;i<VKNN_DIM;i++) qf[i] = (q[i].type==VAL_FLOAT)
             ? (float)q[i].as.real : (float)q[i].as.integer;

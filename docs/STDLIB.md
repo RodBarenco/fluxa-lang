@@ -1342,6 +1342,56 @@ std.libv = "1.0"
 | `libv.ortho(m, left, right, bottom, top, near, far)` | orthographic projection |
 | `libv.lookat(m, eye, center, up)` | view matrix |
 
+### Nearest-neighbor index — exact 14-d KNN (vector search)
+
+A bundled k-nearest-neighbor index over a large reference set of pre-normalized
+14-dimensional vectors, with **exact** Euclidean search. Built for
+high-throughput classification (e.g. fraud scoring): the index is memory-mapped
+read-only and shared across all worker threads, so a multi-worker server loads
+it once and pays no per-request allocation.
+
+The on-disk format is **VKN3**: every tree node carries a 14-d axis-aligned
+bounding box (AABB) and the search is best-first with full box-distance pruning.
+A split-plane bound prunes on a single dimension and collapses in 14-d, so
+atypical ("off-manifold") queries used to scan most of the tree; the box bound
+prunes across all 14 dimensions and visits children nearest-box-first, keeping
+the result identical while cutting the worst case ~80× (typical query ~0.2 ms,
+worst case ~0.3 ms over 3M references).
+
+| Function | Returns | Description |
+|---|---|---|
+| `libv.kd_load()` | int | mmap + pre-touch the index. `0` = ok, `<0` = error. Path from `FLUXA_KD_INDEX` (default `kdtree.bin`). Call once at startup; only report `/ready` 2xx after it returns 0. |
+| `libv.kd_ready()` | int | `1` if an index is loaded, else `0`. |
+| `libv.kd_count(float arr q)` | int | Fraud-labeled points among the `k` nearest. `q` needs ≥14 dims. |
+| `libv.kd_count(float arr q, int k)` | int | As above with explicit `k` (default 5). |
+| `libv.kd_count(float arr q, int k, int budget)` | int | `budget` caps leaf visits; `<=0` = exact (or the env default below). |
+| `libv.kd_score(float arr q[, int k[, int budget]])` | float | `kd_count / k` — score in `[0,1]`. |
+
+**Building the index (offline).** `src/std/libv/build_index.c` reads a SoA
+reference file (`int32 n`, `int32 dim=14`, then `n*14` floats, then `n` label
+bytes) and writes the VKN3 tree:
+
+```sh
+gcc -O3 -ffast-math -Isrc/std/libv src/std/libv/build_index.c -o build_index -lm
+./build_index refs.bin kdtree.bin     # ~262k nodes for 3M refs, ~103 MB
+```
+
+The format magic is `VKN3`; a stale `VKN2` index is rejected at load, so rebuild
+after upgrading.
+
+**`FLUXA_KD_BUDGET` (env, optional).** A deployment-level default leaf budget,
+applied only when the script passes `budget<=0`. It caps the worst-case search
+cost without changing the script. Leave it **unset** for exact search — VKN3 is
+fast enough that the budget is no longer needed; set it only if you want a hard
+ceiling at the cost of approximate results on pathological queries.
+
+**Temporal helpers** (same module, used alongside the vectors):
+
+| Function | Returns | Description |
+|---|---|---|
+| `libv.dow(int Y, int M, int D)` | int | Day of week, Mon=0 … Sun=6 (proleptic Gregorian). |
+| `libv.daymin(int Y, int M, int D, int H, int Mi)` | int | Minutes since the civil epoch — subtract two results to get minutes between timestamps. |
+
 ---
 
 ## std.libdsp — DSP and Radar Math
@@ -1397,6 +1447,7 @@ max_body_bytes    = 65536  # hard cap 16MB
 max_header_pairs  = 16     # hard cap 128
 max_header_bytes  = 4096   # hard cap 65536
 queue_depth       = 256    # hard cap 4096
+workers           = 4      # manual mode (serve with false): MHD epoll thread-pool size
 # Auto-scaling pool (serve with true):
 min_threads       = 2      # hard cap 64
 max_threads       = 16     # hard cap 256
@@ -1423,6 +1474,23 @@ scale_down_idle   = 10     # idle seconds to trigger scale-down
 | `wserver.version()` | str | `"libmicrohttpd/x.x.x"` |
 
 **Return value convention:** `serve` and `accept` return an `int` > 0 on success, 0 on failure/timeout. Always check inside `danger {}`.
+
+**TCP_NODELAY.** Every accepted connection has Nagle disabled (via
+`MHD_OPTION_NOTIFY_CONNECTION`). Without it, MHD's separate header/body writes can
+stall on the peer's delayed-ACK timer — a low-median / ~40–100 ms-tail profile
+that only appears over a real (bridged) network behind a reverse proxy, never on
+loopback. On startup the server logs one self-verifying line so you can confirm
+the running build inside a container (`docker logs … | grep wserver`):
+
+```
+[wserver] MHD started: thread_pool=<N>, TCP_NODELAY=on (build OK)
+```
+
+**`workers` (manual mode).** Sets the MHD epoll thread-pool size when you call
+`serve(port, false)`. On a fractional-CPU deployment this is a real tail-latency
+lever: too many runnable threads on a sub-core budget burn the CFS quota on
+context switches and produce periodic throttle stalls (p99 jumps to roughly the
+CFS period). A small pool — 2 to 4 — keeps p99 low; the default is 4.
 
 ### Manual mode — user controls workers
 

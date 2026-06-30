@@ -76,3 +76,26 @@ time ./fluxa run tests/bench_block.flx
 - **Sprint 7 (Hot Reload):** Must ensure that `prst` (persistence) lookups only happen during the "reload" phase, never inside the `vm_run` execution loop.
 - **Sprint 9 (Threading):** Avoiding mutex contention in the `BlockInstance` scope when multiple threads access the same object.
 
+
+---
+
+## Stdlib HTTP services — sub-core tail latency (libmicrohttpd)
+
+Findings from a 3M-vector classification service (`std.libv` KNN + `std.wserver`)
+benchmarked at 900 req/s under a ≤1-CPU / ≤350 MB budget. The lesson is that at a
+fractional-CPU budget, **P99 is a topology problem, not a compute problem** —
+compute (VKN3 KNN + HTTP) is sub-millisecond; the tail lived everywhere else, and
+isolation testing (stripping one layer at a time) found it.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Bimodal P99 (~23 ms stragglers) | split-plane KNN bound collapses in 14-d | VKN3 per-node AABB + best-first (exact, ~80× worst case) |
+| P99 ≈ CFS period (~100 ms), CPU not saturated | too many MHD threads burn the CFS quota on context switches | small thread pool (`workers = 2–4`) |
+| Low median, ~40–100 ms tail only over a bridged network | MHD leaves Nagle on; peer delayed-ACK | TCP_NODELAY on every connection |
+| Full-stack P99 ≫ single-instance P99 | reverse proxy CPU-bound at its limit (queueing) | give the proxy a larger CPU share |
+
+Method that worked: reproduce the resource cap locally (cgroup `cpu.max`), drive
+open-loop keep-alive load, and **isolate** — remove the proxy, remove the CPU
+limit, swap one knob at a time — rather than tuning blind. The decisive datapoint
+was identical images differing only by the proxy: ~1.5 ms without it, ~80 ms with
+it, which located the bottleneck unambiguously.

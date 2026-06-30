@@ -1,6 +1,61 @@
 # Fluxa-lang Changelog
 
-## v0.19.2 — std.cache eviction + capacity (current)
+## v0.20.0 — exact KNN index (VKN3) + wserver TCP_NODELAY (current)
+
+Two stdlib changes driven by a high-throughput vector-search service (3M-vector
+fraud scoring at 900 req/s under a sub-core budget). The runtime is unchanged —
+this is purely a stdlib change.
+
+### perf(stdlib): `std.libv` VKN3 nearest-neighbor index — per-node AABB + best-first exact search
+
+The KNN index now stores a 14-dimensional axis-aligned bounding box (AABB) on
+every tree node and searches best-first with full box-distance pruning. The old
+split-plane bound prunes on a single dimension and collapses in 14-d: atypical
+("off-manifold") queries degenerated to scanning ~60% of the 3M points (~23 ms
+each), and a handful of those per second saturated a fractional core and
+generated the entire P99 tail. The box bound prunes across all 14 dimensions and
+visits children nearest-box-first, keeping the search **exact** (identical
+results) while cutting the worst case ~80×.
+
+Adds `build_index.c` (the offline VKN3 builder) and `vk_count_stats` (exposes
+leaves visited). `kd_count`/`kd_score` gain an optional `budget` argument plus an
+`FLUXA_KD_BUDGET` env default that caps leaf visits; both are now optional —
+exact search is fast enough that the budget is no longer required.
+
+The on-disk format magic bumped to `VKN3` (was `VKN2`); a stale index is rejected
+at load, so rebuild with `build_index` after upgrading.
+
+| 3M refs, per query | VKN2 (old) | VKN3 (new) |
+|---|---|---|
+| typical (near-manifold), exact | 0.24 ms | 0.20 ms |
+| worst (off-manifold), exact | ~23 ms | ~0.29 ms |
+
+### perf(stdlib): `std.wserver` sets TCP_NODELAY on every connection
+
+MHD left Nagle enabled, so the server's separate header/body writes could stall
+on the peer's delayed-ACK timer — a low-median / ~40–100 ms-tail profile that
+only shows up over a real (bridged) network behind a reverse proxy, never on
+loopback. The server now disables Nagle on each accepted connection via
+`MHD_OPTION_NOTIFY_CONNECTION`, and logs one self-verifying line at startup:
+`[wserver] MHD started: thread_pool=N, TCP_NODELAY=on (build OK)` — handy for
+confirming the running build inside a container.
+
+### docs: document `std.libv` KNN/temporal API and the `[libs.wserver] workers` key
+
+`kd_load` / `kd_ready` / `kd_count` / `kd_score` / `dow` / `daymin` and the
+manual-mode `workers` thread-pool size shipped but were undocumented; both are
+now in STDLIB.md.
+
+### Deployment note — sub-core tail latency
+
+On a fractional-CPU budget, server P99 is dominated by topology, not compute.
+Keep the MHD thread pool small (`workers = 2–4`) so the CFS quota is not burned
+on context switches, and give a fronting reverse proxy enough CPU that it does
+not become the serialization point. With VKN3, compute (KNN + HTTP) is
+sub-millisecond; in a measured 3M-vector / 900 req/s service the residual tail
+was the proxy's CPU share, not the Fluxa server.
+
+## v0.19.2 — std.cache eviction + capacity
 
 The cache implementation in v0.19 silently dropped inserts once all 8 probe slots in a key's natural shard were taken. Under sustained high-cardinality workloads — HTTP services with UUID-keyed records, in particular — this meant the cache filled in the first few hundred POSTs and then **stopped accepting new entries entirely**. Every subsequent GET missed cache and went to the backing database, saturating the worker pool and producing pathological P99 latency.
 
