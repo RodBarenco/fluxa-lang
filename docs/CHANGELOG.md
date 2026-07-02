@@ -1,6 +1,23 @@
 # Fluxa-lang Changelog
 
-## v0.20.0 — exact KNN index (VKN3) + wserver TCP_NODELAY (current)
+## v0.21.0 — std.flxthread batch spawn (current)
+
+### feat(stdlib): `ft.new` batch form — spawn N named worker threads in one call
+
+`ft.new("w", 16, "worker", srv)` spawns 16 global-function threads named
+`w1`..`w16` (1-indexed), each running `worker(srv)` — replacing sixteen
+`ft.new("w1", "worker", srv)` … lines. The form is selected purely by the type
+of the second argument (`int` = batch, `string` = single global fn, Block =
+method), so it coexists with the existing forms with no new syntax and no
+lexer/parser/runtime change — it is a single added branch in the `ft.new`
+dispatch that returns before the single-thread allocation. A numeric *name* like
+`ft.new("w10", "worker", srv)` is unaffected (`"w10"` is the name in the first
+slot; the second argument is still the string `"worker"`). Count is bounded to
+`1..FLUXA_THREAD_MAX`; the same `max_msg_args` and arity checks apply to the
+trailing arguments. Adds 6 tests (spawn count + 1-indexed names, arg passing,
+numeric-name coexistence, out-of-range/unknown-fn/arity errors).
+
+## v0.20.0 — exact KNN index (VKN3) + wserver TCP_NODELAY
 
 Two stdlib changes driven by a high-throughput vector-search service (3M-vector
 fraud scoring at 900 req/s under a sub-core budget). The runtime is unchanged —

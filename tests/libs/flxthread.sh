@@ -581,8 +581,109 @@ FLX
 out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
 echo "$out" | grep -q "^10$" && pass "toml_max_msg_args_4" || fail "toml_max_msg_args_4" "10" "$out"
 
+# CASE 24: ft.new batch spawn — exact count + 1-indexed names (w1..wN)
+# DETERMINISTIC: threads sleep so thread_count/active see them all alive.
+P="$WORK_DIR/p24"; setup "$P" "batch_spawn"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+import std time
+fn worker() nil { time.sleep(60) }
+ft.new("w", 4, "worker")
+int c = ft.thread_count()
+bool w1 = ft.active("w1")
+bool w4 = ft.active("w4")
+bool w5 = ft.active("w5")
+ft.resolve_all()
+print(c)
+print(w1)
+print(w4)
+print(w5)
+FLX
+out=$(timeout 8s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+if echo "$out" | sed -n '1p' | grep -q "^4$" && \
+   echo "$out" | sed -n '2p' | grep -q "true" && \
+   echo "$out" | sed -n '3p' | grep -q "true" && \
+   echo "$out" | sed -n '4p' | grep -q "false"; then
+    pass "batch_spawn_count_and_names"
+else
+    fail "batch_spawn_count_and_names" "4 / true / true / false" "$out"
+fi
+
+# CASE 25: ft.new batch passes the trailing args to every spawned thread
+P="$WORK_DIR/p25"; setup "$P" "batch_args"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+prst int result = 0
+fn worker(int n) nil { result = n }
+ft.new("w", 3, "worker", 7)
+ft.resolve_all()
+print(result)
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^7$" && pass "batch_passes_args" || fail "batch_passes_args" "7" "$out"
+
+# CASE 26: numeric single name keeps the unary path (args[1] is a string, not int)
+P="$WORK_DIR/p26"; setup "$P" "numeric_name"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+prst int result = 0
+fn worker() nil { result = 42 }
+ft.new("w10", "worker")
+ft.resolve_all()
+print(result)
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "^42$" && pass "numeric_name_unary_path" || fail "numeric_name_unary_path" "42" "$out"
+
+# CASE 27: batch count out of range (0) is rejected via err
+P="$WORK_DIR/p27"; setup "$P" "batch_range"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+fn worker() nil { }
+danger {
+    ft.new("w", 0, "worker")
+}
+if err != nil { print("range error") }
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "range error" && pass "batch_count_range" || fail "batch_count_range" "range error" "$out"
+
+# CASE 28: batch with an unknown function is rejected via err
+P="$WORK_DIR/p28"; setup "$P" "batch_nofn"
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+danger {
+    ft.new("w", 3, "nonexistent")
+}
+if err != nil { print("fn error") }
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "fn error" && pass "batch_fn_not_found" || fail "batch_fn_not_found" "fn error" "$out"
+
+# CASE 29: batch arity mismatch (fn has 1 param, called with 2 args) via err
+P="$WORK_DIR/p29"; setup "$P" "batch_arity"
+cat > "$P/fluxa.toml" << 'TOML'
+[project]
+name = "batch_arity"
+entry = "main.flx"
+[libs]
+std.flxthread = "1.0"
+[libs.flxthread]
+max_msg_args = 4
+TOML
+cat > "$P/main.flx" << 'FLX'
+import std flxthread as ft
+fn worker(int a) nil { }
+danger {
+    ft.new("w", 3, "worker", 1, 2)
+}
+if err != nil { print("arity error") }
+FLX
+out=$(timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "arity error" && pass "batch_arity_mismatch" || fail "batch_arity_mismatch" "arity error" "$out"
+
 echo "────────────────────────────────────────────────────────────────────"
-total=23
+total=29
 if [ "$FAILS" -eq 0 ]; then
     echo "  Results: ${total} passed, 0 failed"
     echo "  → std.flxthread: PASS"

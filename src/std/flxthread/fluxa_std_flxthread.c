@@ -258,6 +258,72 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         NEED(2);
         GET_STR(0, tname);
 
+        /* ── batch form: ft.new(prefix, count, "fn" [, args...]) ─────────────
+         * Spawns <count> global-function threads named prefix1 .. prefixN
+         * (1-indexed, matching hand-written w1..wN). Disambiguated purely by
+         * TYPE: args[1] is an int here, a string in the unary global-fn form
+         * ft.new("w1","worker",srv), and a Block in ft.new("t",inst,"m"). So a
+         * numeric NAME like ft.new("w10","worker") stays in args[0] and takes
+         * the unary path unchanged. This branch returns before the single
+         * thread is allocated, so the existing paths are untouched. */
+        if (args[1].type == VAL_INT) {
+            long bcount = args[1].as.integer;
+            if (bcount < 1 || bcount > FLUXA_THREAD_MAX) {
+                snprintf(errbuf, sizeof(errbuf),
+                    "ft.new: batch count %ld out of range (1..%d)",
+                    bcount, FLUXA_THREAD_MAX);
+                FT_ERR(errbuf);
+            }
+            if (argc < 3 || args[2].type != VAL_STRING || !args[2].as.string)
+                FT_ERR("ft.new: batch form is ft.new(prefix, count, \"fn\" [, args...])");
+            const char *bfn = args[2].as.string;
+            Value bfv; bfv.type = VAL_NIL;
+            scope_table_get(rt->global_table, bfn, &bfv);
+            if (bfv.type != VAL_FUNC) {
+                snprintf(errbuf, sizeof(errbuf),
+                    "ft.new: function '%s' not found", bfn);
+                FT_ERR(errbuf);
+            }
+            ASTNode *bnode = bfv.as.func;
+            int bextra   = argc - 3;   /* args beyond (prefix, count, fn) */
+            int bcfg_max = rt->config.ft_max_msg_args > 0
+                           ? rt->config.ft_max_msg_args : 2;
+            if (bextra > bcfg_max) {
+                snprintf(errbuf, sizeof(errbuf),
+                    "ft.new: too many arguments (%d), max_msg_args=%d",
+                    bextra, bcfg_max);
+                FT_ERR(errbuf);
+            }
+            if (bextra > bnode->as.func_decl.param_count) {
+                snprintf(errbuf, sizeof(errbuf),
+                    "ft.new: function '%s' has %d param(s), got %d arg(s)",
+                    bfn, bnode->as.func_decl.param_count, bextra);
+                FT_ERR(errbuf);
+            }
+            char bname[64];   /* matches FlxThread.name[64] — canonical strncpy size */
+            for (long bi = 1; bi <= bcount; bi++) {
+                snprintf(bname, sizeof(bname), "%s%ld", tname, bi);
+                if (flx_find_thread(bname)) {
+                    snprintf(errbuf, sizeof(errbuf),
+                        "ft.new: thread name '%s' already active", bname);
+                    FT_ERR(errbuf);
+                }
+                FlxThread *bt = flx_alloc_thread(bname);
+                if (!bt) FT_ERR("ft.new: max thread count reached");
+                FlxRunnerArg *bra = (FlxRunnerArg *)malloc(sizeof(FlxRunnerArg));
+                if (!bra) { bt->active = 0; FT_ERR("ft.new: out of memory"); }
+                bt->is_block = 0;
+                bt->fn_node  = bnode;
+                bt->fn_argc  = bextra;
+                for (int _ai = 0; _ai < bextra; _ai++)
+                    bt->fn_args[_ai] = args[3 + _ai];
+                bra->thread = bt; bra->rt = rt; bra->inst = NULL;
+                pthread_create(&bt->tid, NULL, flx_fn_runner, bra);
+                pthread_detach(bt->tid);
+            }
+            return flxt_nil();
+        }
+
         if (flx_find_thread(tname))
             FT_ERR("thread name already active — ft.resolve_all() first");
 

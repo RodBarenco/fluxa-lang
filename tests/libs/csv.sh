@@ -212,9 +212,11 @@ prst dyn cur    = csv.open("$BIGCSV")
 prst int total  = 0
 danger {
     dyn chunk = csv.next(cur, 20)
-    while len(chunk) > 0 {
-        total = total + len(chunk)
+    int n = len(chunk)
+    while n > 0 {
+        total = total + n
         chunk = csv.next(cur, 20)
+        n = len(chunk)
     }
     csv.close(cur)
 }

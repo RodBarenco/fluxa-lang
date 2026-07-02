@@ -717,6 +717,7 @@ import std flxthread as ft
 |---|---|---|
 | `ft.new("name", fn_str)` | No | Spawn global function as thread |
 | `ft.new("name", fn_str, arg1, ...)` | No | Spawn global function with arguments (up to `max_msg_args`) |
+| `ft.new("prefix", n, fn_str[, arg1, ...])` | No | Batch: spawn `n` threads named `prefix1`..`prefixN`, each running `fn_str` with the given args |
 | `ft.new("name", instance, "method")` | No | Spawn Block method as thread |
 | `ft.resolve_all()` | Yes | Wait for all threads. Syncs prst pool. |
 | `ft.active("name")` | No | True if thread is still running |
@@ -755,6 +756,25 @@ max_msg_args = 2    # max arguments for ft.new/ft.message/ft.await
 
 Exceeding `max_msg_args` pushes a clear error to `err`. Arity mismatch
 (more args than function parameters) is caught at `ft.new` time.
+
+**Batch spawn.** `ft.new("w", 16, "worker", srv)` spawns 16 global-function
+threads named `w1`..`w16` (1-indexed), each running `worker(srv)` — a drop-in
+replacement for sixteen `ft.new("w1", "worker", srv)` … `ft.new("w16", ...)`
+lines. The batch form is selected purely by the **type** of the second argument:
+an `int` (the count) means batch, a string means the single global-function
+form, and a Block instance means the method form. A numeric *name* such as
+`ft.new("w10", "worker", srv)` is therefore unaffected — `"w10"` is the name in
+the first slot, the string `"worker"` is still the second argument, so it takes
+the single form as before. The count must be in `1..FLUXA_THREAD_MAX`; the same
+`max_msg_args` and arity checks apply to the trailing arguments.
+
+```fluxa
+// these two are equivalent:
+ft.new("w1", "worker", srv)
+ft.new("w2", "worker", srv)   // ... through w16
+// ⇕
+ft.new("w", 16, "worker", srv)
+```
 
 > **Thread cap:** the runtime tracks a compile-time hard limit on
 > concurrently-active threads (`FLUXA_THREAD_MAX`, currently 64). This is

@@ -269,7 +269,8 @@ echo "$out" | grep -q "^true$" \
 P=$(setup "t11_duplicate_name")
 cat > "$P/main.flx" << 'FLX'
 import std flxthread as ft
-Block W { fn run() nil { int i = 0  while i < 1000 { i = i + 1 } } }
+import std time
+Block W { fn run() nil { int i = 0  while i < 10 { i = i + 1  time.sleep(20) } } }
 Block w1 typeof W
 Block w2 typeof W
 danger {

@@ -152,7 +152,9 @@ static inline FlxThread *flx_alloc_thread(const char *name) {
         if (!g_flx_registry.threads[i].active) {
             FlxThread *t = &g_flx_registry.threads[i];
             memset(t, 0, sizeof(*t));
-            strncpy(t->name, name, sizeof(t->name)-1);
+            size_t _nl = strnlen(name, sizeof(t->name)-1);
+            memcpy(t->name, name, _nl);
+            t->name[_nl] = '\0';
             t->active = 1;
             pthread_mutex_init(&t->mb_mu, NULL);
             pthread_mutex_init(&t->drain_mu, NULL);
@@ -168,7 +170,9 @@ static inline FlxThread *flx_alloc_thread(const char *name) {
     }
     FlxThread *t = &g_flx_registry.threads[g_flx_registry.count++];
     memset(t, 0, sizeof(*t));
-    strncpy(t->name, name, sizeof(t->name)-1);
+    size_t _nl = strnlen(name, sizeof(t->name)-1);
+    memcpy(t->name, name, _nl);
+    t->name[_nl] = '\0';
     t->active = 1;
     pthread_mutex_init(&t->mb_mu, NULL);
     pthread_mutex_init(&t->drain_mu, NULL);
