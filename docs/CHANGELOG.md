@@ -1,6 +1,42 @@
 # Fluxa-lang Changelog
 
-## v0.21.0 — std.flxthread batch spawn (current)
+## v0.22.0 — std.sound (current)
+
+### feat(stdlib): `std.sound` — audio playback (wav/mp3/flac) + sine tone generation
+
+New lib following the dual-backend pattern. Default backend is an
+API-complete stub with no external deps and no audio device requirement:
+it tracks engine/sound state (loaded, playing, paused, volume), so the
+play/stop/pause/resume/is_playing state machine is fully testable
+headless and in CI. `make FLUXA_SOUND_MINIAUDIO=1 build` enables the
+real backend via a vendored single-header miniaudio
+(`vendor/miniaudio.h`, not committed — same policy as the optional
+Raylib backend); miniaudio resolves the OS audio subsystem at runtime
+(ALSA/PulseAudio/JACK, WASAPI, CoreAudio, sndio, AAudio), so the wrapper
+is OS-portable with zero code changes. Not applicable to bare-metal
+targets — on RP2040/ESP32 set `std.sound = false` for zero code size.
+
+Design follows the validated `std.wserver` pattern: opaque `int` handles
+(engine + per-engine sound slots, mutex-guarded tables), no `dyn`
+cursors, so Block methods interoperate with plain `int` parameters.
+Limits: 4 engines, 64 sounds/engine. API: `init`, `close`, `load`,
+`unload`, `play` (always from the start), `stop` (rewinds), `pause`
+(keeps position), `resume`, `is_playing`, `volume` (accepts `float` or
+`int`, range-checked 0.0–1.0), `tone` (sine, 1–20000 Hz, ≤10 s —
+blocking on miniaudio, immediate on stub), `version`. miniaudio's
+implementation TU (`fluxa_std_sound_ma.c`, added via
+`FLUXA_EXTRA_SRCS`) relaxes diagnostics for the vendored header only;
+Fluxa sources remain zero-warning. Adds 15 tests (state-machine cycle,
+handle validation in and out of `danger`, double-close, unload
+invalidation, volume/tone range checks). Full suite 81/81 green.
+
+Doc note added to CREATING_LIBS.md: the first `make build` after adding
+a brand-new lib parses the previous `lib_registry_flags.mk` (Make
+`-include` happens at parse time, the generator runs inside the build
+rule) — run `make build` twice when a lib is created; subsequent builds
+are unaffected.
+
+## v0.21.0 — std.flxthread batch spawn
 
 ### fix(vm): `OP_MOVE` keeps the GC slot⇒pin invariant — `dyn` reassigned in a compiled `while` no longer freed while live
 

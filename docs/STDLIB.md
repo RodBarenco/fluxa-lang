@@ -1,7 +1,7 @@
 # Fluxa Standard Library
 **v0.19.2**
 
-Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`.
+Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
 
 ---
 
@@ -1829,6 +1829,79 @@ wserver.stop(srv)
 - `query_params` validates that `n ≤ arr.size` and each element is str before touching libpq.
 - Out-of-bounds row/col in `get*` and `is_null` produces a runtime error with line number.
 - Integration tests (real PostgreSQL in Docker): `bash tests/integration/pg/run.sh`
+
+---
+
+## std.sound — Audio Playback and Tones
+
+Audio playback (wav/mp3/flac) and sine tone generation.
+
+**Dual-backend:** stub (default, zero deps, no audio device — tracks
+engine/sound state so program logic is fully testable headless) or
+miniaudio (`make FLUXA_SOUND_MINIAUDIO=1`, requires `vendor/miniaudio.h`
+from https://github.com/mackron/miniaudio). miniaudio resolves the OS
+audio subsystem at runtime: ALSA/PulseAudio/JACK (Linux), WASAPI
+(Windows), CoreAudio (macOS), sndio (BSD), AAudio/OpenSL (Android).
+Not for bare-metal targets (RP2040/ESP32) — there set `std.sound = false`
+in `fluxa.libs` (zero code size) or use the stub.
+
+```toml
+[libs]
+std.sound = "1.0"
+```
+
+**Design:** opaque `int` handles (same pattern as `std.wserver`) — no
+`dyn` cursors, so Block methods can receive engine/sound handles as
+plain `int` parameters. Limits: 4 engines, 64 sounds per engine.
+
+Use plain `int eng` for the engine handle — **not `prst int`** (like
+wserver, the runtime would attempt to restore a dead OS handle after
+restart). All `load` calls (file IO) belong inside `danger {}`.
+
+| Function | Returns | Description |
+|---|---|---|
+| `sound.init()` | `int` | Create engine, returns handle |
+| `sound.close(eng)` | `nil` | Close engine, frees all its sounds |
+| `sound.load(eng, path)` | `int` | Load wav/mp3/flac, returns sound handle |
+| `sound.unload(eng, h)` | `nil` | Free a loaded sound |
+| `sound.play(eng, h)` | `bool` | Play from the start |
+| `sound.stop(eng, h)` | `nil` | Stop and rewind |
+| `sound.pause(eng, h)` | `nil` | Stop, keep position |
+| `sound.resume(eng, h)` | `nil` | Continue from paused position |
+| `sound.is_playing(eng, h)` | `bool` | Playback state |
+| `sound.volume(eng, h, v)` | `nil` | Per-sound volume, `float`\|`int` 0.0–1.0 |
+| `sound.tone(eng, freq_hz, ms)` | `bool` | Sine beep, 1–20000 Hz, ≤10000 ms |
+| `sound.version()` | `str` | Backend version |
+
+**Backend differences:** `tone()` blocks for the duration on miniaudio,
+returns immediately on the stub. Stub `load()` only checks the file is
+readable (no decode); stub `is_playing` reflects the play/stop/pause
+state machine, not real playback position.
+
+```fluxa
+import std sound
+import std time
+
+int eng = sound.init()
+
+danger {
+    int alarm = sound.load(eng, "alarm.wav")
+    sound.volume(eng, alarm, 0.8)
+    sound.play(eng, alarm)
+
+    while sound.is_playing(eng, alarm) {
+        time.sleep(50)
+    }
+
+    sound.tone(eng, 880, 200)     // confirmation beep
+    sound.unload(eng, alarm)
+}
+if err != nil {
+    print(err)
+}
+
+sound.close(eng)
+```
 
 ---
 

@@ -363,6 +363,15 @@ This automatically:
 
 The lib is automatically known to the parser (`import std mylib`) and dispatch (`mylib.fn()`).
 
+**Note — run `make build` twice for a brand-new lib.** Make evaluates
+`-include src/lib_registry_flags.mk` at parse time, but the registry
+generator runs inside the build rule. The first `make build` after
+creating a new lib therefore compiles with the *previous* flags file —
+`FLUXA_BUILDTIME_MYLIB` isn't set yet and the lib is silently absent
+from that binary (calls fail with "undefined identifier"). The second
+`make build` picks it up. Only lib *creation* is affected; every later
+build is normal.
+
 ---
 
 ## Dispatch chain — how it works now

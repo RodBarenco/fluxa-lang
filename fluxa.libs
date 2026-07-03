@@ -46,3 +46,4 @@ std.graph     = true    # 2D/3D graphics, input                (none) [Raylib op
 std.infer     = true    # local LLM inference, GGUF models     (none) [llama.cpp optional: make FLUXA_INFER_LLAMA=1]
 std.wserver   = true    # resilient HTTP server (thread pool)  libmicrohttpd-dev [stub if absent]
 std.pg        = true    # PostgreSQL client                    libpq-dev         [stub if absent]
+std.sound     = true    # audio playback + tone (wav/mp3/flac)  (none) [miniaudio optional: make FLUXA_SOUND_MINIAUDIO=1]

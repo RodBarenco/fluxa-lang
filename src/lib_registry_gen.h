@@ -82,6 +82,9 @@
 #ifdef FLUXA_STD_SERIAL
 #  include "std/serial/fluxa_std_serial.h"
 #endif
+#ifdef FLUXA_STD_SOUND
+#  include "std/sound/fluxa_std_sound.h"
+#endif
 #ifdef FLUXA_STD_SQLITE
 #  include "std/sqlite/fluxa_std_sqlite.h"
 #endif
@@ -252,6 +255,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "serial", "std.serial", "serial", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_SOUND
+    { "sound", "std.sound", "sound", fluxa_std_sound_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "sound", "std.sound", "sound", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_SQLITE
     { "sqlite", "std.sqlite", "sqlite", fluxa_std_sqlite_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -284,7 +292,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 29
+#define FLUXA_LIB_COUNT 30
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *
