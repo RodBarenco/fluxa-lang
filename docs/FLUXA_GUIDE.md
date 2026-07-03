@@ -6,13 +6,17 @@ A step-by-step reference for writing correct Fluxa programs. Read this before wr
 
 ## 1. The Mental Model
 
-Fluxa has three organizing ideas that everything else flows from:
+Fluxa's rules all flow from a small set of invariants. Internalize these seven before writing code:
 
-**Unique ownership.** Every value has exactly one owner. There is no shared mutable state between functions. Data flows through arguments and return values — nothing is shared implicitly.
+1. **Unique ownership.** Every value has exactly one owner. No value is accessed outside its scope. There is no shared mutable state between functions — data flows through arguments and return values only.
+2. **No global scope.** Variables declared at the top level belong to the program's execution context — they are not visible inside functions or Block methods. There is no free-variable capture, ever.
+3. **Everything is passed.** Every value a function or method uses arrives as an argument or parameter. If a worker needs a server handle and a DB connection, they are parameters.
+4. **No `dyn` inside a Block.** `dyn` lives at the program level and in functions — never as a Block field.
+5. **No `danger` inside a Block.** Error containment belongs to global functions and the program level.
+6. **`prst` is state that survives time.** A `prst` variable is simply marked to survive — hot reloads, Atomic Handover, runtime swap. It is how you make state explicit and durable; everything else dies and is reborn on each reload.
+7. **`err` is a ring buffer; `danger` contains runtime-killing errors.** Division by zero, overflow, failed IO — anything that would otherwise abort the runtime is captured by `danger {}` into the `err` ring. That is why all IO goes inside `danger`.
 
-**No global scope.** Variables declared at the top level of a program belong to that program's execution context — they are not accessible from inside functions or methods unless passed explicitly. Functions see only their parameters.
-
-**State that survives is explicitly marked.** Only `prst` variables survive hot reloads. Everything else dies and is reborn on each reload. This is a feature — it makes the boundary between ephemeral and persistent state visible in code.
+A practical consequence of rules 1–3: if a variable "isn't found" inside a function, the fix is never "make it global" (there is no global) — it is "pass it as a parameter".
 
 ---
 
@@ -363,6 +367,62 @@ print(err[1])    // previous error
 
 **`danger` is not permitted inside Block methods.** See section 7 Rule 2.
 
+### Three hard-won `danger` rules
+
+**Rule A — Never call a function that has its own `danger` from inside a `danger`.**
+
+Nested `danger` — entering a callee's `danger {}` while already inside the caller's — corrupts the containment depth: the inner block's exit closes containment for the outer block too, and the remaining "protected" operations run bare. The symptom is an abort or silent misbehavior in code that *looks* wrapped.
+
+```fluxa
+// WRONG — helper's danger nests inside the worker's danger
+fn read_row(int db) str {
+    danger { ... }        // inner danger
+    return ""
+}
+
+fn worker(int srv, int db) nil {
+    while !ft.should_stop() {
+        danger {
+            int req = wserver.accept(srv, 100)
+            str row = read_row(db)     // ERROR CLASS: nested danger
+        }
+    }
+}
+
+// CORRECT — all fallible logic inline, one danger per iteration
+fn worker(int srv, int db) nil {
+    while !ft.should_stop() {
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }
+        if req != 0 {
+            danger {
+                // query db, build reply — inline, single containment
+            }
+        }
+    }
+}
+```
+
+Helper functions with their own `danger` are fine — call them from *outside* any `danger`, as top-level orchestration.
+
+**Rule B — `err` is one ring buffer shared by all threads. Never check `err != nil` inside a threaded function.**
+
+Another thread's error lands in the same ring; a worker checking `err` will react to failures that are not its own. Inside any function that runs as a thread, communicate failure through **return values** (the `0` handle convention) and reserve `err != nil` checks for the top level of the program.
+
+```fluxa
+// top level — fine
+danger { srv = wserver.serve(9999, false) }
+if err != nil { print(err) }
+
+// inside a worker — WRONG: err may hold another thread's error
+// if err != nil { ... }
+// CORRECT: if req != 0 { ... }   — decide from return values
+```
+
+**Rule C — `danger` swallows `undefined variable` errors.**
+
+Because there is no global scope, a variable name that isn't a parameter is undefined inside a function — and inside `danger`, that error is *captured*, not printed. The block silently stops at the undefined reference. If a `danger` block "does nothing", the first suspect is a variable you forgot to pass as a parameter. Temporarily lift the code out of `danger` (or `print(err[0])` right after it) to surface the message.
+
 ---
 
 ## 10. Calling Standard Libraries
@@ -503,19 +563,66 @@ ft.new("t2", "process", conn2, 2)
 ft.resolve_all()
 ```
 
+**`ft.new` batch form (v0.21)** — spawn N identical workers in one call:
+
+```fluxa
+ft.new("w", 16, "worker", srv)   // spawns w1..w16, each running worker(srv)
+```
+
+The form is selected by the *type* of the second argument: `int` = batch count, `string` = single global-function thread, Block instance = method thread. A numeric *name* like `ft.new("w10", "worker", srv)` still works — `"w10"` is the name in the first slot. Count is bounded by `FLUXA_THREAD_MAX`; the same `max_msg_args` and arity checks apply.
+
 Configure the limit in `fluxa.toml`:
 ```toml
 [libs.flxthread]
 max_msg_args = 2    # default 2, hard cap 8
 ```
 
+### The threaded server-worker pattern
+
+The architecture that holds up under load (validated at 900+ req/s):
+
+1. **Open every external resource once, at the top level** — server socket, DB connections — each in its own `danger`, checked with `err != nil` (allowed here, and only here).
+2. **Pass the handles to workers as arguments** (`int` handles — they work everywhere, including as values a Block method can receive).
+3. **Workers loop on `accept` with a timeout**, decide from return values, and keep all fallible logic inline in one `danger` per request.
+
+```fluxa
+import std wserver
+import std flxthread as ft
+
+fn worker(int srv) nil {
+    while !ft.should_stop() {
+        int req = 0
+        danger { req = wserver.accept(srv, 100) }   // 100 ms timeout
+        if req != 0 {
+            str method = wserver.req_method(req)
+            str path   = wserver.req_path(req)
+            // route, then reply — all inline, one danger per fallible section
+            wserver.reply_json(req, 200, "{\"ok\":true}")
+            free(method)
+            free(path)
+        }
+    }
+}
+
+int srv = 0
+danger { srv = wserver.serve(9999, false) }   // false: no built-in dispatcher
+if err != nil { print(err) }
+
+ft.new("w", 16, "worker", srv)
+
+wserver.wait(srv)
+wserver.stop(srv)
+```
+
+**Do not** use the dispatcher form (`serve(port, true)` handing requests to a named function) when workers also need their own connections — opening resources like `pg.connect` inside worker functions runs into the nested-`danger` rule (section 9, Rule A). Pre-connect at the top level; pass handles in.
+
 ---
 
 ## 12. prst with External Resources
 
-External resources (connections, cursors, file handles) should be `prst` so they survive hot reloads in dev mode.
+There are two kinds of "resource" values, and they take opposite decisions on `prst`:
 
-**`dyn` cursors** (in-process state — CSV cursor, SQLite DB, JSON document, PID controller): use `prst dyn` at the program level.
+**In-process `dyn` cursors** (CSV cursor, SQLite DB, JSON document, PID controller, loaded model): these wrap state the runtime itself can carry across a hot reload. Use `prst dyn` at the program level.
 
 ```fluxa
 prst dyn db      = sqlite.open("data.db")   // SQLite connection cursor
@@ -523,17 +630,19 @@ prst dyn cursor  = csv.open("log.csv")      // CSV file cursor
 prst dyn model   = infer.load("model.gguf") // LLM model cursor
 ```
 
-**`int` handles** (external resources — PostgreSQL, wserver): use `prst int` at the program level.
+**OS-level `int` handles** (PostgreSQL connections, wserver sockets): use **plain `int`, not `prst`**, and (re)open them at startup.
 
 ```fluxa
-prst int pg_conn = 0
-prst int srv     = 0
+int pg_conn = 0
+int srv     = 0
 
 danger { pg_conn = pg.connect("host=localhost dbname=mydb user=fluxa password=s3cr3t") }
-danger { srv     = wserver.serve(8080) }
+danger { srv     = wserver.serve(8080, false) }
 ```
 
-**Never use `prst dyn` or `prst int` as Block fields for external resources.** External resource handles belong at the program level.
+Why: a `prst int srv` makes the persistence layer restore the old handle value on restart and the runtime then tries to resume a socket the OS already reclaimed — the visible symptom is `Address already in use` (or a dead DB handle) after a restart. Sockets and server-side connections cannot survive the process; the correct durable thing is the *startup code that recreates them*, not the handle number.
+
+**Never use `prst dyn` or `prst int` as Block fields for external resources.** Resource handles belong at the program level and are passed to functions and threads as arguments (section 11).
 
 ---
 
@@ -544,6 +653,18 @@ Long-running workers — HTTP request handlers, IoT sensor loops, polling agents
 ### The mental model
 
 Two value types carry heap data: `str` and `dyn`. Everything else (`int`, `float`, `bool`) is by-value.
+
+For `dyn`, the GC invariant is: **every variable slot holds exactly one strong reference (pin) to its `dyn`**. Lib-returned dyns start unpinned (collectible orphans); storing one in a variable pins it, overwriting the variable unpins the old value. The GC is minimalist — it sweeps *unpinned* dyns at safe points only (loop back-edges, end of `danger`), and manual `free()` / lib release functions remain the preferred path for large or long-lived data. As of v0.21 this invariant holds identically in the tree evaluator and the bytecode VM, so the canonical chunked-cursor loop is safe as written:
+
+```fluxa
+dyn chunk = csv.next(cur, 1000)
+while len(chunk) > 0 {          // reading chunk here is safe — the slot pins it
+    // ... process ...
+    chunk = csv.next(cur, 1000) // old chunk unpinned → swept; new one pinned
+}
+```
+
+(Computing `int n = len(chunk)` once per iteration is still a fine micro-idiom — it just isn't required for correctness.)
 
 **The runtime auto-releases heap data in every common pattern:**
 
@@ -673,6 +794,12 @@ A quick checklist of the most frequent errors:
 | `int res = pg.query(conn, sql)` outside `danger` | pg operations can fail | Wrap in `danger {}` |
 | `if res != nil { ... }` for int handles | pg/wserver return `int`, not `dyn` | `if res != 0 { ... }` |
 | Passing `dyn` cursor as Block field | `dyn` not valid in Block | Keep cursor at program level, pass as method arg |
+| Calling a helper that contains `danger` from inside a `danger` | Nested containment closes early — remaining "protected" code runs bare | Inline the fallible logic; call helpers with `danger` only from outside any `danger` (§9 Rule A) |
+| `if err != nil { ... }` inside a worker/thread function | `err` is one ring shared by all threads — you react to other threads' errors | Decide from return values (`req != 0`); check `err` only at top level (§9 Rule B) |
+| A `danger` block that "does nothing" | It captured an `undefined variable` error — a name you forgot to pass as a parameter | Pass the variable explicitly; `print(err[0])` after the block to see the message (§9 Rule C) |
+| `prst int srv` / `prst int conn` for sockets or DB connections | Persistence restores a dead OS handle on restart — `Address already in use` | Plain `int`, reopen at startup; `prst` is for in-process `dyn` cursors (§12) |
+| `serve(port, true)` dispatcher + opening connections inside workers | Worker-side `pg.connect` hits the nested-`danger` rule | `serve(port, false)` + `ft.new("w", N, "worker", srv, db)` with pre-connected handles (§11) |
+| Sixteen `ft.new("w1", ...)` … `ft.new("w16", ...)` lines | Verbose and error-prone | Batch form: `ft.new("w", 16, "worker", srv)` (§11) |
 | Forgot `free(p1); free(p2); ...` on a `strings.concat` chain in a worker | Each intermediate accumulates over millions of iterations | Free each piece after `reply` — see §12.5 |
 | `free(some_prst_var)` | `prst` belongs to the persistence layer, not the slot | Mutate the value; the pool tracks it |
 | `free(s)` where `s` came from `cache.arena_str` | Arena strings are bulk-released | Use `cache.arena_reset(arena)` |

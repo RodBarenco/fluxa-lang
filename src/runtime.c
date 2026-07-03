@@ -805,6 +805,23 @@ static BlockInstance *resolve_instance(Runtime *rt, const char *owner_name) {
 /* Runs GC sweep and (in thread clones) processes the mailbox.
  * The lib (flxthread) knows nothing about this — it registers a mailbox
  * and the thread runtime calls its own processing naturally here.           */
+/* ── vm_store_callback — called by OP_MOVE on variable-register stores ──── */
+/* Mirrors rt_set's GC protocol for stores performed by the VM: unpin the
+ * dyn being overwritten, pin the dyn being stored (slot=>pin invariant,
+ * "pin_count > 0 = referenced by at least one scope"). Without this, a dyn
+ * assigned inside a compiled while loop stays at pin_count 0 and the
+ * back-edge gc_sweep frees it while the variable still holds it (UAF).
+ * Self-move (same dyn on both sides) is a no-op to keep counts balanced. */
+static void vm_store_callback(void *rt_opaque, Value *slot, Value *incoming) {
+    Runtime *rt = (Runtime *)rt_opaque;
+    if (!rt) return;
+    FluxaDyn *old_d = (slot->type     == VAL_DYN) ? slot->as.dyn     : NULL;
+    FluxaDyn *new_d = (incoming->type == VAL_DYN) ? incoming->as.dyn : NULL;
+    if (old_d == new_d) return;
+    if (old_d) gc_unpin(&rt->gc, old_d);
+    if (new_d) gc_pin(&rt->gc, new_d);
+}
+
 static void vm_tick_callback(void *rt_opaque) {
     Runtime *rt = (Runtime *)rt_opaque;
     if (!rt) return;
@@ -1744,7 +1761,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                     ? vm_tick_callback : NULL;
                 vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size,
                        rt->cancel_flag, vm_call_callback, rt, tick,
-                       vm_get_field_callback, vm_set_field_callback);
+                       vm_get_field_callback, vm_set_field_callback,
+                       vm_store_callback);
                 chunk_free(&chunk);
                 /* Sprint 7: after VM, sync prst vars from rt->stack back to
                  * pool and global_table. The VM writes rt->stack[offset]

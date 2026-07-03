@@ -554,7 +554,8 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
            void             *rt_opaque,
            vm_tick_cb_t      tick_cb,
            vm_get_field_cb_t get_field_cb,
-           vm_set_field_cb_t set_field_cb) {
+           vm_set_field_cb_t set_field_cb,
+           vm_store_cb_t     store_cb) {
     (void)scope;
 
     Instruction *ip  = c->code;
@@ -586,7 +587,17 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
     NEXT();
 
     L_LOADK: { R[i_a] = c->constants[i_b]; NEXT(); }
-    L_MOVE:  { R[i_a] = R[i_b]; NEXT(); }
+    L_MOVE:  {
+        /* Variable-register store (dst < 128 = param/local band; temps live
+         * at >= 128). When a VAL_DYN is written over or written in, delegate
+         * to store_cb so the runtime keeps the slot=>pin GC invariant, same
+         * as rt_set does on the evaluator path. Two type compares for the
+         * common int/float/str case — no callback, no extra cost. */
+        if (store_cb && i_a < 128 &&
+            (R[i_a].type == VAL_DYN || R[i_b].type == VAL_DYN))
+            store_cb(rt_opaque, &R[i_a], &R[i_b]);
+        R[i_a] = R[i_b]; NEXT();
+    }
 
     L_ADD: {
         Value *l = &R[i_b], *r = &R[i_c];
@@ -690,7 +701,12 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         Instruction *instr = ip++;
         switch (instr->op) {
             case OP_LOADK: R[instr->a] = c->constants[instr->b]; break;
-            case OP_MOVE:  R[instr->a] = R[instr->b]; break;
+            case OP_MOVE:
+                /* Same slot=>pin GC invariant as the computed-goto L_MOVE. */
+                if (store_cb && instr->a < 128 &&
+                    (R[instr->a].type == VAL_DYN || R[instr->b].type == VAL_DYN))
+                    store_cb(rt_opaque, &R[instr->a], &R[instr->b]);
+                R[instr->a] = R[instr->b]; break;
             case OP_ADD: {
                 Value *l = &R[instr->b], *r = &R[instr->c];
                 if (l->type==VAL_INT && r->type==VAL_INT) {

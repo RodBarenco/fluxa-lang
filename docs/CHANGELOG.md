@@ -2,6 +2,31 @@
 
 ## v0.21.0 — std.flxthread batch spawn (current)
 
+### fix(vm): `OP_MOVE` keeps the GC slot⇒pin invariant — `dyn` reassigned in a compiled `while` no longer freed while live
+
+Second instance of the bug class fixed earlier in `rt_set` (see *"symmetric
+pin/unpin of VAL_DYN slots in rt_set"* below): the invariant **"every slot
+holds exactly one strong reference to its VAL_DYN"** was maintained by the
+evaluator but not by the bytecode VM. `chunk = csv.next(...)` inside a
+compiled `while` stores the returned dyn via a bare `R[a] = R[b]` `OP_MOVE`,
+leaving it at `pin_count 0`; the back-edge `gc_sweep` (`vm_tick_callback`)
+then frees it while the variable still references it. Any condition-position
+read of the variable in the next iteration is a heap-use-after-free — the
+canonical docs pattern `while len(chunk) > 0 { … chunk = csv.next(…) }` hung
+non-deterministically (~30% at `-O2`; deterministic under ASan). Producer-
+independent (reproduced with `std.json2`); the same code forced through the
+evaluator ran clean.
+
+Fix keeps the VM runtime-agnostic: new `vm_store_cb_t` callback on `vm_run`;
+`L_MOVE` (and the non-GCC fallback) delegates to it only when the destination
+is a variable register (`< 128`) and a `VAL_DYN` is involved — two type
+compares otherwise, no cost. `vm_store_callback` in `runtime.c` mirrors
+`rt_set`: unpin the overwritten dyn, pin the stored one, self-move no-op.
+Orphan collection at the back-edge is unchanged, as is manual `free()`.
+Validated: ASan 12/12 clean on the repro; peak RSS flat on a 200k-line chunked
+scan (11.6 MB, matching the len-once pattern); `make bench` within noise of
+baseline on all three benches; csv ×5, flxthread 29/29, full suite2 green.
+
 ### feat(stdlib): `ft.new` batch form — spawn N named worker threads in one call
 
 `ft.new("w", 16, "worker", srv)` spawns 16 global-function threads named

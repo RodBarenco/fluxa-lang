@@ -174,12 +174,22 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
                 vm_set_field_cb_t set_field_cb,
                 void             *rt_opaque);
 
+/* Called by OP_MOVE when writing to a variable register (dst < 128, the
+ * param/local band) and either the old slot value or the incoming value is
+ * a VAL_DYN. Lets the runtime keep the GC slot=>pin invariant (rt_set
+ * semantics: unpin the overwritten dyn, pin the stored one) for stores
+ * performed by the VM. Without it, a dyn assigned inside a compiled loop
+ * has pin_count 0 and the back-edge gc_sweep frees it while the variable
+ * still references it (use-after-free). May be NULL (no dyn tracking). */
+typedef void (*vm_store_cb_t)(void *rt_opaque, Value *slot, Value *incoming);
+
 int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
            volatile int *cancel_flag,
            vm_call_cb_t      call_cb,
            void             *rt_opaque,
            vm_tick_cb_t      tick_cb,
            vm_get_field_cb_t get_field_cb,
-           vm_set_field_cb_t set_field_cb);
+           vm_set_field_cb_t set_field_cb,
+           vm_store_cb_t     store_cb);
 
 #endif /* FLUXA_BYTECODE_H */
