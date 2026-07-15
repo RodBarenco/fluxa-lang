@@ -71,6 +71,40 @@ time ./fluxa run tests/bench_block.flx
 
 ---
 
+## Idiomatic consequence: put the loop INSIDE the Block method
+
+The benchmarks above have a direct style implication. Because local variables inside
+a method resolve to stack offsets and a loop that only touches locals triggers the
+Bytecode VM (Scenario 1), the fast path is reached when the **loop lives inside the
+method**. The anti-pattern is an external function that calls a one-step method each
+iteration:
+
+```fluxa
+// IDIOMATIC — one call; the loop runs inside on the VM fast path
+Block Sim {
+    prst int total = 0
+    fn run(int n) nil {
+        int i = 0
+        while i < n { total = total + i  i = i + 1 }   // locals → VM
+    }
+}
+sim.run(1000000)
+
+// ANTI-PATTERN — thousands of method dispatches (AST slow path per call),
+// plus a Block-copy per call if the instance is passed as an argument
+fn run_outside(int n) nil {
+    int i = 0
+    while i < n { sim.bump()  i = i + 1 }
+}
+```
+
+Give the Block a method that does the whole batch (`run(n)`, `add_batch(n)`) and
+call it once. Do not expose a single-step mutator to be hammered from an outer loop:
+each call crosses the method-call boundary (Scenario 2, AST slow path) and, if the
+Block is passed as an argument, pays the instance copy every iteration.
+
+---
+
 ## Future Performance Hazards
 
 - **Sprint 7 (Hot Reload):** Must ensure that `prst` (persistence) lookups only happen during the "reload" phase, never inside the `vm_run` execution loop.

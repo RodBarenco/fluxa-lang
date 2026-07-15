@@ -19,9 +19,13 @@ All stdlib libs share the same design contract:
 
 **External resources use opaque int handles.** Libs that manage external resources (connections, servers, files) return `int` handles — positive integers that index into a fixed table inside the lib's C layer. Zero is always invalid. Handles are not pointers and carry no type information visible to Fluxa code.
 
-**`dyn` cursors for in-process state.** Libs that manage state entirely within the Fluxa process (file cursors, DB result sets from SQLite, JSON documents, PID controllers) use `dyn` cursors — opaque `VAL_PTR` wrappers. Use `prst dyn cursor` to keep these alive across hot reloads. `dyn` cursors are valid in the main program scope. They are **never** valid as Block fields.
+**`dyn` cursors for in-process state.** Libs that manage state entirely within the Fluxa process (file cursors, DB result sets from SQLite, JSON documents, PID controllers) use `dyn` cursors — opaque `VAL_PTR` wrappers. Use `prst dyn cursor` to keep these alive across hot reloads. `dyn` cursors are valid in the main program scope and inside function/method bodies. They are **never** valid as a Block *field declaration* (see the next note).
 
-**No `dyn` inside Block.** Block fields must have a declared type (`int`, `float`, `str`, `bool`, `arr`). `dyn` is not a valid Block field type. Pass `dyn` cursors as arguments to Block methods if needed.
+**`dyn` as a Block field vs inside a method.** Block fields must have a declared
+type (`int`, `float`, `str`, `bool`, `arr`) — `dyn` is not a valid Block *field*
+type. But `dyn` (and `danger`) work normally **inside a Block method**: a method can
+open a `dyn` cursor, use it inside `danger`, and close it, updating typed fields. So
+a persistence Block opens its SQLite/CSV cursor inside `load()`, not as a field.
 
 ---
 

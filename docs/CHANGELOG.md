@@ -1,6 +1,56 @@
 # Fluxa-lang Changelog
 
-## v0.22.0 — std.sound (current)
+## v0.22.1 — docs: correctness pass across all reference material (current)
+
+### docs: correct the Block/`danger`/`dyn` rule and other verified behavior
+
+A full review of `docs/` against the actual runtime behavior. The central fix
+corrects a rule that several documents stated wrong.
+
+**The Block + `danger`/`dyn` rule (corrected).** Earlier docs (spec §7, the
+How-to-Program guide, STDLIB, and the v0.19 changelog entry below) stated
+categorically that `danger` is "not permitted inside Block methods". This is
+**wrong** and was verified against the runtime. The correct rule:
+
+- `dyn` and `danger` **cannot be Block fields** — a Block body accepts only typed
+  field declarations (`int`, `float`, `str`, `bool`, `char`, `arr`) and `fn`
+  methods. A `dyn buffer = [0]` field or a loose `danger { ... }` statement in the
+  Block body is a **parse error**.
+- `dyn` and `danger` **work normally inside a Block method**. This is the idiomatic
+  place for a Block that owns fallible IO: the method opens the resource inside
+  `danger`, updates typed fields, and closes with `if err != nil`. This is exactly
+  what the `ScoreBoard` persistence Block does.
+
+Corrected in: `FLUXA_GUIDE.md` (invariants 4–5, §7 Rule 2, §11, §14 table),
+`fluxa_spec_v16.md` §7, `STDLIB.md`. The obsolete v0.19 entry below is left as
+historical record.
+
+**`danger` framed as intentional containment.** All docs now present `danger` as a
+deliberate declaration ("this may fail and I will handle it"), with the idiom that
+**every `danger` block closes with `if err != nil`**. Outside `danger`, a failure
+aborts with a line number — on purpose.
+
+**Error ring behavior (corrected).** The spec previously said errors "do not
+interrupt flow". Verified: inside a `danger`, execution **stops at the first error**
+(code after the failing line does not run); `err` is cleared before each `danger`;
+`err[0]` is most recent and higher indices hold earlier errors, with the oldest
+pushed out when the 32-entry ring fills. Corrected in `fluxa_spec_v16.md` §8.3–8.4
+and `FLUXA_GUIDE.md` §9.
+
+**Memory model made explicit.** `str`, `arr`, `dyn` are pointers into the heap (a
+deliberate performance decision — no implicit copy of large structures); scalars are
+values. The **array-element aliasing trap** (`str x = arr[i]` creates a second owner
+and corrupts the buffer on `free`/reassign) is now documented with verified examples
+and the safe patterns (`for-in`, direct argument, `concat` copy) in
+`fluxa_spec_v16.md` §13.6, `FLUXA_GUIDE.md` §12.5, and §14.
+
+**Performance idiom documented.** `PERFORMANCE.md` now connects the Block-method
+benchmark to the idiom: put the loop **inside** the method (VM fast path) rather than
+an outer loop hammering a one-step method (AST slow path + per-call Block copy).
+
+Every corrected rule in this pass was confirmed by executing code in the runtime.
+
+## v0.22.0 — std.sound
 
 ### feat(stdlib): `std.sound` — audio playback (wav/mp3/flac) + sine tone generation
 
@@ -429,6 +479,9 @@ New toml keys: `min_threads`, `max_threads`, `scale_up_queue`, `scale_down_idle`
 `docs/fluxa_spec_v15.md` Section 7 now explicitly documents Block field restrictions:
 - `dyn` is not a valid Block field type — use typed fields and pass cursors as arguments
 - `danger` is not permitted inside Block methods — handle fallible operations in functions outside the Block
+  > **[Corrected in v0.22.1]** This statement was wrong. `danger` and `dyn` work
+  > inside Block methods; only *field* declarations are disallowed. See the v0.22.1
+  > entry at the top.
 
 `docs/STDLIB.md` rewritten with correct API for all 28 libs. Key corrections:
 - `std.pg` and `std.wserver` fully updated to int handle API

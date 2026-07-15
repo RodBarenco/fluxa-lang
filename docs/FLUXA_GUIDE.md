@@ -1,6 +1,9 @@
 # How to Program in Fluxa
 
-A step-by-step reference for writing correct Fluxa programs. Read this before writing any Fluxa code — especially the **Hard Rules** section. The mistakes listed there are the most common errors made by anyone (human or AI) new to the language.
+A step-by-step reference for writing correct Fluxa programs. Read this before writing
+any Fluxa code — especially the Block section (§8), the `danger` rules (§9), and the
+memory model (§12.5). The mistakes collected in §14 are the most common errors made
+by anyone (human or AI) new to the language.
 
 ---
 
@@ -11,10 +14,10 @@ Fluxa's rules all flow from a small set of invariants. Internalize these seven b
 1. **Unique ownership.** Every value has exactly one owner. No value is accessed outside its scope. There is no shared mutable state between functions — data flows through arguments and return values only.
 2. **No global scope.** Variables declared at the top level belong to the program's execution context — they are not visible inside functions or Block methods. There is no free-variable capture, ever.
 3. **Everything is passed.** Every value a function or method uses arrives as an argument or parameter. If a worker needs a server handle and a DB connection, they are parameters.
-4. **No `dyn` inside a Block.** `dyn` lives at the program level and in functions — never as a Block field.
-5. **No `danger` inside a Block.** Error containment belongs to global functions and the program level.
+4. **No `dyn` as a Block field.** `dyn` lives at the program level and inside functions and methods — but never as a *field declaration* in a Block body. Inside a Block **method**, `dyn` works normally (see section 7).
+5. **`danger` is not a Block field declaration.** You cannot write a loose `danger` statement in a Block body (only typed fields and `fn` methods are allowed there). But `danger` **works inside a Block method** — that is the idiomatic place for a Block's fallible IO (see section 7).
 6. **`prst` is state that survives time.** A `prst` variable is simply marked to survive — hot reloads, Atomic Handover, runtime swap. It is how you make state explicit and durable; everything else dies and is reborn on each reload.
-7. **`err` is a ring buffer; `danger` contains runtime-killing errors.** Division by zero, overflow, failed IO — anything that would otherwise abort the runtime is captured by `danger {}` into the `err` ring. That is why all IO goes inside `danger`.
+7. **`err` is a ring buffer; `danger` is intentional containment.** Division by zero, overflow, failed IO — anything that would otherwise abort the runtime is captured by `danger {}` into the `err` ring. `danger` is not a safety net you sprinkle around: it is you declaring *"this may fail and I will handle it"*, and the handling is the `if err != nil` that closes the block. That is why all IO goes inside `danger` — and why every `danger` is followed by a decision.
 
 A practical consequence of rules 1–3: if a variable "isn't found" inside a function, the fix is never "make it global" (there is no global) — it is "pass it as a parameter".
 
@@ -145,12 +148,23 @@ fn add(int a, int b) int {
 }
 
 fn greet(str name) nil {
-    print("hello " + name)
+    print("hello ", name)
 }
 
 int result = add(3, 4)
 greet("fluxa")
 ```
+
+`print` takes multiple arguments of any type, separated by commas, and writes them
+in order (`+` is arithmetic — it does not join strings):
+
+```fluxa
+int   n = 42
+float f = 3.14
+print("count: ", n, " ratio: ", f)   // → count:  42  ratio:  3.14
+```
+
+To build a single `str` value instead of printing pieces, use `strings.concat`.
 
 **Functions do not see variables declared outside them.** Pass everything explicitly:
 
@@ -193,18 +207,29 @@ for item in items { print(item) }
 
 ## 8. Block — Encapsulated State and Behavior
 
-Block groups state and behavior. It is not a class — there is no inheritance, no polymorphism, no implicit coupling.
+A Block groups related state and the methods that operate on it. It is not a class:
+there is no inheritance, no polymorphism, no implicit coupling. Think of it as a
+named record with functions attached.
 
 ```fluxa
 Block Counter {
-    prst int total = 0    // persists across reloads
-    int   step    = 1     // valid non-prst field — lives for execution
+    prst int total = 0    // a field — persists across reloads
+    int   step    = 1     // a field — lives for this execution
     fn increment() nil { total = total + step }
     fn value() int     { return total }
 }
 ```
 
-**Create instances with `typeof`:**
+A Block has two kinds of members: **fields** (the state) and **methods** (the
+behavior). Almost everything worth knowing about Block comes down to how these two
+differ — fields are restricted to concrete types, while methods are ordinary Fluxa
+code. The sections below cover instances, fields, methods, and the pattern that ties
+them together.
+
+### Block instances
+
+A Block declaration is a template. You create working instances from it with
+`typeof`:
 
 ```fluxa
 Block c1 typeof Counter
@@ -212,117 +237,133 @@ Block c2 typeof Counter
 c1.increment()    // c1.total == 1, c2.total == 0 — fully independent
 ```
 
-### Hard Rules for Block
+Each instance is a complete, isolated copy — its own fields, unconnected to any
+other instance. Mutating `c1` never touches `c2`. Two rules govern instantiation:
 
-These are the most common mistakes. Read carefully.
+- **`typeof` applies to a defined Block, never to an instance.**
 
-**Rule 1 — No `dyn` as a Block field.**
+  ```fluxa
+  Block c1 typeof Counter    // ok — Counter is a definition
+  Block c2 typeof c1         // ERROR — c1 is an instance
+  ```
 
-`dyn` is not a valid Block field type. This is unconditional — there are no exceptions.
+- **No nested Block.** A Block cannot declare another Block inside it. Define Blocks
+  at the top level and compose them through methods and arguments.
+
+  ```fluxa
+  Block Outer {
+      Block Inner { int x = 0 }    // ERROR — no nesting
+  }
+  ```
+
+### Block fields
+
+A field must have a concrete declared type: `int`, `float`, `str`, `bool`, `char`,
+or `arr`. That is the whole rule. `dyn` is not a valid field type, and statements
+(like a loose `danger`) cannot appear in the field area — a Block body holds field
+declarations and `fn` methods, nothing else.
 
 ```fluxa
-// WRONG — always an error
+// WRONG — these are not valid fields
 Block Worker {
-    prst dyn conn = [0]      // ERROR
-    dyn  buffer   = []       // ERROR
+    dyn  buffer   = []       // ERROR — dyn is not a field type
+    prst dyn conn = [0]      // ERROR — same reason
+    danger { int y = 5 }     // ERROR — statements don't belong in the field area
 }
 
-// CORRECT — typed fields only
+// RIGHT — concrete typed fields
 Block Worker {
-    prst int  conn_id = 0    // int handle to an external resource
-    prst int  count   = 0
-    prst float sum    = 0.0
-    str  label = "worker"    // str is fine
+    prst int   conn_id = 0     // an int handle to an external resource
+    prst int   count   = 0
+    prst float sum     = 0.0
+    str        label   = "worker"
 }
 ```
 
-If you need a `dyn` cursor (file handle, DB connection, model, etc.), keep it at the program level and pass it as an argument:
+The reason is straightforward: fields are the Block's persistent shape, and the
+runtime needs a known concrete type for each one — to serialize `prst` fields across
+reloads, and to give every instance an independent copy. A `dyn` is an opaque,
+GC-tracked handle with no fixed shape to store, so it lives elsewhere: at the program
+level, or as a local inside a method (next).
+
+Fields may be `prst` or not: `prst int total = 0` survives hot reloads; `int step =
+1` lives for the current execution and resets on reload. Both are valid.
+
+### Block methods
+
+A method body is ordinary Fluxa. Anything you can write in a function, you can write
+in a method — local variables, `dyn` cursors, `danger` blocks, `if err != nil`
+checks. In particular, **`dyn` and `danger` work inside methods**, and a method is
+the right home for a Block that owns fallible IO: it opens a resource inside
+`danger`, works with it, writes results into the Block's typed fields, and closes by
+checking `err`.
 
 ```fluxa
-prst dyn sensor_cursor = csv.open("data.csv")   // lives at program level
+Block Store {
+    prst int count = 0
 
-Block Accumulator {
-    prst int   count = 0
-    prst float sum   = 0.0
-    fn record(float v) nil {
-        sum   = sum + v
-        count = count + 1
+    fn load() nil {
+        danger {
+            dyn db   = sqlite.open("data.db")            // dyn: fine inside a method
+            dyn rows = sqlite.query(db, "SELECT v FROM readings")
+            count = len(rows)                            // write to a typed field
+            sqlite.close(db)
+        }
+        if err != nil { print(err[0]) }                  // handle it, still in the method
     }
+
+    fn get() int { return count }
 }
 
-// pass cursor to function, which passes results to Block
-fn read_batch(dyn cur, int n) dyn {
-    danger {
-        dyn chunk = csv.next(cur, n)
-        return chunk
-    }
-    return []
-}
+Block s typeof Store
+s.load()
 ```
 
-For external resources like database connections that must be per-thread, use `int` handles (returned by `std.pg`, `std.wserver`):
+The `dyn` cursors here (`db`, `rows`) are method locals, not fields — exactly where
+they belong. The `err` check sits right after the `danger`, still inside the method,
+and decides what to do.
+
+### The idiomatic pattern
+
+The division of labor is the whole idea: **fields hold concrete state; methods do the
+work** that reads and updates it, including any `dyn`/IO logic. State is encapsulated;
+you mutate and read it through methods. A persistence Block opens its cursor inside
+`load()`, keeps a plain `int count` as its visible state, and exposes `get()` — the
+caller never sees the `dyn`.
+
+One performance corollary follows directly. When a method does repeated work over its
+own state, **keep the loop inside the method** rather than writing an outer function
+that calls a one-step method thousands of times. A loop that only touches locals
+inside a method runs on the fast bytecode path; calling a method per iteration pays
+the call boundary every turn — and, if the instance is passed as an argument, an
+instance copy every turn.
 
 ```fluxa
-Block Worker {
-    prst int conn_id = 0    // CORRECT — int handle, not dyn cursor
-    prst int count   = 0
-    fn record(float v) nil { count = count + 1 }
-}
-```
-
-**Rule 2 — No `danger` inside Block methods.**
-
-`danger` captures errors into the `err` ring buffer. Inside a Block method, ownership of `err` is ambiguous. This is unconditional.
-
-```fluxa
-// WRONG — always an error
-Block Worker {
-    fn run(int conn) nil {
-        danger {                    // ERROR
-            int res = pg.query(conn, "SELECT 1")
+// IDIOMATIC — one call; the loop runs inside on the fast path
+Block Simulation {
+    prst int total = 0
+    fn run(int n) nil {
+        int i = 0
+        while i < n {
+            total = total + i
+            i = i + 1
         }
     }
+    fn result() int { return total }
 }
 
-// CORRECT — danger lives in a function, results passed to Block
-fn fetch(int conn, str sql) str {
-    danger {
-        int res = pg.query(conn, sql)
-        str val = ""
-        if pg.rows(res) > 0 { val = pg.get(res, 0, 0) }
-        pg.free_result(res)
-        return val
-    }
-    return ""
-}
+Block sim typeof Simulation
+sim.run(1000)
 
-Block Worker {
-    prst int   count = 0
-    prst float sum   = 0.0
-    fn record(float v) nil {
-        sum   = sum + v
-        count = count + 1
-    }
+// AVOID — thousands of method dispatches for the same work
+fn run_outside(int n) nil {
+    int i = 0
+    while i < n { sim.bump()  i = i + 1 }
 }
 ```
 
-**Rule 3 — No Block declaration inside a Block.**
-
-```fluxa
-// WRONG
-Block Outer {
-    Block Inner {    // ERROR — not allowed
-        int x = 0
-    }
-}
-```
-
-**Rule 4 — `typeof` only applies to defined Blocks, not instances.**
-
-```fluxa
-Block c1 typeof Counter    // ok
-Block c2 typeof c1         // ERROR — c1 is an instance, not a definition
-```
+Give the Block a method that does the whole batch (`run(n)`, `add_batch(n)`) and call
+it once. Don't expose a single-step mutator to be hammered from outside.
 
 ---
 
@@ -342,16 +383,23 @@ danger {
 if err != nil { print(err[0]) }
 ```
 
-**`err` is a ring buffer of 32 entries:**
+**`err` is a ring buffer of 32 entries.** Verified behavior: `err` is cleared before
+each `danger`, and execution **stops at the first error** inside the block — the code
+after the failing line does not run, so you normally see one error per block:
 
 ```fluxa
 danger {
-    float a = math.sqrt(-1.0)   // err[0]
-    float b = 1.0 / 0.0         // err[0] (previous pushed to err[1])
+    float a = math.sqrt(-1.0)   // ERROR — the block stops here
+    float b = 1.0 / 0.0         // does NOT execute
 }
-print(err[0])    // most recent error
-print(err[1])    // previous error
+print(err[0])    // "math.sqrt (line N): sqrt of negative number"
+print(err[1])    // nil — only one error in this block
 ```
+
+Higher indices (`err[1]`, `err[2]`, …) hold earlier errors when several accumulate
+from different contexts before you check; when the ring fills, the oldest entry is
+pushed out first. Each `danger` closes with a decision — the idiom is
+`if err != nil { ... }`.
 
 **`danger` is required for:**
 - `import c` FFI calls
@@ -365,7 +413,7 @@ print(err[1])    // previous error
 - Time queries (`std.time`)
 - Thread management (`std.flxthread`)
 
-**`danger` is not permitted inside Block methods.** See section 7 Rule 2.
+**`danger` works inside Block methods** — it is the idiomatic place for a Block's fallible IO. What is not allowed is a loose `danger` as a Block field. See section 7 Rule 2.
 
 ### Three hard-won `danger` rules
 
@@ -506,7 +554,12 @@ ft.stop("t2")
 ft.resolve_all()
 ```
 
-**Thread + IO pattern — danger lives in functions, not Block methods:**
+**Thread + IO pattern — in a thread, keep `err` handling in the worker, decide by return value:**
+
+The reason here is the shared error ring (§9 Rule B), not a Block restriction:
+`err` is one ring across all threads, so a thread function reads its result from the
+return value and never checks `err`. (`danger` itself is fine inside Block methods —
+see §8; the constraint below is specifically about threads sharing `err`.)
 
 ```fluxa
 import std pg
@@ -708,6 +761,41 @@ free(p1); free(p2); free(p3); free(p4)
 
 Each `p1..p4` is a fresh `str` declaration — no reassignment releases its predecessor. Without `free()`, all four heap buffers stay alive until the worker returns (which it never does). The same pattern shows up when assembling SQL parameter arrays, JSON arrays, or anything you compose piece by piece.
 
+### How array-element reads alias, and how to read safely
+
+`str`, `arr`, and `dyn` are **pointers** — the variable slot holds a pointer, the
+data lives on the heap. This is deliberate: copying a large string or array on every
+read would be ruinous, so Fluxa passes the pointer and guarantees safety through
+unique ownership. The direct consequence: **reading an array element aliases it** —
+you get a second pointer to the same buffer, not a copy.
+
+```fluxa
+str arr names[3] = ""
+names[0] = "Alpha"
+str x = names[0]     // x does NOT copy — x is a SECOND pointer to names[0]'s buffer
+```
+
+Now `x` and `names[0]` refer to the same buffer, which breaks the one-owner rule.
+Anything that frees or reassigns one corrupts the other — verified, both abort:
+
+```fluxa
+free(x)              // frees names[0]'s buffer → double free on scope teardown [ABORT]
+// or:
+x = names[1]         // reassign frees x's old buffer = names[0]'s → use-after-free [ABORT]
+```
+
+Writing is the safe direction: `arr[i] = var` **copies** the value into the slot.
+Reading is where the aliasing happens. Three patterns read safely, all verified:
+
+- **`for-in`** — the loop variable gets a copy of each element.
+- **pass the element directly as an argument** — `f(arr[i])`; the parameter gets a copy.
+- **when you need it in a variable** — declare inside the loop and force a copy:
+  `str v = strings.concat(arr[i], "")`, then `free(v)` is safe.
+
+The rule to remember: never give an array or `dyn` element a second name via a
+variable you will `free` or reassign. This applies equally to `dyn` elements from
+`csv`/`sqlite` rows.
+
 ### When `free(x)` does nothing
 
 - After a reassignment: `str x = a; x = b; free(x)` — runtime already released the old `a` on reassignment; `free(x)` releases `b`.
@@ -782,26 +870,44 @@ fn double(int n) int { return n + n }
 
 ## 14. Common Mistakes Reference
 
-A quick checklist of the most frequent errors:
+A quick checklist of the most frequent errors, grouped by topic. Each row links to
+the section that explains it in full.
+
+**Block — fields vs methods (§8)**
 
 | What you wrote | Why it's wrong | What to write instead |
 |---|---|---|
-| `Block W { prst dyn conn = [0] }` | `dyn` is not a valid Block field | `Block W { prst int conn_id = 0 }` |
-| `Block W { fn run() nil { danger { ... } } }` | `danger` not allowed in Block methods | Move dangerous code to a function, pass result to Block |
-| `Block W { Block Inner { ... } }` | No nested Block declarations | Separate Block definitions at the top level |
-| `Block c2 typeof c1` where c1 is an instance | `typeof` only applies to Block definitions | `Block c2 typeof Counter` |
+| `Block W { prst dyn conn = [0] }` | `dyn` is not a valid field type — fields are concrete types only | `prst int conn_id = 0` as the field, or open the `dyn` cursor inside a method |
+| `Block W { danger { ... } }` at field level | A Block body holds only field declarations and `fn` methods | Put the `danger` **inside a method** — the idiomatic home for a Block's fallible IO |
+| `Block Outer { Block Inner { ... } }` | No nested Block declarations | Define Blocks at the top level; compose via methods and arguments |
+| `Block c2 typeof c1` where c1 is an instance | `typeof` applies to a Block definition, not an instance | `Block c2 typeof Counter` |
 
-| `int res = pg.query(conn, sql)` outside `danger` | pg operations can fail | Wrap in `danger {}` |
-| `if res != nil { ... }` for int handles | pg/wserver return `int`, not `dyn` | `if res != 0 { ... }` |
-| Passing `dyn` cursor as Block field | `dyn` not valid in Block | Keep cursor at program level, pass as method arg |
-| Calling a helper that contains `danger` from inside a `danger` | Nested containment closes early — remaining "protected" code runs bare | Inline the fallible logic; call helpers with `danger` only from outside any `danger` (§9 Rule A) |
-| `if err != nil { ... }` inside a worker/thread function | `err` is one ring shared by all threads — you react to other threads' errors | Decide from return values (`req != 0`); check `err` only at top level (§9 Rule B) |
-| A `danger` block that "does nothing" | It captured an `undefined variable` error — a name you forgot to pass as a parameter | Pass the variable explicitly; `print(err[0])` after the block to see the message (§9 Rule C) |
-| `prst int srv` / `prst int conn` for sockets or DB connections | Persistence restores a dead OS handle on restart — `Address already in use` | Plain `int`, reopen at startup; `prst` is for in-process `dyn` cursors (§12) |
-| `serve(port, true)` dispatcher + opening connections inside workers | Worker-side `pg.connect` hits the nested-`danger` rule | `serve(port, false)` + `ft.new("w", N, "worker", srv, db)` with pre-connected handles (§11) |
-| Sixteen `ft.new("w1", ...)` … `ft.new("w16", ...)` lines | Verbose and error-prone | Batch form: `ft.new("w", 16, "worker", srv)` (§11) |
-| Forgot `free(p1); free(p2); ...` on a `strings.concat` chain in a worker | Each intermediate accumulates over millions of iterations | Free each piece after `reply` — see §12.5 |
-| `free(some_prst_var)` | `prst` belongs to the persistence layer, not the slot | Mutate the value; the pool tracks it |
-| `free(s)` where `s` came from `cache.arena_str` | Arena strings are bulk-released | Use `cache.arena_reset(arena)` |
-| `dyn doc = json2.parse(...)` then no `json2.discard(doc)` | The parse tree leaks even though the wrapper is GC'd | Always `json2.discard(doc)` inside the `danger` block |
+**Memory (§12.5)**
+
+| What you wrote | Why it's wrong | What to write instead |
+|---|---|---|
+| `str x = arr[i]` then `free(x)` or `x = ...` | Reading an element aliases its buffer — a second owner; freeing or reassigning corrupts the array | Read with `for-in`, pass `arr[i]` directly as an argument, or copy via `strings.concat(arr[i], "")` |
+| Dropped `free(p1); free(p2); …` on a `strings.concat` chain in a worker | Each intermediate accumulates over millions of iterations | Free each piece after the reply |
+| `dyn doc = json2.parse(...)` with no `json2.discard(doc)` | The parse tree leaks even though the wrapper is GC'd | `json2.discard(doc)` inside the same `danger` block |
+| `free(some_prst_var)` | `prst` belongs to the persistence layer, not the slot | Assign a replacement value; the pool tracks it |
+| `free(s)` where `s` came from `cache.arena_str` | Arena strings are bulk-released | `cache.arena_reset(arena)` |
+
+**danger and error handling (§9)**
+
+| What you wrote | Why it's wrong | What to write instead |
+|---|---|---|
+| Calling a helper that contains `danger` from inside a `danger` | Nested containment closes early — the remaining "protected" code runs bare | Inline the fallible logic; call helpers that use `danger` only from outside any `danger` (Rule A) |
+| `if err != nil { ... }` inside a worker/thread function | `err` is one ring shared by all threads — you react to other threads' errors | Decide from return values (`req != 0`); check `err` only at the top level (Rule B) |
+| A `danger` block that "does nothing" | It captured an `undefined variable` error — a name you forgot to pass as a parameter | Pass the variable explicitly; `print(err[0])` after the block to see the message (Rule C) |
+| A `danger` with no `if err != nil` after it | The failure was contained but never checked — the program runs on inconsistent state | Close every `danger` with a decision on `err` |
+
+**Libraries, handles, and concurrency (§10–§12)**
+
+| What you wrote | Why it's wrong | What to write instead |
+|---|---|---|
+| `int res = pg.query(conn, sql)` outside `danger` | pg operations can fail | Wrap the call in `danger {}` |
+| `if res != nil { ... }` for an int handle | pg/wserver return `int`, not `dyn` | `if res != 0 { ... }` |
+| `prst int srv` / `prst int conn` for a socket or DB connection | Persistence restores a dead OS handle on restart — `Address already in use` | Plain `int`, reopened at startup; `prst` is for in-process `dyn` cursors |
+| `serve(port, true)` dispatcher + opening connections inside workers | Worker-side `pg.connect` hits the nested-`danger` rule | `serve(port, false)` + `ft.new("w", N, "worker", srv, db)` with pre-connected handles |
+| Sixteen separate `ft.new("w1", ...)` … `ft.new("w16", ...)` lines | Verbose and error-prone | Batch form: `ft.new("w", 16, "worker", srv)` |
 

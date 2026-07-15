@@ -318,37 +318,34 @@ Block Worker {
 }
 ```
 
-**No `danger` inside Block methods.** `danger` captures errors into the `err` ring buffer. Inside a Block method, the ownership of `err` is ambiguous — it is not clear whether errors should go to the Block's caller or to the thread running the method. Handle fallible operations in regular functions outside the Block and pass the results in as typed arguments.
+**`danger` and `dyn` work inside Block methods, but not as Block fields.** A Block
+body accepts only typed field declarations and `fn` methods; a loose `danger`
+statement or a `dyn` field declaration there is a parse error. Inside a **method**,
+both work normally — and that is the idiomatic place for a Block that owns fallible
+IO: the method opens the resource inside `danger`, updates typed fields, and closes
+with `if err != nil`. When a Block method runs `danger`, the captured error belongs
+to that method's `err` check, immediately after the block.
 
 ```fluxa
-// WRONG — danger inside Block method
-Block Worker {
-    fn run(int conn) nil {
-        danger {                    // ERROR: danger not allowed inside Block method
-            int res = pg.query(conn, "SELECT val FROM readings LIMIT 1")
+// WRONG — dyn/danger as a Block field (parse error)
+Block Bad {
+    dyn buffer = [0]                 // ERROR: dyn is not a valid field type
+    danger { int y = 5 }             // ERROR: only fields and fn methods allowed here
+}
+
+// CORRECT — danger and dyn inside a method (idiomatic)
+Block Store {
+    prst int count = 0
+    fn load() nil {
+        danger {
+            dyn db = sqlite.open("data.db")
+            dyn rows = sqlite.query(db, "SELECT v FROM readings")
+            count = len(rows)
+            sqlite.close(db)
         }
+        if err != nil { print(err[0]) }
     }
-}
-
-// CORRECT — danger in a function, result passed to Block
-fn fetch(int conn, str sql) str {
-    danger {
-        int res = pg.query(conn, sql)
-        str val = ""
-        if pg.rows(res) > 0 { val = pg.get(res, 0, 0) }
-        pg.free_result(res)
-        return val
-    }
-    return ""
-}
-
-Block Worker {
-    prst int   count = 0
-    prst float sum   = 0.0
-    fn record(float v) nil {
-        sum   = sum + v
-        count = count + 1
-    }
+    fn get() int { return count }
 }
 ```
 
@@ -391,20 +388,36 @@ Any operation that fails outside a `danger` block aborts execution immediately w
 
 ### 8.3 danger Block
 
-Isolates risky operations. Errors inside the block do not interrupt flow — they are accumulated in the `err` stack. `danger` is mandatory for `import c` FFI calls.
+Isolates risky operations. A failure inside the block does not abort the program —
+it is captured into the `err` ring. But execution of the block **stops at the first
+error**: statements after the failing line do not run. Control resumes right after
+the `danger` block, where the idiom is to check `err` and decide what to do. `danger`
+is mandatory for `import c` FFI calls and for all file/network/database IO.
 
 ```fluxa
 danger {
-    float r = libm.sqrt(-1.0)    // error captured in err
+    print("before")
+    float r = libm.sqrt(-1.0)    // error captured in err; the block stops here
+    print("after")               // does NOT run
 }
-if err != nil { print(err[0]) }
+if err != nil { print(err[0]) }  // the idiom: every danger closes with a decision
 ```
 
-### 8.4 err — Error Stack
+`danger` is intentional: it marks a region where failure is acceptable *and
+handled*. A `danger` block without an `if err != nil` right after it is code that
+was contained but never checked — the program then proceeds on inconsistent state.
 
-- `err[0]` → most recent error; `err[1]` → previous (ring buffer, 32 entries)
-- Each entry: message + context (fn/Block) + source line
-- `err` is automatically nil before any `danger` block
+### 8.4 err — Error Ring
+
+- `err[0]` → most recent error; `err[1]`, `err[2]`, … → earlier errors when several
+  exist in the same context. Ring buffer of 32 entries; when full, the oldest entry
+  is pushed out first.
+- Each entry: message + context (fn/Block) + source line.
+- `err` is cleared to nil before each `danger` block — errors do not carry across
+  blocks.
+- Because a block stops at its first error, you normally see one error per block in
+  `err[0]`; higher indices matter when errors from different contexts accumulate
+  before you check.
 
 | ErrKind | When generated |
 |---|---|
@@ -1496,6 +1509,47 @@ Each `p1..p4` is a fresh declaration: no reassignment releases the previous one,
 `prst` variables are owned by the per-program `PrstPool`, not by their stack slots. Writes to a `prst` go through the pool's deep-copy or overwrite path (see §10.4). `free()` rejects `prst` because releasing the slot would break the pool's snapshot/restore guarantees during hot reload.
 
 To clear a `prst` value, assign a replacement: `my_prst = ""` for strings, `my_prst = nil` for dyn — the pool's set path handles the previous value's release.
+
+### The array-element aliasing trap (practical consequence)
+
+The owned/aliased classification above has a direct, dangerous consequence for user
+code. Reading an array or dyn element (`NODE_ARR_ACCESS`) produces an **aliased**
+value — the variable receives the *same* `char *` the element holds, not a copy.
+Creating a second owner this way violates the sole-owner invariant, and the runtime
+collects on it at `free`/reassignment time. All four faces below are verified by
+execution:
+
+```fluxa
+str arr names[3] = ""
+names[0] = "Alpha"
+
+// Face 1 — free(x) destroys names[0]'s buffer:
+str x = names[0]      // x aliases names[0] (same pointer)
+free(x)               // frees the buffer that names[0] still points to
+print(names[0])       // → double free / use-after-free  [ABORT]
+
+// Face 2 — reassigning an aliasing variable frees the element's buffer:
+str y = names[0]
+y = names[1]          // rt_set frees y's old buffer = names[0]'s buffer
+print(names[0])       // → freed  [ABORT]
+```
+
+Writing to an element is the safe direction — `arr[i] = var` copies the value into
+the slot (`NODE_ARR_DECL`/store path `strdup`s defensively). Reading is the trap.
+
+**Safe patterns** (all verified): iterate with `for-in` (the loop var gets a
+`strdup` copy — `NODE_FOR` binding); pass the element directly as a call argument
+(the parameter receives a copy); or, when a variable is required, declare it inside
+the loop and force a copy with `strings.concat(arr[i], "")`. Never bind an array
+element to a variable you will `free` or reassign.
+
+| Operation | Producer class | Safe? |
+|---|---|---|
+| `str x = arr[i]` | aliased | ⚠️ dangerous — second owner |
+| `arr[i] = var` | store copies | ✅ safe |
+| `for e in arr` | strdup copy | ✅ safe |
+| `f(arr[i])` | arg copy | ✅ safe |
+| `str x = strings.concat(arr[i], "")` | owned copy | ✅ safe |
 
 ### Interaction with `dyn` cursors
 
