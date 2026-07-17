@@ -1,0 +1,13 @@
+// v0.22 fixture: Block singleton em módulo + fachada intra-módulo
+Block Vault {
+    int best = 0
+    fn bump(int v) nil {
+        if v > best { best = v }
+    }
+    fn get_best() int { return best }
+}
+
+fn bump_twice(int v) nil {
+    Vault.bump(v)
+    Vault.bump(v + 1)
+}

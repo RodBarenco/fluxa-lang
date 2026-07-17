@@ -2448,3 +2448,11 @@ make build               && perf stat ./fluxa run bench.flx
 ### Implementation
 
 `pool_init()` in `src/pool.h` calls `FLUXA_POOL_MADVISE()` on both arrays after the pool is initialized. Linux only — the macro is a no-op on macOS and embedded targets. No runtime cost if huge pages are not available (kernel silently ignores the hint).
+
+
+## v0.22 — Module Block singletons
+
+`mod.Block.method(args)` / `mod.Block.field` parse in expression and
+statement positions (MEMBER_CALL/ACCESS/ASSIGN with mangled owner
+`mod__Block`). Inside a module, references to same-module Blocks mangle
+automatically. Tests: tests/modules/modules.sh c22a–c22e.

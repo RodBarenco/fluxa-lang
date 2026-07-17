@@ -280,6 +280,41 @@ static ASTNode *parse_primary(Parser *p) {
                 char mangled_name[320];
                 mangle(name, member, mangled_name, sizeof(mangled_name));
 
+                /* v0.22: mod.Block.member — namespaced Block singleton.
+                 * `records.Records.get()` parses as MEMBER_CALL with owner
+                 * "records__Records"; `records.Records.field` as access. */
+                if (check(p, TOK_DOT)) {
+                    parser_advance(p);
+                    if (!check(p, TOK_IDENT)) {
+                        parse_error(p, "expected member name after '.'");
+                        return NULL;
+                    }
+                    char member2[256];
+                    strncpy(member2, p->current.value, sizeof(member2)-1);
+                    member2[sizeof(member2)-1] = '\0';
+                    parser_advance(p);
+                    if (check(p, TOK_LPAREN)) {
+                        parser_advance(p);
+                        ASTNode **args = NULL; int argc = 0;
+                        parse_args_into(p, &args, &argc);
+                        if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                            free(args); return NULL;
+                        }
+                        ASTNode *n = P_NODE();
+                        n->type                     = NODE_MEMBER_CALL;
+                        n->as.member_call.owner     = P_STR(mangled_name);
+                        n->as.member_call.method    = P_STR(member2);
+                        n->as.member_call.args      = args;
+                        n->as.member_call.arg_count = argc;
+                        return n;
+                    }
+                    ASTNode *n = P_NODE();
+                    n->type                   = NODE_MEMBER_ACCESS;
+                    n->as.member_access.owner = P_STR(mangled_name);
+                    n->as.member_access.field = P_STR(member2);
+                    return n;
+                }
+
                 if (check(p, TOK_LPAREN)) {
                     /* sensor.fn(args) → NODE_FUNC_CALL "sensor__fn" */
                     parser_advance(p);
@@ -309,7 +344,8 @@ static ASTNode *parse_primary(Parser *p) {
                 }
                 ASTNode *n = P_NODE();
                 n->type                      = NODE_MEMBER_CALL;
-                n->as.member_call.owner      = P_STR(name);
+                /* v0.22: Block singleton do próprio módulo → owner mangled */
+                n->as.member_call.owner      = maybe_mangle_str(p, name);
                 n->as.member_call.method     = P_STR(member);
                 n->as.member_call.args       = args;
                 n->as.member_call.arg_count  = argc;
@@ -318,7 +354,7 @@ static ASTNode *parse_primary(Parser *p) {
                 /* inst.field (rvalue) */
                 ASTNode *n = P_NODE();
                 n->type                    = NODE_MEMBER_ACCESS;
-                n->as.member_access.owner  = P_STR(name);
+                n->as.member_access.owner  = maybe_mangle_str(p, name);
                 n->as.member_access.field  = P_STR(member);
                 return n;
             }
@@ -1260,6 +1296,47 @@ static ASTNode *parse_statement(Parser *p) {
                 char mangled_name[320];
                 mangle(name, member, mangled_name, sizeof(mangled_name));
 
+                /* v0.22: mod.Block.method(args) / mod.Block.field = val */
+                if (check(p, TOK_DOT)) {
+                    parser_advance(p);
+                    if (!check(p, TOK_IDENT)) {
+                        parse_error(p, "expected member name after '.'");
+                        return NULL;
+                    }
+                    char member2[256];
+                    strncpy(member2, p->current.value, sizeof(member2)-1);
+                    member2[sizeof(member2)-1] = '\0';
+                    parser_advance(p);
+                    if (check(p, TOK_LPAREN)) {
+                        parser_advance(p);
+                        ASTNode **args = NULL; int argc = 0;
+                        parse_args_into(p, &args, &argc);
+                        if (!expect(p, TOK_RPAREN, "after method arguments")) {
+                            free(args); return NULL;
+                        }
+                        ASTNode *n = P_NODE();
+                        n->type                     = NODE_MEMBER_CALL;
+                        n->as.member_call.owner     = P_STR(mangled_name);
+                        n->as.member_call.method    = P_STR(member2);
+                        n->as.member_call.args      = args;
+                        n->as.member_call.arg_count = argc;
+                        return n;
+                    }
+                    if (check(p, TOK_EQ)) {
+                        parser_advance(p);
+                        ASTNode *val = parse_expr(p);
+                        if (!val) return NULL;
+                        ASTNode *n = P_NODE();
+                        n->type                    = NODE_MEMBER_ASSIGN;
+                        n->as.member_assign.owner  = P_STR(mangled_name);
+                        n->as.member_assign.field  = P_STR(member2);
+                        n->as.member_assign.value  = val;
+                        return n;
+                    }
+                    parse_error(p, "expected '(' or '=' after Block member name");
+                    return NULL;
+                }
+
                 if (check(p, TOK_LPAREN)) {
                     parser_advance(p);
                     ASTNode *call = p_func_call(p, mangled_name);
@@ -1298,7 +1375,7 @@ static ASTNode *parse_statement(Parser *p) {
                 }
                 ASTNode *n = P_NODE();
                 n->type                     = NODE_MEMBER_CALL;
-                n->as.member_call.owner     = P_STR(name);
+                n->as.member_call.owner     = maybe_mangle_str(p, name);
                 n->as.member_call.method    = P_STR(member);
                 n->as.member_call.args      = args;
                 n->as.member_call.arg_count = argc;
@@ -1312,7 +1389,7 @@ static ASTNode *parse_statement(Parser *p) {
                 if (!val) return NULL;
                 ASTNode *n = P_NODE();
                 n->type                    = NODE_MEMBER_ASSIGN;
-                n->as.member_assign.owner  = P_STR(name);
+                n->as.member_assign.owner  = maybe_mangle_str(p, name);
                 n->as.member_assign.field  = P_STR(member);
                 n->as.member_assign.value  = val;
                 return n;

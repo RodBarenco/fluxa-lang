@@ -863,6 +863,30 @@ fn double(int n) int { return n + n }
 
 **Rules:**
 - Only `main.flx` can import modules — modules cannot import each other
+- **v0.22 — Block singletons across modules:** a Block declared in a module
+  is addressable as `mod.Block.method(args)` and `mod.Block.field` (read and
+  write) from `main.flx`, from other modules' code, and from inside Block
+  methods anywhere. Inside its own module, plain `Block.method(...)`
+  references resolve too (the parser mangles the owner). State lives in the
+  definition — no `typeof` needed for the singleton pattern:
+
+  ```fluxa
+  // static/vault.flx
+  Block Vault {
+      int best = 0
+      fn bump(int v) nil { if v > best { best = v } }
+      fn get_best() int { return best }
+  }
+  fn bump_twice(int v) nil {
+      Vault.bump(v)          // same-module reference: works
+      Vault.bump(v + 1)
+  }
+
+  // main.flx
+  import static vault
+  vault.Vault.bump(55)
+  print(vault.Vault.get_best())   // 55
+  ```
 - `live/` convention: modules with `prst` state
 - `static/` convention: pure function modules
 

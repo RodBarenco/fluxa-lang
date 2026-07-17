@@ -248,6 +248,76 @@ reload_count=$(grep -c "reload done" "$LOG" 2>/dev/null || echo 0)
     || fail "dev_module_file_change_triggers_reload" "reload done" \
             "$(cat "$LOG" | tr '\n' '|' | head -c 200)"
 
+
+# ── v0.22: mod.Block.metodo — singleton namespaced ────────────────────────
+P="$WORK_DIR/c22a"; setup_proj "$P"; use_module "$P" static vault
+cat > "$P/main.flx" << 'FLX'
+import static vault
+vault.Vault.bump(55)
+vault.Vault.bump(30)
+print(vault.Vault.get_best())
+FLX
+OUT="$("$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 | tail -1)"
+[[ "$OUT" == "55" ]] && pass "c22a mod.Block.metodo statement+expr" || fail "c22a" "55" "$OUT"
+
+# ── v0.22: fachada — fn do módulo chama o singleton do próprio módulo ─────
+P="$WORK_DIR/c22b"; setup_proj "$P"; use_module "$P" static vault
+cat > "$P/main.flx" << 'FLX'
+import static vault
+vault.bump_twice(80)
+print(vault.Vault.get_best())
+FLX
+OUT="$("$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 | tail -1)"
+[[ "$OUT" == "81" ]] && pass "c22b fachada intra-módulo" || fail "c22b" "81" "$OUT"
+
+# ── v0.22: singleton de módulo de DENTRO de método de Block ───────────────
+P="$WORK_DIR/c22c"; setup_proj "$P"; use_module "$P" static vault
+cat > "$P/main.flx" << 'FLX'
+import static vault
+Block Game {
+    int last = 0
+    fn play(int pts) nil {
+        vault.Vault.bump(pts)
+        last = vault.Vault.get_best()
+    }
+    fn get_last() int { return last }
+}
+Block g typeof Game
+g.play(200)
+print(g.get_last())
+FLX
+OUT="$("$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 | tail -1)"
+[[ "$OUT" == "200" ]] && pass "c22c singleton de módulo em método" || fail "c22c" "200" "$OUT"
+
+# ── v0.22: campo de singleton namespaced — escrita e leitura ──────────────
+P="$WORK_DIR/c22d"; setup_proj "$P"; use_module "$P" static vault
+cat > "$P/main.flx" << 'FLX'
+import static vault
+vault.Vault.best = 999
+print(vault.Vault.best)
+FLX
+OUT="$("$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 | tail -1)"
+[[ "$OUT" == "999" ]] && pass "c22d campo de singleton (rw)" || fail "c22d" "999" "$OUT"
+
+# ── v0.22: estado do singleton compartilhado entre módulos ────────────────
+P="$WORK_DIR/c22e"; setup_proj "$P"; use_module "$P" static vault
+cat > "$P/static/hud.flx" << 'FLX'
+Block Hud {
+    int shown = 0
+    fn sync() nil { shown = vault.Vault.get_best() }
+    fn get() int { return shown }
+}
+FLX
+cat > "$P/main.flx" << 'FLX'
+import static vault
+import static hud
+vault.Vault.bump(70)
+hud.Hud.sync()
+print(hud.Hud.get())
+FLX
+OUT="$("$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 | tail -1)"
+[[ "$OUT" == "70" ]] && pass "c22e cross-módulo entre singletons" || fail "c22e" "70" "$OUT"
+
 echo ""
 if [ "$FAILS" -eq 0 ]; then
     echo "  → modules: PASS"
