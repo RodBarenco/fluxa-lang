@@ -29,6 +29,10 @@
  *   graph.draw_circle(win, x, y, radius, r, g, b)       → nil
  *   graph.draw_line(win, x1, y1, x2, y2, r, g, b)      → nil
  *   graph.draw_text(win, text, x, y, size, r, g, b)     → nil
+ *   graph.load_font(win, path, size)  → dyn font cursor  (TTF/OTF, incl. Latin-1 accents)
+ *   graph.draw_text_font(win, font, text, x, y, size, r, g, b) → nil
+ *   graph.text_width(win, font, text, size)             → int  (pixels, for layout)
+ *   graph.unload_font(win, font)      → nil
  *   graph.key_pressed(win, key)       → bool  (key: "SPACE", "A"-"Z", etc.)
  *   graph.key_down(win, key)          → bool
  *   graph.mouse_x(win)                → int
@@ -62,6 +66,35 @@ static GraphWin *graph_new_win(int w, int h, const char *title) {
     InitWindow(w, h, title);
     SetTargetFPS(60);
     return win;
+}
+
+typedef struct {
+    Font font;
+    int  base_size;   /* size the glyph atlas was rasterized at */
+    int  loaded;      /* 1 = owns GPU texture; 0 = fell back to default font */
+} GraphFont;
+
+/* Load a TTF/OTF at base_size with ASCII 32-126 + Latin-1 160-255
+ * (covers Portuguese and Western European accented characters).
+ * Returns NULL if the file cannot be read. loaded=0 means raylib
+ * fell back to its default font (unsupported/corrupt file). */
+static GraphFont *graph_new_font(const char *path, int base_size) {
+    FILE *probe = fopen(path, "rb");
+    if (!probe) return NULL;
+    fclose(probe);
+
+    int codepoints[95 + 96];
+    int n = 0;
+    for (int c = 32;  c <= 126; c++) codepoints[n++] = c;   /* ASCII    */
+    for (int c = 160; c <= 255; c++) codepoints[n++] = c;   /* Latin-1  */
+
+    GraphFont *f = (GraphFont *)calloc(1, sizeof(GraphFont));
+    f->base_size = base_size;
+    f->font      = LoadFontEx(path, base_size, codepoints, n);
+    /* On failure LoadFontEx returns the default font — never unload that. */
+    f->loaded    = (f->font.texture.id != GetFontDefault().texture.id);
+    SetTextureFilter(f->font.texture, TEXTURE_FILTER_BILINEAR);
+    return f;
 }
 
 static int graph_key_code(const char *key) {
@@ -103,6 +136,23 @@ static GraphWin *graph_new_win(int w, int h, const char *title) {
     return win;
 }
 
+typedef struct {
+    int base_size;    /* size requested at load — used for stub metrics */
+    int loaded;       /* mirrors the raylib-backend field; always 1 here */
+} GraphFont;
+
+/* Stub: validates the file exists (same error contract as the raylib
+ * backend) and records the size for deterministic text_width metrics. */
+static GraphFont *graph_new_font(const char *path, int base_size) {
+    FILE *probe = fopen(path, "rb");
+    if (!probe) return NULL;
+    fclose(probe);
+    GraphFont *f = (GraphFont *)calloc(1, sizeof(GraphFont));
+    f->base_size = base_size;
+    f->loaded    = 1;
+    return f;
+}
+
 static int graph_key_code(const char *key) { (void)key; return 0; }
 /* suppress unused-function in stub mode */
 static inline void graph_key_code_unused_(void) { (void)graph_key_code; }
@@ -134,6 +184,24 @@ static inline GraphWin *graph_unwrap(const Value *v, ErrStack *err,
     return (GraphWin *)v->as.dyn->items[0].as.ptr;
 }
 
+static inline Value graph_wrap_font(GraphFont *f) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=f;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+}
+static inline GraphFont *graph_unwrap_font(const Value *v, ErrStack *err,
+                                            int *had_error, int line, const char *fn) {
+    char eb[280];
+    if (v->type!=VAL_DYN||!v->as.dyn||v->as.dyn->count<1||
+        v->as.dyn->items[0].type!=VAL_PTR||!v->as.dyn->items[0].as.ptr) {
+        snprintf(eb,sizeof(eb),
+            "graph.%s: invalid font cursor — use graph.load_font() to create one",fn);
+        errstack_push(err,ERR_FLUXA,eb,"graph",line); *had_error=1; return NULL; }
+    return (GraphFont *)v->as.dyn->items[0].as.ptr;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────── */
 static inline Value fluxa_std_graph_call(const char *fn_name,
                                           const Value *args, int argc,
@@ -153,6 +221,10 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 
 #define GET_WIN(idx,var) \
     GraphWin *(var)=graph_unwrap(&args[(idx)],err,had_error,line,fn_name); \
+    if(!(var)) return graph_nil();
+
+#define GET_FONT(idx,var) \
+    GraphFont *(var)=graph_unwrap_font(&args[(idx)],err,had_error,line,fn_name); \
     if(!(var)) return graph_nil();
 
 #define GET_INT(idx,var) \
@@ -293,6 +365,67 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         return graph_nil();
     }
 
+    /* ── graph.load_font(win, path, size) → dyn font cursor ─────── */
+    if (!strcmp(fn_name,"load_font")) {
+        NEED(3); GET_WIN(0,win); GET_STR(1,path); GET_INT(2,size);
+        (void)win;
+        if (size < 1 || size > 512) GRAPH_ERR("font size must be 1-512");
+        GraphFont *f = graph_new_font(path, (int)size);
+        if (!f) GRAPH_ERR("cannot open font file");
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (!f->loaded) {
+            free(f);
+            GRAPH_ERR("failed to load font (unsupported or corrupt file)");
+        }
+#endif
+        return graph_wrap_font(f);
+    }
+
+    /* ── graph.draw_text_font(win, font, text, x, y, size, r, g, b) ─ */
+    if (!strcmp(fn_name,"draw_text_font")) {
+        NEED(9); GET_WIN(0,win); GET_FONT(1,fnt);
+        GET_STR(2,text); GET_INT(3,x); GET_INT(4,y); GET_INT(5,size);
+        GET_INT(6,r); GET_INT(7,g); GET_INT(8,b);
+        (void)win; (void)fnt; (void)text; (void)x; (void)y; (void)size;
+        (void)r; (void)g; (void)b;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawTextEx(fnt->font, text,
+            (Vector2){(float)x,(float)y}, (float)size,
+            (float)size / 10.0f,
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+#endif
+        return graph_nil();
+    }
+
+    /* ── graph.text_width(win, font, text, size) → int (pixels) ──── */
+    if (!strcmp(fn_name,"text_width")) {
+        NEED(4); GET_WIN(0,win); GET_FONT(1,fnt);
+        GET_STR(2,text); GET_INT(3,size);
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        Vector2 m = MeasureTextEx(fnt->font, text, (float)size,
+                                  (float)size / 10.0f);
+        return graph_int((long)m.x);
+#else
+        /* deterministic stub metric: ~0.6em average advance per byte */
+        (void)fnt;
+        return graph_int((long)strlen(text) * size * 6 / 10);
+#endif
+    }
+
+    /* ── graph.unload_font(win, font) → nil ──────────────────────── */
+    if (!strcmp(fn_name,"unload_font")) {
+        NEED(2); GET_WIN(0,win); GET_FONT(1,fnt);
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (fnt->loaded) UnloadFont(fnt->font);
+#endif
+        free(fnt);
+        if (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>=1)
+            args[1].as.dyn->items[0].as.ptr=NULL;   /* prevent double-free */
+        return graph_nil();
+    }
+
     if (!strcmp(fn_name,"key_pressed")) {
         NEED(2); GET_WIN(0,win); GET_STR(1,key);
         (void)win;
@@ -352,6 +485,7 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 #undef GRAPH_ERR
 #undef NEED
 #undef GET_WIN
+#undef GET_FONT
 #undef GET_INT
 #undef GET_STR
 

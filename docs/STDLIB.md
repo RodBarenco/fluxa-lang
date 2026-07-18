@@ -1215,7 +1215,11 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.draw_rect(win, x, y, w, h, r, g, b)` | `nil` | Filled rectangle |
 | `graph.draw_circle(win, x, y, radius, r, g, b)` | `nil` | Filled circle |
 | `graph.draw_line(win, x1, y1, x2, y2, r, g, b)` | `nil` | Line |
-| `graph.draw_text(win, text, x, y, size, r, g, b)` | `nil` | Text |
+| `graph.draw_text(win, text, x, y, size, r, g, b)` | `nil` | Text (built-in font) |
+| `graph.load_font(win, path, size)` | `dyn` | Load TTF/OTF font at base size (1–512) |
+| `graph.draw_text_font(win, font, text, x, y, size, r, g, b)` | `nil` | Text with a loaded font |
+| `graph.text_width(win, font, text, size)` | `int` | Rendered text width in pixels |
+| `graph.unload_font(win, font)` | `nil` | Free font (GPU texture in Raylib) |
 | `graph.key_pressed(win, key)` | `bool` | Key just pressed |
 | `graph.key_down(win, key)` | `bool` | Key held |
 | `graph.mouse_x(win)` | `int` | Mouse X |
@@ -1223,6 +1227,57 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.mouse_pressed(win)` | `bool` | Left mouse button |
 | `graph.dt(win)` | `float` | Delta time in seconds |
 | `graph.version()` | `str` | Backend version |
+
+### Custom fonts (TTF/OTF)
+
+`graph.load_font` opens a TTF/OTF file and rasterizes a glyph atlas at the given
+base size. The atlas covers **ASCII 32–126 plus Latin-1 160–255** — Portuguese and
+Western European accented characters (`ã`, `ç`, `é`, …) render correctly; text is
+passed as normal UTF-8 `str`.
+
+The font is an opaque `dyn` cursor, same ownership pattern as the window: create
+after `graph.init`, pass to workers/functions as an argument, release with
+`graph.unload_font` before `graph.close`. Using a font after `unload_font` is an
+"invalid font cursor" error, captured by `danger`.
+
+```fluxa
+import std graph
+
+danger {
+    dyn win  = graph.init(800, 600, "fonts")
+    dyn font = graph.load_font(win, "assets/Roboto-Bold.ttf", 32)
+
+    str title = "Colocação — 1º lugar"
+    int tw = graph.text_width(win, font, title, 32)
+    int cx = (800 - tw) / 2                       // center horizontally
+
+    while !graph.should_close(win) {
+        graph.begin_frame(win)
+        graph.clear(win, 20, 20, 30)
+        graph.draw_text_font(win, font, title, cx, 40, 32, 255, 255, 255)
+        graph.end_frame(win)
+    }
+
+    graph.unload_font(win, font)
+    graph.close(win)
+}
+if err != nil { print(err[0]) }
+```
+
+Notes:
+- **Base size vs draw size.** The atlas is rasterized at the `load_font` size; the
+  `draw_text_font`/`text_width` size scales it (bilinear filtering). For crisp
+  text, load at the size you draw at — load one cursor per size if a screen mixes
+  a title size and a body size.
+- **Errors.** Missing file → "cannot open font file"; unsupported/corrupt file
+  (Raylib backend) → "failed to load font"; size outside 1–512 → error. All
+  captured by `danger`.
+- **Frame-path discipline.** As with `draw_text`, never build the text with inline
+  `strings.*` inside the frame loop — cache the strings (see FLUXA_GUIDE §5) and
+  call `text_width` only when the text changes, not per frame.
+- **Stub backend.** Validates the file exists, draws nothing, and `text_width`
+  returns the deterministic approximation `len(text) * size * 6 / 10` — enough to
+  test layout logic without a display.
 
 ---
 
