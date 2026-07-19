@@ -25,6 +25,7 @@
  *   graph.clear(win, r, g, b)         → nil   (RGB 0-255)
  *   graph.fps(win)                    → int
  *   graph.set_fps(win, fps)           → nil
+ *   graph.fullscreen(win)             → bool  (alterna tela cheia; retorna o estado novo)
  *   graph.draw_rect(win, x, y, w, h, r, g, b)          → nil
  *   graph.draw_circle(win, x, y, radius, r, g, b)       → nil
  *   graph.draw_line(win, x1, y1, x2, y2, r, g, b)      → nil
@@ -56,15 +57,25 @@
 #include <raylib.h>
 
 typedef struct {
-    int width, height;
+    int width, height;       /* logical (design) resolution — game draws here */
     int fps_target;
+    RenderTexture2D target;  /* fixed-size offscreen buffer for scaled output */
+    int has_target;          /* 1 once the render texture is created */
 } GraphWin;
 
 static GraphWin *graph_new_win(int w, int h, const char *title) {
     GraphWin *win = (GraphWin *)calloc(1, sizeof(GraphWin));
     win->width = w; win->height = h; win->fps_target = 60;
     InitWindow(w, h, title);
+    SetExitKey(KEY_NULL);   /* ESC must reach the program (quit-confirm UIs),
+                             * not silently close the window (raylib default) */
     SetTargetFPS(60);
+    /* offscreen buffer at the logical resolution; end_frame blits it scaled
+     * and letterboxed to the real window, so fullscreen enlarges the game
+     * proportionally instead of leaving it in the top-left corner. */
+    win->target = LoadRenderTexture(w, h);
+    SetTextureFilter(win->target.texture, TEXTURE_FILTER_BILINEAR);
+    win->has_target = 1;
     return win;
 }
 
@@ -106,6 +117,9 @@ static int graph_key_code(const char *key) {
     if (!strcmp(key,"DOWN"))   return KEY_DOWN;
     if (!strcmp(key,"LEFT"))   return KEY_LEFT;
     if (!strcmp(key,"RIGHT"))  return KEY_RIGHT;
+    if (!strcmp(key,"F11"))       return KEY_F11;
+    if (!strcmp(key,"BACKSPACE"))  return KEY_BACKSPACE;
+    if (!strcmp(key,"TAB"))        return KEY_TAB;
     if (strlen(key) == 1 && key[0] >= 'A' && key[0] <= 'Z')
         return KEY_A + (key[0] - 'A');
     if (strlen(key) == 1 && key[0] >= '0' && key[0] <= '9')
@@ -123,6 +137,7 @@ typedef struct {
     int fps_target;
     int frame_count;
     int should_close;
+    int fullscreen;
 } GraphWin;
 
 static GraphWin *graph_new_win(int w, int h, const char *title) {
@@ -252,6 +267,7 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     if (!strcmp(fn_name,"close")) {
         NEED(1); GET_WIN(0,win);
 #ifdef FLUXA_GRAPH_RAYLIB
+        if (win->has_target) UnloadRenderTexture(win->target);
         CloseWindow();
 #endif
         free(win);
@@ -272,7 +288,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     if (!strcmp(fn_name,"begin_frame")) {
         NEED(1); GET_WIN(0,win);
 #ifdef FLUXA_GRAPH_RAYLIB
-        BeginDrawing();
+        if (win->has_target) {
+            BeginTextureMode(win->target);   /* render the game at logical res */
+        } else {
+            BeginDrawing();
+        }
 #else
         win->frame_count++;
 #endif
@@ -282,7 +302,28 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     if (!strcmp(fn_name,"end_frame")) {
         NEED(1); GET_WIN(0,win);
 #ifdef FLUXA_GRAPH_RAYLIB
-        EndDrawing();
+        if (win->has_target) {
+            EndTextureMode();                 /* finish the offscreen render */
+            int sw = GetScreenWidth();
+            int sh = GetScreenHeight();
+            float scale = (float)sw / (float)win->width;
+            float sy = (float)sh / (float)win->height;
+            if (sy < scale) scale = sy;        /* fit: the smaller ratio wins */
+            float dw = win->width  * scale;
+            float dh = win->height * scale;
+            float ox = (sw - dw) * 0.5f;       /* center → letterbox/pillarbox */
+            float oy = (sh - dh) * 0.5f;
+            BeginDrawing();
+            ClearBackground(BLACK);            /* bars around the game are black */
+            Rectangle srcR = { 0, 0, (float)win->target.texture.width,
+                                     -(float)win->target.texture.height };
+            Rectangle dstR = { ox, oy, dw, dh };
+            Vector2 origin = { 0, 0 };
+            DrawTexturePro(win->target.texture, srcR, dstR, origin, 0.0f, WHITE);
+            EndDrawing();
+        } else {
+            EndDrawing();
+        }
 #else
         (void)win;
 #endif
@@ -305,6 +346,18 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         return graph_int(GetFPS());
 #else
         return graph_int(win->fps_target);
+#endif
+    }
+
+    if (!strcmp(fn_name,"fullscreen")) {
+        NEED(1); GET_WIN(0,win);
+#ifdef FLUXA_GRAPH_RAYLIB
+        (void)win;
+        ToggleFullscreen();
+        return graph_bool(IsWindowFullscreen());
+#else
+        win->fullscreen = !win->fullscreen;
+        return graph_bool(win->fullscreen);
 #endif
     }
 
@@ -447,20 +500,40 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     }
 
     if (!strcmp(fn_name,"mouse_x")) {
-        NEED(1); GET_WIN(0,win); (void)win;
+        NEED(1); GET_WIN(0,win);
 #ifdef FLUXA_GRAPH_RAYLIB
+        if (win->has_target) {
+            int sw = GetScreenWidth();
+            int sh = GetScreenHeight();
+            float scale = (float)sw / (float)win->width;
+            float sy = (float)sh / (float)win->height;
+            if (sy < scale) scale = sy;
+            float ox = (sw - win->width * scale) * 0.5f;
+            int lx = (int)(((float)GetMouseX() - ox) / scale);
+            return graph_int(lx);
+        }
         return graph_int(GetMouseX());
 #else
-        return graph_int(0);
+        (void)win; return graph_int(0);
 #endif
     }
 
     if (!strcmp(fn_name,"mouse_y")) {
-        NEED(1); GET_WIN(0,win); (void)win;
+        NEED(1); GET_WIN(0,win);
 #ifdef FLUXA_GRAPH_RAYLIB
+        if (win->has_target) {
+            int sw = GetScreenWidth();
+            int sh = GetScreenHeight();
+            float scale = (float)sw / (float)win->width;
+            float sx = (float)sh / (float)win->height;
+            if (sx < scale) scale = sx;
+            float oy = (sh - win->height * scale) * 0.5f;
+            int ly = (int)(((float)GetMouseY() - oy) / scale);
+            return graph_int(ly);
+        }
         return graph_int(GetMouseY());
 #else
-        return graph_int(0);
+        (void)win; return graph_int(0);
 #endif
     }
 
