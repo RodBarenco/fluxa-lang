@@ -4,6 +4,7 @@
 # generate() returns a placeholder in stub mode — tests API, prst patterns,
 # error handling, and the hot-reload survival of model cursors.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT

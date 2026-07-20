@@ -320,11 +320,11 @@ static inline void rt_set(Runtime *rt, ASTNode *node,
                 gc_unpin(&rt->gc, _old->as.dyn);
             if (_old->type == VAL_STRING && _old->as.string &&
                 !(v.type == VAL_STRING && v.as.string == _old->as.string))
-                free(_old->as.string);
+                fxstr_release(_old->as.string);
             else if (_old->type == VAL_ARR && _old->as.arr.data &&
                      _old->as.arr.owned &&
                      !(v.type == VAL_ARR && v.as.arr.data == _old->as.arr.data))
-                value_free_data(_old);
+                value_release_data(_old);
         }
         rt->stack[node->resolved_offset] = v;
         /* Pin the new VAL_DYN — symmetric with the unpin above so the slot
@@ -337,11 +337,16 @@ static inline void rt_set(Runtime *rt, ASTNode *node,
     }
     if (rt->current_instance) {
         if (scope_has(&rt->current_instance->scope, name)) {
-            scope_set(&rt->current_instance->scope, name, v);
+            /* Bug K fix: adopt the value (owned store). scope_set would
+             * strdup a copy and abandon the evaluated original — one leaked
+             * string per field assignment in module-Block methods. */
+            scope_set_owned(&rt->current_instance->scope, name, v);
             return;
         }
     }
-    scope_set(&rt->scope, name, v);
+    /* Bug K fix: same adoption for unresolved frame locals — scope_set's
+     * copy-in leaked the evaluated original once per declaration/assign. */
+    scope_set_owned(&rt->scope, name, v);
 }
 
 /* ── Forward declaration ─────────────────────────────────────────────────── */
@@ -419,23 +424,27 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
                 (_ln->type == NODE_MEMBER_CALL) ||
                 (_ln->type == NODE_FUNC_CALL)   ||
                 (_ln->type == NODE_FFI_CALL)    ||
-                (_ln->type == NODE_IDENTIFIER);
+                (_ln->type == NODE_IDENTIFIER) ||
+                (_ln->type == NODE_ARR_ACCESS)  ||
+                (_ln->type == NODE_MEMBER_ACCESS);
     int _rown = (_rn->type == NODE_STRING_LIT)  ||
                 (_rn->type == NODE_MEMBER_CALL) ||
                 (_rn->type == NODE_FUNC_CALL)   ||
                 (_rn->type == NODE_FFI_CALL)    ||
-                (_rn->type == NODE_IDENTIFIER);
+                (_rn->type == NODE_IDENTIFIER) ||
+                (_rn->type == NODE_ARR_ACCESS)  ||
+                (_rn->type == NODE_MEMBER_ACCESS);
     Value      left  = eval(rt, _ln);
     if (rt->had_error) return val_nil();
     Value      right = eval(rt, _rn);
     if (rt->had_error) {
-        if (_lown && left.type == VAL_STRING && left.as.string) free(left.as.string);
+        if (_lown && left.type == VAL_STRING && left.as.string) fxstr_release(left.as.string);
         return val_nil();
     }
     #define _BIN_RET(v) do { \
         Value _vv = (v); \
-        if (_lown && left.type  == VAL_STRING && left.as.string)  free(left.as.string); \
-        if (_rown && right.type == VAL_STRING && right.as.string) free(right.as.string); \
+        if (_lown && left.type  == VAL_STRING && left.as.string)  fxstr_release(left.as.string); \
+        if (_rown && right.type == VAL_STRING && right.as.string) fxstr_release(right.as.string); \
         return _vv; \
     } while (0)
 
@@ -512,6 +521,46 @@ static Value eval_binary(Runtime *rt, ASTNode *node) {
  *   - Non-tail calls (e.g. `return n * fatorial(n-1)`) are NOT tail calls
  *     and still recurse normally — their depth is bounded by FLUXA_MAX_DEPTH.
  */
+/* ── Frame slot teardown ─────────────────────────────────────────────────
+ * Release heap values owned by the callee's stack slots before the frame is
+ * discarded (normal return) or reused (tail call). Ownership unification:
+ * every producer (literal, call, identifier, arr/member access) hands stores
+ * an owned VAL_STRING copy, so each slot is the sole owner of its string.
+ * VAL_ARR slots own their data iff .owned (param refs are borrowed views).
+ * VAL_DYN slots are left UNTOUCHED: parameter binding adopts the caller's
+ * dyn pointer WITHOUT acquiring a pin (only rt_set pins), so unpinning here
+ * would steal the caller's pin and let the GC sweep a live dyn (verified:
+ * heap-use-after-free on the game's `win` bind). Dyn lifecycle stays exactly
+ * as before this patch — pins are dropped by reassignment and lib release
+ * functions (sqlite.close / json2.discard / ...), per the language guide.
+ * `keep` guards against releasing heap data aliased by the return value.
+ * `from`: first slot to release. Interpreter frames own their params (args
+ * are handed over by the caller) and release from 0. The VM->interpreter
+ * bridges adopt VM REGISTER pointers into param slots — those stay owned by
+ * the VM register lifecycle, so the bridges release locals only (from=argc). */
+static void frame_release_slots_from(Runtime *rt, int from, const Value *keep) {
+    for (int _i = from; _i < rt->stack_size; _i++) {
+        Value *sv = &rt->stack[_i];
+        switch (sv->type) {
+        case VAL_STRING:
+            if (sv->as.string &&
+                !(keep && keep->type == VAL_STRING &&
+                  keep->as.string == sv->as.string))
+                fxstr_release(sv->as.string);
+            sv->type = VAL_NIL; sv->as.string = NULL;
+            break;
+        case VAL_ARR:
+            if (sv->as.arr.data && sv->as.arr.owned &&
+                !(keep && keep->type == VAL_ARR &&
+                  keep->as.arr.data == sv->as.arr.data))
+                value_release_data(sv);
+            sv->type = VAL_NIL;
+            break;
+        default: break;   /* VAL_DYN and scalars: untouched (see above) */
+        }
+    }
+}
+
 static Value call_function(Runtime *rt, ASTNode *fn_node,
                             ASTNode **arg_nodes, int arg_count,
                             BlockInstance *method_inst) {
@@ -572,9 +621,9 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
             if (_vt == VAL_INT || _vt == VAL_FLOAT || _vt == VAL_BOOL) {
                 scope_set(&rt->scope, _pe->name, _pe->value);
             } else if (_vt == VAL_STRING && _pe->value.as.string) {
-                Value _sv = _pe->value;
-                _sv.as.string = strdup(_pe->value.as.string);
-                scope_set(&rt->scope, _pe->name, _sv);
+                /* scope_set copies in (fxstr_new) — passing the pool's raw
+                 * pointer directly is safe and kills the old pre-copy leak. */
+                scope_set(&rt->scope, _pe->name, _pe->value);
             }
         }
     }
@@ -649,6 +698,9 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
             /* Reset scope for next iteration — reuse same C frame */
             scope_free(&rt->scope);
             rt->scope      = scope_new();
+            /* Tail call: the frame is reused — release this iteration's
+             * heap-owning slots first (next_args are owned copies, safe). */
+            frame_release_slots_from(rt, 0, NULL);
             rt->stack_size = 0;
             rt->ret.tco_active = 0;
 
@@ -676,7 +728,7 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
     /* ── arr return ownership fix ────────────────────────────────────────
      * If the function returns a VAL_ARR, its data pointer is shared with
      * a scope entry in rt->scope. scope_free() below will call
-     * value_free_data() on that entry and free the data — leaving
+     * value_release_data() on that entry and free the data — leaving
      * result.as.arr.data as a dangling pointer.
      *
      * Fix: deep-copy the arr data before freeing the scope.
@@ -690,7 +742,7 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
             for (int _i = 0; _i < n; _i++) {
                 copy[_i] = result.as.arr.data[_i];
                 if (copy[_i].type == VAL_STRING && copy[_i].as.string)
-                    copy[_i].as.string = strdup(copy[_i].as.string);
+                    copy[_i].as.string = fxstr_retain(copy[_i].as.string);
             }
             result.as.arr.data  = copy;
             result.as.arr.owned = 1;
@@ -700,28 +752,15 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
          * silent use-after-free on every arr return. */
     }
 
-    /* ── str return ownership fix (Block methods) ────────────────────────
-     * A Block method may return a string that is owned by the block
-     * instance scope (e.g. `fn get() str { return field }`). The returned
-     * Value shares that char* with the still-live instance. If the caller
-     * then calls free() on the result, it frees a pointer the block still
-     * holds → double-free when the block is later torn down.
-     *
-     * Fix: when a Block method (method_inst != NULL) returns a VAL_STRING,
-     * hand the caller an independent strdup'd copy. The instance keeps its
-     * own field intact; the caller owns a freeable copy.
-     *
-     * Scope: only Block-method returns. Plain function locals live in stack
-     * slots (never aliased by a persistent owner), so they need no copy.
-     * Cost: one strdup per string-returning method call — zero impact on the
-     * make-bench suite, which returns only int from methods. */
-    if (method_inst && result.type == VAL_STRING && result.as.string) {
-        char *dup = strdup(result.as.string);
-        if (dup) result.as.string = dup;
-        /* strdup failure: leave the shared pointer; the OOM path is no worse
-         * than before this fix existed. */
-    }
+    /* Str returns need no per-method strdup here: ownership unification
+     * makes every producer (identifier, member/arr access, calls) hand the
+     * return path an owned copy, so `result` never aliases instance or
+     * frame storage. A dup at this point would leak the producer's copy. */
 
+    /* Ownership teardown: free the callee's heap-owning slots before the
+     * caller frame is restored over them. Without this, the last value in
+     * every str local leaks once per call (bug K, leak B). */
+    frame_release_slots_from(rt, 0, &result);
     scope_free(&rt->scope);
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
@@ -747,7 +786,9 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
     if (member->type == NODE_VAR_DECL) {
         Value v = eval(rt, member->as.var_decl.initializer);
         if (!rt->had_error)
-            scope_set(scope, member->as.var_decl.var_name, v);
+            /* Bug K fix: adopt the initializer value — scope_set's copy-in
+             * leaked the evaluated original once per field per instance. */
+            scope_set_owned(scope, member->as.var_decl.var_name, v);
     } else if (member->type == NODE_FUNC_DECL) {
         Value v; v.type = VAL_FUNC; v.as.func = member;
         scope_set(scope, member->as.func_decl.name, v);
@@ -764,7 +805,7 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
                 for (int i = 0; i < src_size && i < size; i++) {
                     data[i] = def.as.arr.data[i];
                     if (data[i].type == VAL_STRING && data[i].as.string)
-                        data[i].as.string = strdup(data[i].as.string);
+                        data[i].as.string = fxstr_retain(data[i].as.string);
                 }
                 Value arr = val_arr(data, size);
                 scope_set(scope, member->as.arr_decl.arr_name, arr);
@@ -1149,10 +1190,8 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
                 /* str return ownership fix (see call_function): a method that
                  * inlines `return field` aliases the instance's char*. Hand
                  * the caller an owned copy so free() on the result is safe. */
-                if (inline_result.type == VAL_STRING && inline_result.as.string) {
-                    char *dup = strdup(inline_result.as.string);
-                    if (dup) inline_result.as.string = dup;
-                }
+                if (inline_result.type == VAL_STRING && inline_result.as.string)
+                    fxstr_retain(inline_result.as.string);   /* O(1) owned read */
                 return inline_result;
             }
         }
@@ -1208,6 +1247,10 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
             warm_update_sig(rt->current_wf);
         Value result = rt->ret.active ? rt->ret.value : val_nil();
         rt->ret.active = 0;
+        /* Ownership teardown (bug K): release the LOCALS' heap values before
+         * the VM caller frame is restored. Param slots [0, argc) adopted VM
+         * register pointers and are skipped — the VM owns those. */
+        frame_release_slots_from(rt, safe_argc, &result);
         /* Restore caller frame */
         scope_free(&rt->scope);
         rt->scope            = caller_scope;
@@ -1324,6 +1367,9 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         warm_update_sig(rt->current_wf);
     Value result = rt->ret.active ? rt->ret.value : val_nil();
     rt->ret.active = 0;
+    /* Ownership teardown (bug K): locals only — param slots hold VM register
+     * pointers owned by the VM lifecycle (see frame_release_slots_from). */
+    frame_release_slots_from(rt, safe_argc2, &result);
     scope_free(&rt->scope);
     rt->scope            = caller_scope;
     rt->stack_size       = caller_sz;
@@ -1397,13 +1443,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     prst_graph_record(&rt->prst_graph, name, ctx);
                 }
             }
-            /* Detach the result string so the caller becomes the sole owner.
-             * Without this, `str y = x` would alias x's char* and a later
-             * `x = ...` (which now frees the old slot string in rt_set) would
-             * leave y dangling. Cost: O(strlen) per identifier-as-string read;
-             * the alternative (no free in rt_set) is the original leak. */
+            /* Owned read: retain the buffer (O(1)). The caller holds its own
+             * reference — `str y = x` shares the immutable buffer, and a
+             * later `x = ...` releases x's ref without touching y's. */
             if (v.type == VAL_STRING && v.as.string)
-                v.as.string = strdup(v.as.string);
+                v.as.string = fxstr_retain(v.as.string);
             return v;
         }
 
@@ -1474,6 +1518,17 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         }
 
                         Value chosen = src_changed ? src_init : pooled;
+                        /* prst_pool_get returns the pool's RAW pointer. The
+                         * stack slot must own independent heap data — frame
+                         * teardown releases slot strings on every return.
+                         * Strings: copy. Arrays: mark the slot's view as
+                         * borrowed so teardown/rt_set never free pool data. */
+                        if (!src_changed) {
+                            if (chosen.type == VAL_STRING && chosen.as.string)
+                                chosen.as.string = fxstr_new(chosen.as.string); /* pool is plain malloc */
+                            else if (chosen.type == VAL_ARR)
+                                chosen.as.arr.owned = 0;
+                        }
 
                         /* Always refresh offset: resolver may assign a different
                          * slot on a new parse of the same file. */
@@ -1485,10 +1540,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         if (src_changed && entry_idx >= 0) {
                             Value *iv = &RT_POOL(rt)->entries[entry_idx].init_value;
                             if (iv->type == VAL_STRING && iv->as.string)
-                                free(iv->as.string);
+                                free(iv->as.string); /* POOL-INTERNAL storage: plain malloc — never fxstr_release */
                             *iv = src_init;
                             if (iv->type == VAL_STRING && iv->as.string)
-                                iv->as.string = strdup(iv->as.string);
+                                iv->as.string = strdup(iv->as.string); /* pool-internal storage: plain malloc, freed by the pool */
                         }
                         rt_set(rt, node, vname, chosen);
                         scope_table_set(&rt->global_table, vname, chosen);
@@ -1560,7 +1615,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
             if (rt->current_instance &&
                 scope_has(&rt->current_instance->scope, node->as.assign.var_name)) {
-                scope_set(&rt->current_instance->scope, node->as.assign.var_name, v);
+                /* Bug K fix: adopt the evaluated value. scope_set here made a
+                 * strdup copy and abandoned the original — one leaked string
+                 * per str-field assignment in Block methods reached via this
+                 * short-circuit (module singletons among them). */
+                scope_set_owned(&rt->current_instance->scope,
+                                node->as.assign.var_name, v);
                 return val_nil();
             }
             if (node->resolved_offset < 0 &&
@@ -1702,10 +1762,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 int _own = (_ch->type == NODE_MEMBER_CALL) ||
                            (_ch->type == NODE_FUNC_CALL)   ||
                            (_ch->type == NODE_FFI_CALL)    ||
-                           (_ch->type == NODE_IDENTIFIER);   /* now strdups */
+                           (_ch->type == NODE_IDENTIFIER)  ||  /* owned reads */
+                           (_ch->type == NODE_ARR_ACCESS)  ||
+                           (_ch->type == NODE_MEMBER_ACCESS);
                 if (_own) {
                     if (_sv.type == VAL_STRING && _sv.as.string) {
-                        free(_sv.as.string);
+                        fxstr_release(_sv.as.string);
                     } else if (_sv.type == VAL_DYN && _sv.as.dyn) {
                         /* For dyn returns, GC owns it now (registered by the
                          * lib dispatch). Unregister and free immediately
@@ -1850,7 +1912,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     for (int i = 0; i < def.as.arr.size; i++) {
                         data[i] = def.as.arr.data[i];
                         if (data[i].type == VAL_STRING && data[i].as.string)
-                            data[i].as.string = strdup(data[i].as.string);
+                            data[i].as.string = fxstr_retain(data[i].as.string);
                     }
                     /* Zero-fill remaining slots with type-appropriate zero */
                     for (int i = def.as.arr.size; i < size; i++) {
@@ -1923,9 +1985,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                          (_en->type == NODE_MEMBER_CALL) ||
                                          (_en->type == NODE_FUNC_CALL)   ||
                                          (_en->type == NODE_FFI_CALL)    ||
-                                         (_en->type == NODE_IDENTIFIER);
+                                         (_en->type == NODE_IDENTIFIER) ||
+                                         (_en->type == NODE_ARR_ACCESS) ||
+                                         (_en->type == NODE_MEMBER_ACCESS);
                         if (!_src_owned)
-                            data[i].as.string = strdup(data[i].as.string);
+                            data[i].as.string = fxstr_retain(data[i].as.string);
                     }
                     /* type enforcement on each element */
                     if (arr_type && data[i].type != VAL_NIL) {
@@ -1982,7 +2046,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                     if (dcopy[_pi].type == VAL_STRING &&
                                         dcopy[_pi].as.string)
                                         dcopy[_pi].as.string =
-                                            strdup(dcopy[_pi].as.string);
+                                            fxstr_new(dcopy[_pi].as.string); /* pool is plain malloc */
                                 }
                                 Value restored = val_arr(dcopy, psz);
                                 scope_set(&rt->scope,
@@ -2039,7 +2103,15 @@ static Value eval(Runtime *rt, ASTNode *node) {
                              arr_name, idx, d->count);
                     rt_error(rt, buf); return val_nil();
                 }
-                return d->items[idx];
+                {
+                    /* Ownership unification: element reads hand the caller
+                     * an owned copy — a second name never aliases the
+                     * element's buffer. */
+                    Value _ev = d->items[idx];
+                    if (_ev.type == VAL_STRING && _ev.as.string)
+                        _ev.as.string = fxstr_retain(_ev.as.string);
+                    return _ev;
+                }
             }
 
             if (arr_val.type != VAL_ARR) {
@@ -2058,7 +2130,12 @@ static Value eval(Runtime *rt, ASTNode *node) {
                          arr_name, idx, arr_val.as.arr.size);
                 rt_error(rt, buf); return val_nil();
             }
-            return arr_val.as.arr.data[idx];
+            {
+                Value _ev = arr_val.as.arr.data[idx];
+                if (_ev.type == VAL_STRING && _ev.as.string)
+                    _ev.as.string = fxstr_retain(_ev.as.string);   /* owned copy */
+                return _ev;
+            }
         }
 
         case NODE_ARR_ASSIGN: {
@@ -2103,7 +2180,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                             for (int j = 0; j < v.as.arr.size; j++) {
                                 nd[j] = v.as.arr.data[j];
                                 if (nd[j].type == VAL_STRING && nd[j].as.string)
-                                    nd[j].as.string = strdup(nd[j].as.string);
+                                    nd[j].as.string = fxstr_retain(nd[j].as.string);
                             }
                             v = val_arr(nd, v.as.arr.size);
                         }
@@ -2111,11 +2188,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         BlockInstance *clone = block_inst_clone(v.as.block_inst);
                         if (!clone) { rt_error(rt, "out of memory cloning Block into dyn"); return val_nil(); }
                         v.as.block_inst = clone;
-                    } else if (v.type == VAL_STRING && v.as.string) {
-                        v.as.string = strdup(v.as.string);
                     }
+                    /* VAL_STRING: adopt — producers hand an owned copy. */
                     /* Free old value's heap resources before overwriting */
-                    value_free_data(&d->items[idx]);
+                    value_release_data(&d->items[idx]);
                     d->items[idx] = v;
                     return val_nil();
                 }
@@ -2173,16 +2249,18 @@ static Value eval(Runtime *rt, ASTNode *node) {
                              arr_name, idx,
                              val_type_name(elem_type), val_type_name(v.type));
                     rt_error_line(rt, buf, node->line);
+                    if (v.type == VAL_STRING && v.as.string)
+                        fxstr_release(v.as.string);   /* owned — release on error */
                     return val_nil();
                 }
             }
             /* free old string if needed */
             if (target_arr->data[idx].type == VAL_STRING &&
                 target_arr->data[idx].as.string)
-                free(target_arr->data[idx].as.string);
-            /* copy new value; strdup strings */
-            if (v.type == VAL_STRING && v.as.string)
-                v.as.string = strdup(v.as.string);
+                fxstr_release(target_arr->data[idx].as.string);
+            /* Adopt: every producer hands stores an owned VAL_STRING copy,
+             * so the slot becomes the sole owner — a strdup here would leak
+             * the producer's copy on every element write. */
             target_arr->data[idx] = v;
 
             /* Sync mutated arr back to prst pool if it's a prst variable */
@@ -2195,10 +2273,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         idx < pool_val->as.arr.size) {
                         if (pool_val->as.arr.data[idx].type == VAL_STRING &&
                             pool_val->as.arr.data[idx].as.string)
-                            free(pool_val->as.arr.data[idx].as.string);
+                            free(pool_val->as.arr.data[idx].as.string); /* POOL-INTERNAL: plain malloc */
                         Value pv = v;
                         if (pv.type == VAL_STRING && pv.as.string)
-                            pv.as.string = strdup(pv.as.string);
+                            pv.as.string = fxstr_new(pv.as.string);
                         pool_val->as.arr.data[idx] = pv;
                     }
                 }
@@ -2242,7 +2320,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                             if (new_data[j].type == VAL_STRING &&
                                 new_data[j].as.string)
                                 new_data[j].as.string =
-                                    strdup(new_data[j].as.string);
+                                    fxstr_retain(new_data[j].as.string);
                         }
                         elem = val_arr(new_data, elem.as.arr.size); /* owned=1 */
                     }
@@ -2256,7 +2334,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     }
                     elem.as.block_inst = clone;
                 } else if (elem.type == VAL_STRING && elem.as.string) {
-                    elem.as.string = strdup(elem.as.string);
+                    elem.as.string = fxstr_new(elem.as.string);
                 }
 
                 d->items[d->count++] = elem;
@@ -2349,7 +2427,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     for (int j = 0; j < v.as.arr.size; j++) {
                         nd[j] = v.as.arr.data[j];
                         if (nd[j].type == VAL_STRING && nd[j].as.string)
-                            nd[j].as.string = strdup(nd[j].as.string);
+                            nd[j].as.string = fxstr_retain(nd[j].as.string);
                     }
                     v = val_arr(nd, v.as.arr.size);
                 }
@@ -2359,11 +2437,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 if (!clone) { rt_error(rt, "out of memory cloning Block into dyn"); return val_nil(); }
                 v.as.block_inst = clone;
             } else if (v.type == VAL_STRING && v.as.string) {
-                v.as.string = strdup(v.as.string);
+                v.as.string = fxstr_retain(v.as.string);
             }
 
             /* Free old value's heap resources before overwriting */
-            value_free_data(&d->items[idx]);
+            value_release_data(&d->items[idx]);
             d->items[idx] = v;
             return val_nil();
         }
@@ -2521,7 +2599,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 for (int i = 0; i < arr_val.as.arr.size; i++) {
                     Value _el = arr_val.as.arr.data[i];
                     if (_el.type == VAL_STRING && _el.as.string)
-                        _el.as.string = strdup(_el.as.string);
+                        _el.as.string = fxstr_new(_el.as.string);
                     rt_set(rt, node, node->as.for_stmt.var_name, _el);
                     eval(rt, node->as.for_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
@@ -2532,7 +2610,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 for (int i = 0; i < d->count; i++) {
                     Value _el = d->items[i];
                     if (_el.type == VAL_STRING && _el.as.string)
-                        _el.as.string = strdup(_el.as.string);
+                        _el.as.string = fxstr_new(_el.as.string);
                     rt_set(rt, node, node->as.for_stmt.var_name, _el);
                     eval(rt, node->as.for_stmt.body);
                     if (rt->had_error || rt->ret.active) break;
@@ -2627,7 +2705,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 gc_unregister(&rt->gc, target->as.dyn);
 
             /* Free all heap resources and zero the slot */
-            value_free_data(target);
+            value_release_data(target);
             *target = val_nil();
             return val_nil();
         }
@@ -2797,6 +2875,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 snprintf(buf, sizeof(buf), "'%s' has no member '%s'", owner, field);
                 rt_error(rt, buf); return val_nil();
             }
+            if (v.type == VAL_STRING && v.as.string)
+                v.as.string = fxstr_retain(v.as.string);   /* owned copy */
             return v;
         }
 
@@ -2811,7 +2891,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
             }
             Value v = eval(rt, node->as.member_assign.value);
             if (rt->had_error) return val_nil();
-            scope_set(&inst->scope, field, v);
+            scope_set_owned(&inst->scope, field, v);   /* adopt owned value */
             return val_nil();
         }
 
@@ -2849,7 +2929,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         /* Free any already-owned args before bailing. */
                         for (int _j = 0; _j < _i; _j++)
                             if (_args_owned[_j] && _args[_j].type == VAL_STRING && _args[_j].as.string)
-                                free(_args[_j].as.string);
+                                fxstr_release(_args[_j].as.string);
                         return val_nil();
                     }
                     _args_owned[_i] =
@@ -2857,7 +2937,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         (_an->type == NODE_MEMBER_CALL) ||
                         (_an->type == NODE_FUNC_CALL)   ||
                         (_an->type == NODE_FFI_CALL)    ||
-                        (_an->type == NODE_IDENTIFIER);   /* now strdups */
+                        (_an->type == NODE_IDENTIFIER)  ||  /* strdups */
+                        (_an->type == NODE_ARR_ACCESS)  ||  /* strdups */
+                        (_an->type == NODE_MEMBER_ACCESS);  /* strdups */
                 }
 
                 /* Walk registry — find the lib whose owner matches.
@@ -2891,7 +2973,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     /* Release transient heap allocations from owned args. */
                     for (int _i = 0; _i < _argc; _i++)
                         if (_args_owned[_i] && _args[_i].type == VAL_STRING && _args[_i].as.string)
-                            free(_args[_i].as.string);
+                            fxstr_release(_args[_i].as.string);
                     /* Register VAL_DYN returns with the GC so a later
                      * reassignment of the holding slot drops the dyn to
                      * pin_count 0 and a sweep can free it. Without this,
@@ -2913,7 +2995,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                  * args again, so release ours here to avoid leaking. */
                 for (int _i = 0; _i < _argc; _i++)
                     if (_args_owned[_i] && _args[_i].type == VAL_STRING && _args[_i].as.string)
-                        free(_args[_i].as.string);
+                        fxstr_release(_args[_i].as.string);
             }
 
             BlockInstance *inst = resolve_instance(rt, owner);

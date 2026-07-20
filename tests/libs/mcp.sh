@@ -4,6 +4,7 @@
 # std.mcp = Fluxa AS an MCP server (JSON-RPC 2.0 over HTTP, mongoose backend)
 # API: mcp.serve(port), mcp.poll(server, ms), mcp.stop(server), mcp.version()
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; _SRV_PID=0

@@ -687,11 +687,11 @@ Value fluxa_ffi_call(FFILib *lib, const char *sym_name,
                         str_wbuf[i][str_buf_size - 1] = '\0';
                         /* Replace the string value with the new content.
                          * The old string will be freed by the runtime GC. */
-                        char *updated = strdup(str_wbuf[i]);
+                        char *updated = fxstr_new(str_wbuf[i]);
                         if (updated) {
-                            /* Free old sds string if owned, replace pointer */
-                            if (args[i].as.string)
-                                free(args[i].as.string);
+                            /* Release the old ref; other holders of the old
+                             * buffer keep it (immutability preserved). */
+                            fxstr_release(args[i].as.string);
                             args[i].as.string = updated;
                         }
                     }

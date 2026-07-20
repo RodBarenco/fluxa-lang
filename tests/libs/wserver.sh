@@ -14,6 +14,7 @@
 #
 # Requires for real-backend tests: libmicrohttpd-dev at build time + curl.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 case "$FLUXA" in /*) ;; *) FLUXA="$(pwd)/$FLUXA" ;; esac

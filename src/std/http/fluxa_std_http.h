@@ -112,7 +112,7 @@ static inline Value httpd_nil(void)   { Value v; v.type=VAL_NIL;    return v; }
 static inline Value httpd_int(long n) { Value v; v.type=VAL_INT;    v.as.integer=n; return v; }
 static inline Value httpd_bool(int b) { Value v; v.type=VAL_BOOL;   v.as.boolean=b; return v; }
 static inline Value httpd_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 
 static inline Value httpd_wrap_ptr(void *ptr, int tag) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));

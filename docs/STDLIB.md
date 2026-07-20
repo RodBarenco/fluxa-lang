@@ -86,10 +86,13 @@ Each intermediate `j1`, `j2`, `j3` is declared with a fresh name on every iterat
 
 `free()` rejects:
 - `prst` variables (state preservation across reloads owns the heap)
-- Block instance fields (instance scope owns them)
 - Anything that's not a stack-resolved local
 
 Attempting these produces a clear runtime error.
+
+As of v0.23, `free(field)` on a Block instance field is **allowed**: it releases
+the field's reference and sets it to `nil` (the next assignment revives it), matching
+the behavior of a plain local. Earlier versions rejected it.
 
 ### Cursors and external resources
 
@@ -558,7 +561,7 @@ Thread-safe key/value cache with sharded locks and a bump-pointer arena allocato
 
 Two independent subsystems share one library:
 - **Cache** — 32 shards × 256 slots each = **8192 entries**. Per-shard `pthread_mutex` keeps contention bounded under heavy concurrency. Keys and values are owned copies (caller can free their inputs immediately after `cache.put`). When the 8-probe window in a shard fills, `cache.put` performs **random eviction** of one of the probed slots — recent writes always succeed.
-- **Arena** — up to 64 concurrent arenas, each a linked list of 64 KB slabs with 8-byte aligned bump allocation. `arena_reset` returns the arena to one fresh slab in O(slabs); `arena_drop` releases everything. Strings allocated in an arena are **not** released by `free()` — only by `arena_reset` or `arena_drop`.
+- **Arena** — up to 64 concurrent arenas, each a linked list of 64 KB slabs with 8-byte aligned bump allocation. `arena_reset` returns the arena to one fresh slab in O(slabs); `arena_drop` releases everything. As of v0.23 `arena_str`/`arena_concat` return an ordinary refcounted string (a copy out of the arena), so the returned value follows the normal ownership rules; the arena's own memory is still bulk-released only by `arena_reset` or `arena_drop`. The arena remains the win for building many short-lived strings without per-piece `malloc`/`free`.
 
 **Enable:**
 ```toml
@@ -598,7 +601,7 @@ Under healthy operation, `failures` stays at 0 (random eviction never fails). `e
 | Function | Returns | Description |
 |---|---|---|
 | `cache.arena_new()` | int | Create a fresh arena. Returns handle `> 0` or 0 on table-full. |
-| `cache.arena_str(int h, str src)` | str | Copy `src` into the arena. Returned pointer is owned by the arena. |
+| `cache.arena_str(int h, str src)` | str | Build `src` via the arena; returns an ordinary refcounted string (v0.23+). |
 | `cache.arena_concat(int h, str a, str b)` | str | Concatenate into the arena. |
 | `cache.arena_concat3(int h, a, b, c)` | str | Three-way concat. |
 | `cache.arena_concat5(int h, a, b, c, d, e)` | str | Five-way concat (common for JSON building). |
@@ -1212,6 +1215,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
 | `graph.fps(win)` | `int` | Current FPS |
 | `graph.set_fps(win, fps)` | `nil` | Set target FPS |
+| `graph.fullscreen(win)` | `bool` | Toggle fullscreen; returns the new state. Raylib: `ToggleFullscreen()` (display switches to the window's resolution where the driver allows). Stub: tracks the flag. Key name `"F11"` is also available in `key_pressed`/`key_down`. |
 | `graph.draw_rect(win, x, y, w, h, r, g, b)` | `nil` | Filled rectangle |
 | `graph.draw_circle(win, x, y, radius, r, g, b)` | `nil` | Filled circle |
 | `graph.draw_line(win, x1, y1, x2, y2, r, g, b)` | `nil` | Line |

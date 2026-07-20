@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/libs/cache.sh — std.cache: thread-safe k/v cache.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

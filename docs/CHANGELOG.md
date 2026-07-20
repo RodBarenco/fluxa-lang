@@ -1,6 +1,49 @@
 # Fluxa-lang Changelog
 
-## v0.22.1 — docs: correctness pass across all reference material (current)
+## v0.22.3 — std.graph: fullscreen toggle (current)
+
+- `graph.fullscreen(win)` → bool: toggles fullscreen and returns the new
+  state. Raylib backend uses `ToggleFullscreen()`; stub tracks the flag so
+  program logic is testable headless.
+- Key map: `"F11"` now recognized by `key_pressed`/`key_down` (raylib).
+- Tests: 2 new cases in tests/libs/graph.sh (toggle state, invalid window).
+
+## v0.22.2 — std.graph: custom TTF/OTF font support
+
+### feat(graph): load_font / draw_text_font / text_width / unload_font
+
+`std.graph` gains custom-font text rendering, on both backends:
+
+- **`graph.load_font(win, path, size)` → `dyn`** — loads a TTF/OTF file and
+  rasterizes a glyph atlas at the given base size (1–512). The atlas covers
+  ASCII 32–126 **plus Latin-1 160–255**, so Portuguese/Western European accented
+  characters render correctly from plain UTF-8 `str` values. Returns an opaque
+  font cursor (same `VAL_PTR`-in-`dyn` pattern as the window cursor).
+- **`graph.draw_text_font(win, font, text, x, y, size, r, g, b)` → `nil`** —
+  draws with the loaded font (`DrawTextEx` on Raylib; spacing = size/10; bilinear
+  filtering on the atlas texture for scaled sizes).
+- **`graph.text_width(win, font, text, size)` → `int`** — rendered width in
+  pixels (`MeasureTextEx` on Raylib), for centering and layout.
+- **`graph.unload_font(win, font)` → `nil`** — releases the font (GPU texture on
+  Raylib) and nulls the cursor; any later use is an "invalid font cursor" error.
+
+Error contract (identical on both backends where possible): missing file →
+"cannot open font file"; size outside 1–512 → error; Raylib additionally rejects
+unsupported/corrupt files ("failed to load font") by detecting the
+fall-back-to-default-font case — the default font is never unloaded. All errors
+route through `LIB_ERR` and are captured by `danger` as usual.
+
+Stub backend: validates the file exists, no-op rendering, and a deterministic
+`text_width` approximation (`len * size * 6 / 10`) so layout logic is testable
+headless.
+
+Tests: `tests/libs/graph.sh` extended 13 → 20 cases (happy path, missing file,
+bad size, UTF-8 accents in a frame, deterministic width, use-after-unload,
+bad cursor). Raylib branch compile-verified against raylib 5.5 headers with
+`-Wall -Wextra -pedantic` — zero warnings. Docs: `STDLIB.md` std.graph section
+updated with the function table and a custom-font usage guide.
+
+## v0.22.1 — docs: correctness pass across all reference material
 
 ### docs: correct the Block/`danger`/`dyn` rule and other verified behavior
 

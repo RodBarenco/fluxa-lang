@@ -5,6 +5,7 @@
 # Covers: failure at each step, corrupted snapshot, type collision,
 # adding+removing prst simultaneously, 64+ vars, large dyn in migration.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

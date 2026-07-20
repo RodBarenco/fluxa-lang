@@ -5,6 +5,7 @@
 # Covers: aggressive auto-grow, type swaps, large payload, 10k+ elements,
 # Block and arr deep copy independence, dyn-in-dyn prohibition.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

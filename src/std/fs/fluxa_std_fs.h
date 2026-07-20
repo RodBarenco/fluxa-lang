@@ -45,7 +45,7 @@ static inline Value fs_nil(void)     { Value v; v.type = VAL_NIL;    return v; }
 static inline Value fs_int(long n)   { Value v; v.type = VAL_INT;    v.as.integer = n; return v; }
 static inline Value fs_bool(int b)   { Value v; v.type = VAL_BOOL;   v.as.boolean = b; return v; }
 static inline Value fs_str(const char *s) {
-    Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v;
 }
 
 /* ── Dispatch ────────────────────────────────────────────────────── */
@@ -86,7 +86,7 @@ static inline Value fluxa_std_fs_call(const char *fn_name,
             *had_error = 1; return fs_nil();
         }
         fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
-        char *buf = (char *)malloc((size_t)sz + 1);
+        char *buf = fxstr_alloc((size_t)sz);   /* refcounted, zero extra copy */
         size_t nr = fread(buf, 1, (size_t)sz, f); buf[nr] = '\0';
         fclose(f);
         Value v; v.type = VAL_STRING; v.as.string = buf;
@@ -204,7 +204,7 @@ static inline Value fluxa_std_fs_call(const char *fn_name,
                     (size_t)dyn->cap * sizeof(Value));
             }
             dyn->items[dyn->count].type = VAL_STRING;
-            dyn->items[dyn->count].as.string = strdup(ent->d_name);
+            dyn->items[dyn->count].as.string = fxstr_new(ent->d_name);
             dyn->count++;
         }
         closedir(d);
@@ -232,7 +232,7 @@ static inline Value fluxa_std_fs_call(const char *fn_name,
     if (!strcmp(fn_name, "join")) {
         NEED(2); GET_STR(0, a); GET_STR(1, b);
         size_t la = strlen(a), lb = strlen(b);
-        char *buf = (char *)malloc(la + lb + 2);
+        char *buf = fxstr_alloc(la + lb + 1);   /* refcounted */
         memcpy(buf, a, la);
         if (la > 0 && a[la-1] != '/' && b[0] != '/') buf[la++] = '/';
         memcpy(buf + la, b, lb); buf[la + lb] = '\0';

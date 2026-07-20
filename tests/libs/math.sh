@@ -7,6 +7,7 @@
 # If the binary was compiled without FLUXA_STD_MATH, math calls silently fall through
 # to the "not a Block / not FFI" path and will report an error — tests will fail clearly.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

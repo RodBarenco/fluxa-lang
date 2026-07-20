@@ -170,7 +170,7 @@ static WsConn *ws_unwrap(const Value *v, ErrStack *err, int *had_error,
 }
 
 static Value ws_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 static Value ws_bool(int b) {
     Value v; v.type=VAL_BOOL; v.as.boolean=b; return v; }
 
@@ -358,7 +358,7 @@ static WsConn *ws_unwrap(const Value *v, ErrStack *err, int *had_error,
     return (WsConn *)v->as.dyn->items[0].as.ptr;
 }
 static Value ws_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 static Value ws_bool(int b) { Value v; v.type=VAL_BOOL; v.as.boolean=b; return v; }
 
 #endif /* FLUXA_WS_LIBWEBSOCKETS */

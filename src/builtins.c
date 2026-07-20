@@ -63,11 +63,13 @@ static inline int builtin_arg_owned(ASTNode *n) {
            (n->type == NODE_MEMBER_CALL) ||
            (n->type == NODE_FUNC_CALL)   ||
            (n->type == NODE_FFI_CALL)    ||
-           (n->type == NODE_IDENTIFIER);
+           (n->type == NODE_IDENTIFIER)  ||
+           (n->type == NODE_ARR_ACCESS)  ||
+           (n->type == NODE_MEMBER_ACCESS);
 }
 static inline void builtin_release_owned(Value *v, ASTNode *n) {
     if (builtin_arg_owned(n) && v->type == VAL_STRING && v->as.string)
-        free(v->as.string);
+        fxstr_release(v->as.string);
 }
 
 static Value builtin_print(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
@@ -140,7 +142,7 @@ static Value builtin_str_alloc(struct Runtime *rt, ASTNode *call, EvalFn eval_fn
         return val_nil();
     }
     size_t sz = (size_t)n.as.integer;
-    char *buf = calloc(sz + 1, 1);   /* zero-initialised, +1 for null terminator */
+    char *buf = fxstr_alloc(sz);     /* zero-initialised refcounted buffer */
     if (!buf) { rt->had_error = 1; return val_nil(); }
     Value v; v.type = VAL_STRING; v.as.string = buf;
     return v;
@@ -158,17 +160,16 @@ static Value builtin_input(struct Runtime *rt, ASTNode *call, EvalFn eval_fn) {
     char buf[1024];
     if (!fgets(buf, sizeof(buf), stdin)) {
         /* EOF or error — return empty string */
-        Value v; v.type = VAL_STRING; v.as.string = "";
+        Value v; v.type = VAL_STRING; v.as.string = fxstr_new("");
         return v;
     }
     /* strip trailing newline */
     int len = (int)strlen(buf);
     if (len > 0 && buf[len-1] == '\n') buf[--len] = '\0';
     if (len > 0 && buf[len-1] == '\r') buf[--len] = '\0';
-    /* copy to heap so the caller owns the string */
-    char *s = malloc((size_t)len + 1);
+    /* copy to a refcounted heap buffer so the caller owns the string */
+    char *s = fxstr_new_len(buf, (size_t)len);
     if (!s) { rt->had_error = 1; return val_nil(); }
-    memcpy(s, buf, (size_t)len + 1);
     Value v; v.type = VAL_STRING; v.as.string = s;
     return v;
 }

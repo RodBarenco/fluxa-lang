@@ -3,6 +3,7 @@
 # Covers the issue #144 work: usable free() across global/function/block
 # scopes, Block-method string-return ownership, and str-arr-literal ownership.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

@@ -4,6 +4,8 @@
 
 **v0.16 — Beta**
 
+*Reflects runtime behavior as of v0.23 (reference-counted immutable strings; see §13.6).*
+
 *Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 28 stdlib libs · Module System*
 
 *Hobby language — Rio de Janeiro, Brazil*
@@ -1417,16 +1419,33 @@ synchronized via the pool's own lock, not via the GC.
 
 ## 13.6 Slot Ownership and the `free` Operator
 
-This section defines the runtime contract for heap-bearing slot lifetimes. The contract is observable from Fluxa code through three mechanisms — automatic release on slot reassignment, automatic release of transient values produced by reads/calls/comparisons, and the explicit `free(x)` operator. Together they guarantee that a long-running worker can run indefinitely at bounded memory.
+This section defines the runtime contract for heap-bearing slot lifetimes. As of
+runtime v0.23, `str` buffers are **reference-counted and immutable**: a read shares
+the buffer and adds a reference (O(1), no copy), and every release path — slot
+reassignment, discarded produced values, explicit `free(x)`, and frame teardown —
+drops a reference, freeing the buffer only at zero. The contract is observable from
+Fluxa code through three mechanisms — automatic release on slot reassignment,
+automatic release of references taken by reads/calls/comparisons, and the explicit
+`free(x)` operator. Together they guarantee that a long-running worker can run
+indefinitely at bounded memory.
 
 ### Heap-bearing types
 
 Two value types carry heap data:
 
-- `VAL_STRING` — a `char *` buffer owned by the slot or by the producer of the Value.
+- `VAL_STRING` — a pointer to a **refcounted, immutable** buffer. The buffer
+  carries a hidden header `[rc | bytes...]`; `Value.as.string` points at the bytes,
+  so all existing readers of `as.string` are unaffected. Because strings are
+  immutable (any modification produces a new buffer), the buffer is shared freely on
+  read and its reference count records how many live names point at it. The heap is
+  released when — and only when — the count reaches zero. Reference counts are atomic
+  (`__atomic`), so a buffer may be shared across `std.flxthread` threads without a
+  copy rule.
 - `VAL_DYN` — a `FluxaDyn *` registered with the GC and tracked by pin count.
 
-Fixed arrays (`VAL_ARR` with `owned = 1`) also carry heap data (the `data` pointer and any string elements). The same rules apply, but `VAL_ARR` is a value type, not a separate identity tracked by the GC.
+Fixed arrays (`VAL_ARR` with `owned = 1`) also carry heap data (the `data` pointer
+and any refcounted string elements). The same rules apply, but `VAL_ARR` is a value
+type, not a separate identity tracked by the GC.
 
 ### Automatic release on slot reassignment (`rt_set`)
 
@@ -1434,10 +1453,14 @@ When the runtime writes to `rt->stack[offset]` via `rt_set`, the previous slot c
 
 | Old slot type | Action before overwrite |
 |---|---|
-| `VAL_STRING` | `free(old.as.string)` unless the new value aliases the same pointer (self-assignment guard) |
+| `VAL_STRING` | Release the old buffer's reference (drop rc by one; free at zero) |
 | `VAL_DYN` | `gc_unpin(old.as.dyn)` so a later sweep can collect orphans |
-| `VAL_ARR` (owned) | `value_free_data(old)` — releases the data array and each owned element |
+| `VAL_ARR` (owned) | Release the data array and each owned element's reference |
 | `VAL_INT`, `VAL_FLOAT`, `VAL_BOOL`, `VAL_NIL` | No-op |
+
+A same-pointer self-assignment needs no special case under reference counting:
+the incoming value already holds a reference (a read retains), so releasing the old
+reference and adopting the new one is correct even when both name the same buffer.
 
 After the new value is stored, `rt_set` re-establishes ownership invariants:
 
@@ -1445,38 +1468,44 @@ After the new value is stored, `rt_set` re-establishes ownership invariants:
 
 This produces the invariant **"every slot is the sole owner of its heap-bearing contents"** at all times outside the body of `rt_set` itself.
 
-### Automatic release of transient produced values
+### Reference discipline for produced values
 
-Any expression evaluation produces a `Value`. When that value would be discarded — used once and dropped — the runtime releases its heap data if it owns the data.
+Any expression evaluation produces a `Value`. Under reference counting the model is
+uniform: **every producer of a `VAL_STRING` hands the consumer its own reference,
+and every store adopts that reference.** There is no "aliased" class to reason about
+— a read never yields a bare pointer that a second name could unsafely share.
 
-The runtime classifies the producer node as **owned** (the runtime allocated the heap data and no slot took ownership) or **aliased** (the value shares storage with a slot or with a stable backing structure). Aliased values are never freed by the consumer; owned values are released at the consumer's edge.
+Producers and how they obtain a reference:
+- `NODE_STRING_LIT`, `NODE_MEMBER_CALL`, `NODE_FUNC_CALL`, `NODE_FFI_CALL` — allocate
+  a fresh refcounted buffer (rc = 1); a literal via the string constructor, a call
+  via its return path.
+- `NODE_IDENTIFIER`, `NODE_MEMBER_ACCESS` (Block field read), `NODE_ARR_ACCESS`,
+  `NODE_INDEXED_MEMBER_ACCESS` (array/dyn element read) — **retain** the existing
+  buffer (rc + 1) and return the same pointer. This is O(1) regardless of string
+  size; the caller receives an independent reference to the shared immutable buffer.
+- Reads of non-string types — by value, no reference involved.
 
-Owned producers (by AST node type):
-- `NODE_STRING_LIT` — eval calls `val_string(s)` which `strdup`s the literal.
-- `NODE_MEMBER_CALL`, `NODE_FUNC_CALL`, `NODE_FFI_CALL` — call return values are owned by the caller.
-- `NODE_IDENTIFIER` reading a `VAL_STRING` — the eval path `strdup`s the slot's string so the reader becomes the sole owner.
-
-Aliased producers:
-- `NODE_MEMBER_ACCESS` (Block instance field read)
-- `NODE_ARR_ACCESS`, `NODE_INDEXED_MEMBER_ACCESS` (array/dyn element read)
-- Identifier reads of non-string types.
-
-Consumers that perform automatic release:
+Consumers release the references they were handed:
 
 | Consumer | When |
 |---|---|
-| `NODE_MEMBER_CALL` / `NODE_FUNC_CALL` / `NODE_FFI_CALL` arg evaluation | After the called function returns. Owned `VAL_STRING` args are freed. |
-| `eval_binary` (comparison, arithmetic) | At every return path. Owned `VAL_STRING` operands of `==`, `!=`, `+`, `-`, `*`, `/` are freed. |
-| `NODE_BLOCK_STMT` statement loop | After each child statement returns a value. Owned `VAL_STRING` returns are freed; owned `VAL_DYN` returns are unregistered and freed if `pin_count == 0`. |
-| `builtin_len`, `builtin_print` | After the body uses the value. The transient string is freed. |
-| `NODE_FOR` element binding | Loop var is given a `strdup` of `VAL_STRING` elements so iteration does not corrupt the source. |
-| `NODE_ARR_DECL` element evaluation | Already-owned producers are stored as-is; aliased producers are `strdup`'d defensively. |
+| `NODE_MEMBER_CALL` / `NODE_FUNC_CALL` / `NODE_FFI_CALL` arg evaluation | After the called function returns, each `VAL_STRING` argument reference is released. |
+| `eval_binary` (comparison, arithmetic) | At every return path, `VAL_STRING` operand references of `==`, `!=`, `+`, `-`, `*`, `/` are released. |
+| `NODE_BLOCK_STMT` statement loop | After each child statement returns a value, a `VAL_STRING` return reference is released; a `VAL_DYN` return is unregistered and freed if `pin_count == 0`. |
+| `builtin_len`, `builtin_print` | After the body uses the value, its reference is released (O(1); no copy was made to read it). |
+| `NODE_FOR` element binding | The loop variable retains a reference to each element buffer; iteration cannot corrupt the source. |
+| `NODE_ARR_DECL` element evaluation | Producers are stored by adopting their reference (the store does not re-copy). |
+| Frame teardown (function return, TCO trampoline, both VM→interpreter bridges) | Releases the references held by the frame's `VAL_STRING` slots and owned `VAL_ARR` slots. In the VM bridges, parameter slots hold VM-register pointers owned by the VM and are skipped; only locals are released. `VAL_DYN` slots are left untouched — parameter binding adopts the caller's `dyn` without pinning, so releasing here would drop the caller's pin. |
 | End of `danger { }` | `gc_sweep` collects unpinned `dyn` objects. |
-| Function return | `rt_scope_free` walks the scope and releases everything. |
 
 ### Explicit `free(x)`
 
-`free(x)` releases the heap data in slot `x` and sets the slot to `nil`. It is required only for intermediate local bindings that the compiler cannot infer are dead — typically a chain of `strings.concat` calls building a response body in a worker loop that never returns.
+`free(x)` releases slot `x`'s reference to its heap data and sets the slot to `nil`.
+For a `VAL_STRING` this drops the buffer's reference count by one, freeing the buffer
+only if no other name still holds it; other live references remain valid (the buffer
+is immutable, so no reader is disturbed). `free()` is needed only for intermediate
+local bindings the compiler cannot infer are dead — typically a chain of
+`strings.concat` calls building a response body in a worker loop that never returns.
 
 ```fluxa
 str p1 = strings.concat("{\"id\":\"", id)
@@ -1487,20 +1516,22 @@ wserver.reply_json(req, 200, p4)
 free(p1); free(p2); free(p3); free(p4)
 ```
 
-Each `p1..p4` is a fresh declaration: no reassignment releases the previous one, and the function never returns to release the scope. `free()` is the only way to release these in bounded memory.
+Each `p1..p4` is a fresh declaration: no reassignment releases the previous one, and
+the function never returns to release the scope. `free()` is the only way to release
+these in bounded memory.
 
 `free(x)` behavior by target:
 
 | Target | Behavior |
 |---|---|
-| Local stack slot holding `VAL_STRING` | `free(as.string)`, slot → nil |
+| Local stack slot holding `VAL_STRING` | Release the buffer reference (free at rc 0), slot → nil |
 | Local stack slot holding `VAL_DYN` | `gc_unregister + fluxa_dyn_free`, slot → nil |
-| Local stack slot holding `VAL_ARR` (owned) | `value_free_data`, slot → nil |
+| Local stack slot holding `VAL_ARR` (owned) | Release the array and each element reference, slot → nil |
 | Local stack slot holding a by-value type | No-op, slot → nil |
 | Slot already `nil` | No-op |
+| Block instance field holding `VAL_STRING` (v0.23+) | Release the field's reference, field → nil; a later assignment revives it |
 | `prst` variable | Runtime error (`free` rejects prst — persistence layer owns the heap) |
-| Block instance field | Runtime error (instance scope owns the heap) |
-| Anything not resolved to a stack slot | Runtime error (cannot infer target) |
+| Anything not resolved to a stack slot or Block field | Runtime error (cannot infer target) |
 
 `free(x)` is idempotent. Calling it twice in a row on the same slot is harmless.
 
@@ -1510,46 +1541,44 @@ Each `p1..p4` is a fresh declaration: no reassignment releases the previous one,
 
 To clear a `prst` value, assign a replacement: `my_prst = ""` for strings, `my_prst = nil` for dyn — the pool's set path handles the previous value's release.
 
-### The array-element aliasing trap (practical consequence)
+### Reading array and `dyn` elements
 
-The owned/aliased classification above has a direct, dangerous consequence for user
-code. Reading an array or dyn element (`NODE_ARR_ACCESS`) produces an **aliased**
-value — the variable receives the *same* `char *` the element holds, not a copy.
-Creating a second owner this way violates the sole-owner invariant, and the runtime
-collects on it at `free`/reassignment time. All four faces below are verified by
-execution:
+Reading an array or `dyn` element (`NODE_ARR_ACCESS`, `NODE_INDEXED_MEMBER_ACCESS`)
+**retains** the element's buffer and returns an independent reference to it — O(1),
+no copy. The reader holds its own reference to the shared immutable buffer, so
+freeing or reassigning the reader affects only the reader's reference; the element is
+untouched. All faces below are verified by execution:
 
 ```fluxa
 str arr names[3] = ""
 names[0] = "Alpha"
 
-// Face 1 — free(x) destroys names[0]'s buffer:
-str x = names[0]      // x aliases names[0] (same pointer)
-free(x)               // frees the buffer that names[0] still points to
-print(names[0])       // → double free / use-after-free  [ABORT]
+// Reading gives you your own reference:
+str x = names[0]      // retains names[0]'s buffer (O(1))
+free(x)               // drops x's reference; names[0] still holds one
+print(names[0])       // → "Alpha"   (intact)
 
-// Face 2 — reassigning an aliasing variable frees the element's buffer:
+// Reassigning a reader releases only its reference:
 str y = names[0]
-y = names[1]          // rt_set frees y's old buffer = names[0]'s buffer
-print(names[0])       // → freed  [ABORT]
+y = names[1]          // releases y's reference to names[0]'s buffer; that buffer
+                      //   still has names[0]'s reference and survives
+print(names[0])       // → "Alpha"   (intact)
 ```
 
-Writing to an element is the safe direction — `arr[i] = var` copies the value into
-the slot (`NODE_ARR_DECL`/store path `strdup`s defensively). Reading is the trap.
+Writing to an element (`arr[i] = var`) adopts the produced reference into the slot.
+All reading patterns are equally safe and equally cheap: `for-in` (the loop variable
+retains each element), passing an element directly as a call argument (the parameter
+retains), or binding to a variable. The earlier `strings.concat(arr[i], "")` copy
+idiom is no longer necessary. This applies identically to `dyn` elements from
+`csv`/`sqlite` rows.
 
-**Safe patterns** (all verified): iterate with `for-in` (the loop var gets a
-`strdup` copy — `NODE_FOR` binding); pass the element directly as a call argument
-(the parameter receives a copy); or, when a variable is required, declare it inside
-the loop and force a copy with `strings.concat(arr[i], "")`. Never bind an array
-element to a variable you will `free` or reassign.
-
-| Operation | Producer class | Safe? |
+| Operation | Reference behavior | Safe? |
 |---|---|---|
-| `str x = arr[i]` | aliased | ⚠️ dangerous — second owner |
-| `arr[i] = var` | store copies | ✅ safe |
-| `for e in arr` | strdup copy | ✅ safe |
-| `f(arr[i])` | arg copy | ✅ safe |
-| `str x = strings.concat(arr[i], "")` | owned copy | ✅ safe |
+| `str x = arr[i]` / `d[i]` / `inst.field` | retain (own reference, O(1)) | ✅ safe |
+| `arr[i] = var` | store adopts the reference | ✅ safe |
+| `for e in arr` | retain per element | ✅ safe |
+| `f(arr[i])` | parameter retains | ✅ safe |
+| building a new string (`strings.*`) | new buffer, rc = 1 (O(n)) | ✅ safe |
 
 ### Interaction with `dyn` cursors
 

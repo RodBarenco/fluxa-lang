@@ -63,7 +63,7 @@ static size_t mcps_write_cb(void *ptr, size_t size, size_t nmemb, void *ud) {
 static inline Value mcps_nil(void)          { Value v; v.type = VAL_NIL;  return v; }
 static inline Value mcps_str(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : ""); return v;
+    v.as.string = fxstr_new(s ? s : ""); return v;
 }
 
 static inline Value mcps_wrap(McpsClient *c) {
@@ -256,8 +256,7 @@ static inline Value fluxa_std_mcps_call(const char *fn_name,
             const char *end = strchr(p, '"');
             if (!end) break;
             size_t len = (size_t)(end - p);
-            char *name = (char *)malloc(len + 1);
-            memcpy(name, p, len); name[len] = '\0';
+            char *name = fxstr_new_len(p, len);
 
             if (d->count >= d->cap) {
                 d->cap *= 2;

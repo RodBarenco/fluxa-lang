@@ -3,6 +3,7 @@
 # Spins up a local mosquitto broker for deterministic testing.
 # Requires: mosquitto installed (apt install mosquitto).
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"

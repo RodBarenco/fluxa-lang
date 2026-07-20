@@ -6,6 +6,7 @@
 #   dyn petshop = [caramelo, persa]
 #   int n = petshop[1].olhos   ← parser gerava NODE_ARR_ACCESS + token .olhos perdido
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

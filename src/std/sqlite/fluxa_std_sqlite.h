@@ -29,7 +29,7 @@ static inline Value sqlite_int(long n) {
 }
 static inline Value sqlite_str(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 static inline Value sqlite_nil(void) {

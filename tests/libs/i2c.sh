@@ -3,6 +3,7 @@
 # Physical I2C tests are skipped when /dev/i2c-* is absent.
 # Error-path and API-shape tests run on any Linux system.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT

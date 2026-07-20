@@ -8,6 +8,7 @@
 #include "uthash.h"
 #include <stdlib.h>
 #include <string.h>
+#include "fxstr.h"
 
 /* ── Value types ─────────────────────────────────────────────────────────── */
 typedef enum {
@@ -79,7 +80,7 @@ static inline Value val_bool(int b)      { Value v; v.type=VAL_BOOL;  v.as.boole
 static inline Value val_string(const char *s) {
     Value v;
     v.type = VAL_STRING;
-    v.as.string = s ? strdup(s) : strdup("");
+    v.as.string = fxstr_new(s);   /* refcounted, rc=1 */
     return v;
 }
 
@@ -126,6 +127,9 @@ typedef struct {
 /* ── Public API ──────────────────────────────────────────────────────────── */
 Scope  scope_new(void);
 void   scope_set(Scope *s, const char *name, Value value);
+/* Ownership-taking store: adopts `value` (no copy), frees the old entry's
+ * heap data (self-assignment safe). Mirrors the resolver fast path. */
+void   scope_set_owned(Scope *s, const char *name, Value value);
 int    scope_get(Scope *s, const char *name, Value *out);
 int    scope_has(Scope *s, const char *name);
 void   scope_free(Scope *s);
@@ -139,6 +143,7 @@ void scope_set_block_free_cb(void (*cb)(void *inst));
 /* Free all heap resources owned by a Value (not the struct itself).
  * No-op for primitives, VAL_PTR, VAL_BLOCK_INST. Recursive for VAL_DYN. */
 void   value_free_data(Value *v);
+void   value_release_data(Value *v);  /* fxstr-side twin — runtime owners */
 
 /* Free a FluxaDyn struct and all its items recursively. */
 void   fluxa_dyn_free(FluxaDyn *d);
@@ -160,16 +165,16 @@ static inline void scope_table_set(ScopeEntry **table, const char *name, Value v
     HASH_FIND_STR(*table, name, entry);
     if (entry) {
         if (entry->value.type == VAL_STRING && entry->value.as.string)
-            free(entry->value.as.string);
+            fxstr_release(entry->value.as.string);
         if (value.type == VAL_STRING && value.as.string)
-            value.as.string = strdup(value.as.string);
+            value.as.string = fxstr_new(value.as.string);
         entry->value = value;
     } else {
         entry = (ScopeEntry*)calloc(1, sizeof(ScopeEntry));
         strncpy(entry->name, name, sizeof(entry->name) - 1);
         entry->persistent = 0;
         if (value.type == VAL_STRING && value.as.string)
-            value.as.string = strdup(value.as.string);
+            value.as.string = fxstr_new(value.as.string);
         entry->value = value;
         HASH_ADD_STR(*table, name, entry);
     }
@@ -181,7 +186,7 @@ static inline void scope_table_free(ScopeEntry **table) {
     HASH_ITER(hh, *table, e, tmp) {
         HASH_DEL(*table, e);
         if (e->value.type == VAL_STRING && e->value.as.string)
-            free(e->value.as.string);
+            fxstr_release(e->value.as.string);
         free(e);
     }
     *table = NULL;

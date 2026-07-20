@@ -457,6 +457,18 @@ else
     ERRORS="${ERRORS}\n  sprint10c/free:\n$(echo "$free_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
 fi
 
+# ── bugk/ownership ──────────────────────────────────────────────────────────
+printf "  %-56s" "bugk/ownership (owned producers, frame teardown)"
+bugk_out=$(bash "$SCRIPT_DIR/bugk_ownership.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$bugk_out" | grep -q "bugk: PASS"; then
+    echo "PASS"
+    PASS=$((PASS+1))
+else
+    echo "FAIL"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  bugk/ownership:\n$(echo "$bugk_out" | grep -E "FAIL|PASS" | sed 's/^/    /')"
+fi
+
 # ── sprint10/semantics ──────────────────────────────────────────────────────
 printf "  %-56s" "sprint10/semantics (dyn rules, arr type, Block isolation)"
 sem_out=$(bash "$SCRIPT_DIR/sprint10_semantics.sh" --fluxa "$FLUXA" 2>&1)

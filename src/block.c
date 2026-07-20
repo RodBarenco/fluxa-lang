@@ -123,7 +123,7 @@ BlockInstance *block_inst_clone(const BlockInstance *src) {
                 for (int i = 0; i < v.as.arr.size; i++) {
                     new_data[i] = v.as.arr.data[i];
                     if (new_data[i].type == VAL_STRING && new_data[i].as.string)
-                        new_data[i].as.string = strdup(new_data[i].as.string);
+                        new_data[i].as.string = fxstr_new(new_data[i].as.string);
                 }
                 v = val_arr(new_data, v.as.arr.size); /* owned=1 */
             }

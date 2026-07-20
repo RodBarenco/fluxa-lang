@@ -58,7 +58,7 @@ static size_t https_write_cb(void *ptr, size_t size, size_t nmemb, void *ud) {
 static inline Value https_int(long n)        { Value v; v.type = VAL_INT;    v.as.integer = n;          return v; }
 static inline Value https_bool(int b)        { Value v; v.type = VAL_BOOL;   v.as.boolean = b;          return v; }
 static inline Value https_nil(void)          { Value v; v.type = VAL_NIL;                               return v; }
-static inline Value https_str(const char *s) { Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v; }
+static inline Value https_str(const char *s) { Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v; }
 
 /* Build response dyn: [status:int, body:str, ok:bool] */
 static inline Value https_make_resp(long status, const char *body) {
@@ -221,7 +221,7 @@ static inline Value fluxa_std_https_call(const char *fn_name,
         NEED(1);
         GET_RESP(0);
         Value s; s.type = VAL_STRING;
-        s.as.string = strdup(_resp->items[1].as.string
+        s.as.string = fxstr_new(_resp->items[1].as.string
                              ? _resp->items[1].as.string : "");
         return s;
     }

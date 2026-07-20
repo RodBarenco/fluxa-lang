@@ -3,6 +3,7 @@
 # Tests FFT, windowing, power spectrum, filters, CFAR, STFT, range-Doppler.
 # All tests use mathematically verifiable properties (Parseval, linearity, etc.)
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT

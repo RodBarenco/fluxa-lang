@@ -3,6 +3,7 @@
 # Tests that don't require a live MCP server validate API shape and errors.
 # Server-dependent tests are skipped if no MCP server is reachable.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT

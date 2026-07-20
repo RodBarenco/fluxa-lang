@@ -10,6 +10,7 @@
 # The test database must already exist; the test creates and drops its own
 # table (fluxa_pg_test) so it does not interfere with existing data.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 case "$FLUXA" in /*) ;; *) FLUXA="$(pwd)/$FLUXA" ;; esac

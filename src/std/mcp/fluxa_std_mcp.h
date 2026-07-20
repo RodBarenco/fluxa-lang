@@ -255,7 +255,7 @@ static void mcp_server_cb(struct mg_connection *c, int ev, void *ev_data) {
 /* ── Value helpers ───────────────────────────────────────────────── */
 static inline Value mcp_nil(void) { Value v; v.type=VAL_NIL; return v; }
 static inline Value mcp_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 
 static inline Value mcp_wrap(McpServer *srv) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));

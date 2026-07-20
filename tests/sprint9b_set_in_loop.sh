@@ -11,6 +11,7 @@ TORTURE_WAIT="${TORTURE_WAIT:-1}"
 # Uso: ./tests/sprint9b_set_in_loop.sh [--fluxa <path>] [--verbose]
 
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

@@ -6,6 +6,7 @@
 #   bash tests/test_sim.sh --rp2040 ./fluxa_sim_rp2040 --esp32 ./fluxa_sim_esp32
 
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 
 FLUXA_RP2040=""
 FLUXA_ESP32=""

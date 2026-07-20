@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/type_check.sh — Sprint 9.b: static type enforcement at runtime
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

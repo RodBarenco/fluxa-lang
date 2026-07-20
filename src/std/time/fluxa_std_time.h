@@ -101,7 +101,7 @@ static inline Value time_bool(int b) {
     Value v; v.type = VAL_BOOL; v.as.boolean = b; return v;
 }
 static inline Value time_str(const char *s) {
-    Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v;
 }
 static inline Value time_nil(void) {
     Value v; v.type = VAL_NIL; return v;

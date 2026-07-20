@@ -212,13 +212,15 @@ static inline Value cache_int(long n)  { Value v; v.type = VAL_INT; v.as.integer
 static inline Value cache_str_heap(const char *s) {
     /* For cache.get and friends: caller owns and may free(). */
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s);
     return v;
 }
 static inline Value cache_str_arena(char *s) {
-    /* For arena_* returns: arena-owned, caller MUST NOT free(). */
+    /* Arena memory has no refcount header — copy out so the Value follows
+     * the uniform ownership rules (the old borrow convention was unsound:
+     * any release path consuming this Value corrupted the arena). */
     Value v; v.type = VAL_STRING;
-    v.as.string = s;
+    v.as.string = fxstr_new(s);
     return v;
 }
 
@@ -458,7 +460,7 @@ static inline Value fluxa_std_cache_call(const char *fn_name,
             size, CACHE_SHARDS * CACHE_PER_SHARD, CACHE_SHARDS, CACHE_PROBE,
             put_calls, put_inserts, put_updates, put_evicts, put_failures,
             get_calls, get_hits, get_misses, hit_ratio);
-        Value v; v.type = VAL_STRING; v.as.string = strdup(buf);
+        Value v; v.type = VAL_STRING; v.as.string = fxstr_new(buf);
         return v;
     }
 

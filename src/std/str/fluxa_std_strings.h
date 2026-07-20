@@ -33,7 +33,7 @@
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 static inline Value strlib_str(const char *s) {
-    Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v;
 }
 static inline Value strlib_int(long n) {
     Value v; v.type = VAL_INT; v.as.integer = n; return v;
@@ -105,13 +105,12 @@ static inline Value fluxa_std_strings_call(const char *fn_name,
             const char *found;
             while ((found = strstr(cur, delim)) != NULL) {
                 size_t seg_len = (size_t)(found - cur);
-                char *seg = (char *)malloc(seg_len + 1);
+                char *seg = fxstr_new_len(cur, seg_len);
                 if (!seg) break;
-                memcpy(seg, cur, seg_len); seg[seg_len] = '\0';
                 if (d->count >= d->cap) {
                     int nc = d->cap * 2;
                     Value *nb = (Value *)realloc(d->items, sizeof(Value)*(size_t)nc);
-                    if (!nb) { free(seg); break; }
+                    if (!nb) { fxstr_release(seg); break; }
                     d->items = nb; d->cap = nc;
                 }
                 d->items[d->count].type = VAL_STRING;

@@ -1011,7 +1011,10 @@ static ASTNode *parse_statement(Parser *p) {
         if (!expect(p, TOK_RPAREN, "after variable name in free()")) return NULL;
         ASTNode *n = P_NODE();
         n->type               = NODE_FREE;
-        n->as.free_stmt.var_name = P_STR(var_name);
+        /* v0.23: free() must see the same mangled name as every other
+         * reference in a module — without this, free(field) inside a
+         * module-Block method failed with "undefined variable". */
+        n->as.free_stmt.var_name = maybe_mangle_str(p, var_name);
         return n;
     }
 

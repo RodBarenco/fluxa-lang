@@ -94,10 +94,16 @@ static GraphFont *graph_new_font(const char *path, int base_size) {
     if (!probe) return NULL;
     fclose(probe);
 
-    int codepoints[95 + 96];
+    int codepoints[95 + 96 + 6];
     int n = 0;
     for (int c = 32;  c <= 126; c++) codepoints[n++] = c;   /* ASCII    */
     for (int c = 160; c <= 255; c++) codepoints[n++] = c;   /* Latin-1  */
+    codepoints[n++] = 0x2014;                               /* — em dash */
+    codepoints[n++] = 0x2018;                               /* '         */
+    codepoints[n++] = 0x2190;                               /* ←         */
+    codepoints[n++] = 0x2191;                               /* ↑         */
+    codepoints[n++] = 0x2192;                               /* →         */
+    codepoints[n++] = 0x2193;                               /* ↓         */
 
     GraphFont *f = (GraphFont *)calloc(1, sizeof(GraphFont));
     f->base_size = base_size;
@@ -180,7 +186,7 @@ static inline Value graph_bool(int b)  { Value v; v.type=VAL_BOOL;   v.as.boolea
 static inline Value graph_int(long n)  { Value v; v.type=VAL_INT;    v.as.integer=n; return v; }
 static inline Value graph_float(double d){ Value v; v.type=VAL_FLOAT; v.as.real=d; return v; }
 static inline Value graph_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 
 static inline Value graph_wrap(GraphWin *win) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));

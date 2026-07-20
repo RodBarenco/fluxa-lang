@@ -12,6 +12,7 @@
 #   5. Unknown function on valid lib → runtime error with lib.fn context
 
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FLUXA="${FLUXA:-$ROOT/fluxa}"

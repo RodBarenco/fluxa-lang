@@ -328,7 +328,7 @@ static inline Value j2_int(long n)   { Value v; v.type = VAL_INT;    v.as.intege
 static inline Value j2_float(double d){ Value v; v.type = VAL_FLOAT; v.as.real    = d; return v; }
 static inline Value j2_bool(int b)   { Value v; v.type = VAL_BOOL;   v.as.boolean = b; return v; }
 static inline Value j2_str(const char *s) {
-    Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v;
 }
 static inline Value j2_wrap(Json2Doc *doc) {
     Value v; v.type = VAL_DYN;

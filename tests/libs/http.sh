@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/libs/http.sh — std.http test suite (mongoose server + client)
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"; kill "$_SRV_PID" 2>/dev/null || true' EXIT

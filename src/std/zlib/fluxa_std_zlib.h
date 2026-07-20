@@ -101,12 +101,11 @@ static inline Value zl_nil(void)     { Value v; v.type = VAL_NIL;    return v; }
 static inline Value zl_int(long n)   { Value v; v.type = VAL_INT;    v.as.integer = n; return v; }
 static inline Value zl_float(double d){ Value v; v.type = VAL_FLOAT; v.as.real    = d; return v; }
 static inline Value zl_str(const char *s) {
-    Value v; v.type = VAL_STRING; v.as.string = strdup(s ? s : ""); return v;
+    Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s); return v;
 }
 static inline Value zl_str_n(const char *s, size_t n) {
     Value v; v.type = VAL_STRING;
-    v.as.string = (char *)malloc(n + 1);
-    memcpy(v.as.string, s, n); v.as.string[n] = '\0';
+    v.as.string = fxstr_new_len(s, n);
     return v;
 }
 

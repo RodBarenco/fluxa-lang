@@ -3,6 +3,7 @@
 # Uses socat to create virtual serial port pairs for deterministic testing.
 # Requires: socat installed (apt install socat).
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT

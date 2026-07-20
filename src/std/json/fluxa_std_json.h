@@ -76,7 +76,7 @@ typedef struct {
 /* ── Value helpers ───────────────────────────────────────────────────────── */
 static inline Value json_str_val(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 static inline Value json_nil(void)  { Value v; v.type = VAL_NIL; return v; }

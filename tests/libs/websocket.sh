@@ -2,6 +2,7 @@
 # tests/libs/websocket.sh — std.websocket test suite
 # Uses a local Python WebSocket echo server for deterministic testing.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"

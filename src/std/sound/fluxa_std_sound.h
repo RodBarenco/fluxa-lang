@@ -82,7 +82,7 @@ static inline Value snd_bool(int b)     { Value v; v.type = VAL_BOOL;  v.as.bool
 static inline Value snd_nil(void)       { Value v; v.type = VAL_NIL;                     return v; }
 static inline Value snd_str(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 

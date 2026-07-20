@@ -4,6 +4,7 @@
 # All rendering calls are no-ops in stub mode — we test API correctness,
 # cursor patterns, error handling, and prst survival.
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 FLUXA="${FLUXA:-./fluxa}"
 for arg in "$@"; do [ "$arg" = "--fluxa" ] && shift && FLUXA="$1" && shift; done
 P="$(mktemp -d)"; trap 'rm -rf "$P"' EXIT
@@ -185,6 +186,140 @@ danger {
 FLX
 )
 echo "$out" | grep -q "^3$" && pass "game_loop_3_frames" || fail "game_loop_3_frames" "3" "$out"
+
+# ── font API (stub backend) ─────────────────────────────────────
+# The stub validates the file exists and provides deterministic metrics.
+head -c 1024 /dev/urandom > "$P/test_font.ttf"
+
+# 13. load_font happy path
+out=$(run << FLX
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "$P/test_font.ttf", 32)
+    bool ok = f != nil
+    print(ok)
+    graph.unload_font(w, f)
+    graph.close(w)
+}
+FLX
+)
+echo "$out" | grep -q "true" && pass "load_font_returns_cursor" || fail "load_font_returns_cursor" "true" "$out"
+
+# 14. load_font missing file → error captured in danger
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "/nonexistent/missing.ttf", 32)
+    graph.close(w)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "load_font_missing_file_error" || fail "load_font_missing_file_error" "error caught" "$out"
+
+# 15. load_font invalid size → error
+out=$(run << FLX
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "$P/test_font.ttf", 0)
+    graph.close(w)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "load_font_bad_size_error" || fail "load_font_bad_size_error" "error caught" "$out"
+
+# 16. draw_text_font in a frame — no crash (UTF-8 accents included)
+out=$(run << FLX
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "$P/test_font.ttf", 32)
+    graph.begin_frame(w)
+    graph.draw_text_font(w, f, "Olá, atenção!", 100, 100, 32, 255, 255, 255)
+    graph.end_frame(w)
+    print("font draw ok")
+    graph.unload_font(w, f)
+    graph.close(w)
+}
+FLX
+)
+echo "$out" | grep -q "font draw ok" && pass "draw_text_font_no_crash" || fail "draw_text_font_no_crash" "font draw ok" "$out"
+
+# 17. text_width — deterministic stub metric: len*size*6/10 → 5*20*6/10 = 60
+out=$(run << FLX
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "$P/test_font.ttf", 20)
+    int tw = graph.text_width(w, f, "Hello", 20)
+    print(tw)
+    graph.unload_font(w, f)
+    graph.close(w)
+}
+FLX
+)
+echo "$out" | grep -q "^60$" && pass "text_width_deterministic_stub" || fail "text_width_deterministic_stub" "60" "$out"
+
+# 18. use after unload_font → invalid cursor error
+out=$(run << FLX
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn f = graph.load_font(w, "$P/test_font.ttf", 32)
+    graph.unload_font(w, f)
+    int tw = graph.text_width(w, f, "x", 10)
+    graph.close(w)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "font_use_after_unload_error" || fail "font_use_after_unload_error" "error caught" "$out"
+
+# 19. draw_text_font with a bad font cursor → error
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    dyn bad = [1, 2, 3]
+    graph.draw_text_font(w, bad, "x", 0, 0, 10, 255, 255, 255)
+    graph.close(w)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "draw_text_font_bad_cursor_error" || fail "draw_text_font_bad_cursor_error" "error caught" "$out"
+
+# 20. fullscreen toggles and reports the new state (stub tracks it)
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "t")
+    bool a = graph.fullscreen(w)
+    bool b = graph.fullscreen(w)
+    print(a)
+    print(b)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -q "true" && echo "$out" | grep -q "false" && pass "fullscreen_toggle_state" || fail "fullscreen_toggle_state" "true then false" "$out"
+
+# 21. fullscreen on a closed/invalid window → error
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn bad = [9, 9]
+    graph.fullscreen(bad)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "fullscreen_bad_window_error" || fail "fullscreen_bad_window_error" "error caught" "$out"
 
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.graph: $PASS passed, $FAILS failed"

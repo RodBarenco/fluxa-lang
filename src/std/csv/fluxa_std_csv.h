@@ -76,7 +76,7 @@ typedef struct {
 /* Build a val_string Value — strdup, owned by caller */
 static inline Value csv_str_val(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 

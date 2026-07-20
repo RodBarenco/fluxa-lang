@@ -707,6 +707,13 @@ Long-running workers — HTTP request handlers, IoT sensor loops, polling agents
 
 Two value types carry heap data: `str` and `dyn`. Everything else (`int`, `float`, `bool`) is by-value.
 
+For `str` (v0.23+), the buffer is **refcounted and immutable**: reading a string —
+from a variable, an array element, a `dyn` element, or a Block field — shares the
+buffer and adds a reference (O(1), no copy); `free`, reassignment, and function
+return drop a reference; the heap is released at zero. Writing a string always
+produces a new buffer. You rarely think about this: the effect is simply that reads
+are cheap and any `free`/reassignment only ever affects your own name.
+
 For `dyn`, the GC invariant is: **every variable slot holds exactly one strong reference (pin) to its `dyn`**. Lib-returned dyns start unpinned (collectible orphans); storing one in a variable pins it, overwriting the variable unpins the old value. The GC is minimalist — it sweeps *unpinned* dyns at safe points only (loop back-edges, end of `danger`), and manual `free()` / lib release functions remain the preferred path for large or long-lived data. As of v0.21 this invariant holds identically in the tree evaluator and the bytecode VM, so the canonical chunked-cursor loop is safe as written:
 
 ```fluxa
@@ -761,40 +768,43 @@ free(p1); free(p2); free(p3); free(p4)
 
 Each `p1..p4` is a fresh `str` declaration — no reassignment releases its predecessor. Without `free()`, all four heap buffers stay alive until the worker returns (which it never does). The same pattern shows up when assembling SQL parameter arrays, JSON arrays, or anything you compose piece by piece.
 
-### How array-element reads alias, and how to read safely
+### Reading array and `dyn` elements (v0.23+)
 
 `str`, `arr`, and `dyn` are **pointers** — the variable slot holds a pointer, the
-data lives on the heap. This is deliberate: copying a large string or array on every
-read would be ruinous, so Fluxa passes the pointer and guarantees safety through
-unique ownership. The direct consequence: **reading an array element aliases it** —
-you get a second pointer to the same buffer, not a copy.
+data lives on the heap. Copying a large string or array on every read would be
+ruinous, so Fluxa never copies the bytes. Strings are **immutable** (any change
+produces a new buffer), so as of v0.23 the runtime shares the buffer safely on
+read and counts how many names point at it: reading adds a name, `free` /
+reassignment / function return removes one, and the heap is released only when the
+last name lets go. A read is therefore **O(1)** — the pointer cost — regardless of
+string size.
+
+The practical result: reading an element gives you your own reference, and you can
+`free` it or reassign it without touching the element.
 
 ```fluxa
 str arr names[3] = ""
 names[0] = "Alpha"
-str x = names[0]     // x does NOT copy — x is a SECOND pointer to names[0]'s buffer
+str x = names[0]     // x shares names[0]'s buffer, O(1), with its own reference
+free(x)              // removes x's name; names[0] is intact
+print(names[0])      // → "Alpha"
 ```
-
-Now `x` and `names[0]` refer to the same buffer, which breaks the one-owner rule.
-Anything that frees or reassigns one corrupts the other — verified, both abort:
 
 ```fluxa
-free(x)              // frees names[0]'s buffer → double free on scope teardown [ABORT]
-// or:
-x = names[1]         // reassign frees x's old buffer = names[0]'s → use-after-free [ABORT]
+str y = names[0]
+y = names[1]         // reassigning releases y's old reference; names[0] untouched
+print(names[0])      // → "Alpha"
 ```
 
-Writing is the safe direction: `arr[i] = var` **copies** the value into the slot.
-Reading is where the aliasing happens. Three patterns read safely, all verified:
+All the reading patterns are now equally safe and equally cheap — `for-in`, passing
+the element directly as an argument (`f(arr[i])`), or binding to a variable. Pick
+whichever reads best; the old `strings.concat(arr[i], "")` copy trick is no longer
+needed. This applies identically to `dyn` elements from `csv`/`sqlite` rows.
 
-- **`for-in`** — the loop variable gets a copy of each element.
-- **pass the element directly as an argument** — `f(arr[i])`; the parameter gets a copy.
-- **when you need it in a variable** — declare inside the loop and force a copy:
-  `str v = strings.concat(arr[i], "")`, then `free(v)` is safe.
-
-The rule to remember: never give an array or `dyn` element a second name via a
-variable you will `free` or reassign. This applies equally to `dyn` elements from
-`csv`/`sqlite` rows.
+One thing worth knowing for hot paths: reading a large string still hands the caller
+a reference in O(1), but *building* a new string (any `strings.*` call) allocates a
+fresh buffer in O(n). When a loop only needs to pass a value along, pass the element
+directly rather than rebuilding it.
 
 ### When `free(x)` does nothing
 
@@ -802,8 +812,8 @@ variable you will `free` or reassign. This applies equally to `dyn` elements fro
 - After scope ends: irrelevant — the runtime already released everything in the scope.
 - On a `dyn` cursor: use the lib's release function (`json2.discard`, `csv.close`, `pg.free_result`, `sqlite.close`).
 - On `prst` variables: `free()` rejects — the persistence layer owns them across reloads.
-- On Block instance fields: `free()` rejects — the instance scope owns them.
-- On arena strings (from `std.cache`): `free()` rejects — arenas are bulk-released via `arena_reset` / `arena_drop`.
+- On a Block instance field (v0.23+): `free(field)` releases the field's reference and sets it to `nil`; the next assignment revives it. (Earlier versions rejected this.)
+- On arena strings (from `std.cache`): `free()` is harmless — as of v0.23 `arena_str`/`arena_concat` return an ordinary refcounted copy, so freeing it just drops that copy; the arena itself is still bulk-released via `arena_reset` / `arena_drop`.
 
 ### Where the runtime helps you
 
@@ -817,7 +827,7 @@ The runtime's automatic releases cover:
 | `lib.fn("literal", x)` | The literal's transient copy |
 | `if a == "literal" { }` | The literal's transient copy |
 | `lib.fn(x, y)` as a statement (return discarded) | Owned return value |
-| `len(s)`, `print(s)` | Transient string copies the read produced |
+| `len(s)`, `print(s)` | Any temporary reference the read took (v0.23: O(1), no copy) |
 | End of `danger { }` | Unpinned dyns via `gc_sweep` |
 | Function return | Everything in the function frame |
 
@@ -910,11 +920,10 @@ the section that explains it in full.
 
 | What you wrote | Why it's wrong | What to write instead |
 |---|---|---|
-| `str x = arr[i]` then `free(x)` or `x = ...` | Reading an element aliases its buffer — a second owner; freeing or reassigning corrupts the array | Read with `for-in`, pass `arr[i]` directly as an argument, or copy via `strings.concat(arr[i], "")` |
 | Dropped `free(p1); free(p2); …` on a `strings.concat` chain in a worker | Each intermediate accumulates over millions of iterations | Free each piece after the reply |
 | `dyn doc = json2.parse(...)` with no `json2.discard(doc)` | The parse tree leaks even though the wrapper is GC'd | `json2.discard(doc)` inside the same `danger` block |
 | `free(some_prst_var)` | `prst` belongs to the persistence layer, not the slot | Assign a replacement value; the pool tracks it |
-| `free(s)` where `s` came from `cache.arena_str` | Arena strings are bulk-released | `cache.arena_reset(arena)` |
+| Treating a `prst dyn` collection as a transient buffer | `prst` persists across reloads — it never shrinks on its own | Use a non-`prst` `dyn` for per-iteration scratch |
 
 **danger and error handling (§9)**
 

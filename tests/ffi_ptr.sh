@@ -13,6 +13,7 @@
 #   uint8_t*/void* → int arr variable: flatten arr→bytes, scatter back after call
 #   dyn            → opaque void*    : VAL_PTR extracted from dyn[0]
 set -euo pipefail
+set +o pipefail  # tests compare captured output with echo|grep; pipefail + SIGPIPE would cause spurious failures
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FLUXA="${PROJECT_ROOT}/fluxa"

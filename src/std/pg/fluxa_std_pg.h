@@ -119,7 +119,7 @@ static inline Value pg_float(double d)    { Value v; v.type=VAL_FLOAT; v.as.real
 static inline Value pg_bool(int b)        { Value v; v.type=VAL_BOOL;  v.as.boolean=b; return v; }
 static inline Value pg_str(const char *s) {
     Value v; v.type=VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 

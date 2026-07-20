@@ -157,7 +157,7 @@ static inline Value infer_nil(void)   { Value v; v.type=VAL_NIL;  return v; }
 static inline Value infer_bool(int b) { Value v; v.type=VAL_BOOL; v.as.boolean=b; return v; }
 static inline Value infer_int(long n) { Value v; v.type=VAL_INT;  v.as.integer=n; return v; }
 static inline Value infer_str(const char *s) {
-    Value v; v.type=VAL_STRING; v.as.string=strdup(s?s:""); return v; }
+    Value v; v.type=VAL_STRING; v.as.string=fxstr_new(s?s:""); return v; }
 
 static inline Value infer_wrap(InferModel *im) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
@@ -242,7 +242,7 @@ static inline Value fluxa_std_infer_call(const char *fn_name,
         if (!im->loaded) INFER_ERR("generate: model not loaded");
         char *out = infer_do_generate(im, prompt, 256);
         if (!out) INFER_ERR("generate: generation failed");
-        Value v; v.type=VAL_STRING; v.as.string=out;
+        Value v; v.type=VAL_STRING; v.as.string=fxstr_adopt_raw(out);
         return v;
     }
 
@@ -252,7 +252,7 @@ static inline Value fluxa_std_infer_call(const char *fn_name,
         if (n <= 0 || n > 4096) INFER_ERR("generate_n: n must be 1-4096");
         char *out = infer_do_generate(im, prompt, (int)n);
         if (!out) INFER_ERR("generate_n: generation failed");
-        Value v; v.type=VAL_STRING; v.as.string=out;
+        Value v; v.type=VAL_STRING; v.as.string=fxstr_adopt_raw(out);
         return v;
     }
 

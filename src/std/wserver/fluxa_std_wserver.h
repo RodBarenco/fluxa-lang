@@ -85,7 +85,7 @@ static inline Value wsrv_nil(void)          { Value v; v.type=VAL_NIL;          
 static inline Value wsrv_int(long n)        { Value v; v.type=VAL_INT;   v.as.integer=n; return v; }
 static inline Value wsrv_str(const char *s) {
     Value v; v.type=VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");
     return v;
 }
 
