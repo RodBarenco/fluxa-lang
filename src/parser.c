@@ -91,8 +91,13 @@ static ASTNode *p_var_decl(Parser *p, const char *type_name,
                             const char *var_name, ASTNode *init, int prst) {
     ASTNode *n = P_NODE(); n->type = NODE_VAR_DECL;
     n->as.var_decl.type_name   = P_STR(type_name);
-    /* v0.15: mangle variable name when inside a module parse pass */
-    if (p->ns[0]) {
+    /* v0.15/v0.23: mangle module TOP-LEVEL declarations only. A variable
+     * declared inside a function/method body (fn_body_depth > 0) is a frame
+     * local — mangling it would rewrite `d` to `mod__d` at declaration while
+     * leaving the binding lookup inconsistent, which breaks dyn locals (a
+     * `dyn d = [...]; d[0]` inside a module fn — bug J). Scalars survived by
+     * luck; dyn did not. Locals now keep their raw name. */
+    if (p->ns[0] && p->fn_body_depth == 0) {
         char mangled[320];
         mangle(p->ns, var_name, mangled, sizeof(mangled));
         n->as.var_decl.var_name = P_STR(mangled);
@@ -622,10 +627,12 @@ static ASTNode *parse_block_decl(Parser *p) {
             body->type = NODE_BLOCK_STMT;
             body->as.list.children = NULL;
             body->as.list.count    = 0;
+            p->fn_body_depth++;
             while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF) && !p->had_error) {
                 ASTNode *stmt = parse_statement(p);
                 if (stmt) ast_list_push(body, stmt);
             }
+            p->fn_body_depth--;
             if (!expect(p, TOK_RBRACE, "expected '}' to close function body")) {
                 free(param_names); free(param_types); return NULL;
             }
@@ -947,7 +954,9 @@ static ASTNode *parse_statement(Parser *p) {
             free(param_names); free(param_types); return NULL;
         }
 
+        p->fn_body_depth++;
         ASTNode *body = parse_body(p);
+        p->fn_body_depth--;
         if (!body) { free(param_names); free(param_types); return NULL; }
 
         ASTNode *n = P_NODE();
@@ -1446,6 +1455,7 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.module_decl_count = 0;
     p.expr_depth = 0;
     p.stmt_depth = 0;
+    p.fn_body_depth = 0;
     return p;
 }
 

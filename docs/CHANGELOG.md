@@ -1,6 +1,147 @@
 # Fluxa-lang Changelog
 
-## v0.22.3 — std.graph: fullscreen toggle (current)
+## v0.23 — refcounted strings + module-local fix (current)
+
+The str memory model is now **refcounted immutable buffers** — designed with
+the language author around one rule: *free checks whether anyone else still
+points at the buffer; the heap dies only when the last name lets go.*
+
+Every string buffer carries a hidden header `[rc | bytes...]`;
+`Value.as.string` still points at the bytes, so all readers are untouched.
+Because Fluxa strings are immutable (mutation always produces a new buffer),
+sharing the pointer on read is always safe:
+
+- **write / produce** → new buffer, rc = 1 (`fxstr_new` / `_new_len` / `_alloc`)
+- **read** (identifier, `arr[i]`, `d[i]`, `inst.field`) → same buffer,
+  rc + 1 — **O(1)**, size-independent, no copy
+- **free / reassignment / frame teardown** → rc − 1; heap freed at rc 0
+
+Counters are atomic (GCC `__atomic`), so strings crossing flxthread
+boundaries are correct with no copy rule.
+
+What this fixes and changes:
+- **Bug K dead in all contexts**: str field reassignment in module Blocks,
+  and per-call str-local leaks. `frame_release_slots_from()` releases the
+  callee's heap-owning slots at 4 sites: call_function return, TCO
+  trampoline, and both VM→interpreter bridges (locals only there — param
+  slots hold VM register pointers owned by the VM). VAL_DYN slots are
+  untouched by teardown (param binding never pins; unpinning would steal
+  the caller's pin — verified use-after-free on a live `win` bind).
+- **The §5 aliasing trap family is gone**: `str x = names[0]; free(x)`
+  releases x's reference and leaves the element intact; reassigning the
+  reader in a loop never double-frees. Same observable semantics as an
+  owned copy, at pointer cost.
+- **free(field) in a Block** releases the field's ref and nils it; the next
+  assignment revives it. free on prst still rejects (pool owns it).
+- **Uniform producer discipline**: every site that puts a string into a
+  Value allocates via fxstr (val_string, scope copy-ins, all 30 stdlib
+  string constructors, fs/zlib/strings direct-fill buffers, FFI writeback,
+  mcp name slices). The cache arena borrow convention was unsound (any
+  release path corrupted the arena) and now copies out. An exhaustive
+  audit gates the invariant: zero raw strdup/malloc/free on Value strings
+  outside the prst pool (which keeps plain-malloc internals behind a
+  copy-in/copy-out boundary; slots never adopt pool pointers).
+- Also fixed on the way: a per-call leak of every prst scalar string
+  (the frame-populate pre-copy was doubled by scope_set's copy-in), and
+  scope_set_owned's same-pointer guard (a self-assign ref leak under
+  refcount — releasing old and adopting incoming is naturally safe now).
+- Removed: the method-result strdup in call_function, FLUXA_DBG_RTSET.
+
+Performance (measured):
+- 1M element reads of a 512 B string: **2.047 s → 0.441 s** (was strdup-
+  per-read during an intermediate design; vs the original leaky build the
+  read was pointer-cheap but unsound).
+- Reads are size-independent: 512 B / 4 KB / 16 KB → 0.44 / 0.52 / 0.32 s
+  (flat; a copying design scales linearly and would take seconds at 16 KB).
+- bench 1M and bench_field unchanged (int paths untouched).
+
+Validation: suite 82/82 (incl. tests/bugk_ownership.sh, 9 cases with ASan
+no-per-call-leak gates); leak matrix (module/main × Block/fn) ZERO;
+reference game ASan totals byte-identical across 300/700-frame budgets;
+zero-warning build; protected files bit-identical (md5-verified).
+
+**Boundary hardening (post-review):** value_free_data is now explicitly the
+PLAIN-free helper — it is the prst pool's contract (the pool, a protected
+file, frees its own plain-malloc storage through it, including on the
+handover deserialize path). A new twin, `value_release_data`, carries the
+fxstr semantics and is used by every runtime-side owner (scopes, stack
+slots, dyn items — dyn items are always runtime Values, so fluxa_dyn_free
+lives entirely on the release side). Two pool-internal frees in runtime.c
+(init_value refresh, prst-arr element sync) were reverted to plain free
+for the same reason. Caught by suite2's mixed-prst handover cases —
+suite2, libs, integration and hardware-sim now gate every change:
+`make test-all` green end-to-end (82/82 + 8/8 sections + libs + sim).
+
+**Test-suite robustness (post-review, no runtime change):** a pre-existing
+intermittent failure in the shell test harness, unrelated to the string
+work, was fixed in the tests. `set -o pipefail` combined with
+`echo "$out" | grep -q PAT` produced spurious failures: when grep matches
+early and closes the pipe, echo takes SIGPIPE (non-zero), and pipefail
+propagates that as the pipeline status — turning a successful match into a
+failure (measured ~13-38 per 300 under load; 0 without pipefail). None of
+these scripts rely on pipefail for correctness, so it is disabled right
+after the shell-options line in the affected files; no grep lines change.
+The full `make test-all` gate (unit + suite2 + libs + integration +
+hardware-sim) is now deterministic.
+
+Known remaining (separate, tracked): bug A — const-pool strings leak once
+per compiled while (bytecode.c is protected); constant residual, not
+per-iteration. The anti-compile array-touch anchor now only mitigates that
+residual.
+
+**Parser: module-local variables no longer namespace-mangled (bug J).** A
+variable declared inside a function or Block method within a module was being
+rewritten to the module-qualified name (`mod__d`) at declaration, the same as
+a module top-level symbol. For a scalar this happened to stay consistent, but
+for a `dyn` local it desynchronized the dyn's type/identity binding from its
+later index read — `dyn d = [...]; d[0]` inside a module fn (or module Block
+method) errored "'d' is not an array or dyn". The parser now tracks
+`fn_body_depth` and mangles only module TOP-LEVEL declarations; locals inside
+any function body keep their raw name. Both forms (`fn` and Block method) are
+fixed; module top-level state, `prst`, and cross-module calls are unchanged.
+Verified with a 4-line dyn-literal repro that reproduces outside the game.
+Files: parser.c, parser.h. Suite 82/82; zero-warning; protected files
+untouched (parser was already an authorized surface).
+
+## v0.22 — module Block singletons + graph patches
+
+- **parser:** `mod.Block.method(args)`, `mod.Block.field` (read/write) now
+  parse in both expression and statement positions, emitting
+  MEMBER_CALL/ACCESS/ASSIGN with the mangled owner (`mod__Block`).
+  Previously: "expected '(' or '=' after module member name".
+- **parser:** inside a module, references to Blocks declared in the same
+  module (`Vault.bump(x)` from a module fn or method) now mangle the owner
+  via the existing module_decls table. Previously: undefined identifier.
+- Tests: tests/modules/modules.sh cases c22a–c22e + fixtures/static/vault.flx.
+- No runtime/resolver/VM changes — parser-only; full suite green.
+
+### graph: BACKSPACE / TAB key names
+
+- graph_key_code now maps "BACKSPACE" → KEY_BACKSPACE and "TAB" → KEY_TAB
+  (raylib backend). Previously these strings returned 0, so
+  key_pressed(win, "BACKSPACE") always reported false — text-entry backspace
+  could never fire. ("F" already resolved via the single-letter A-Z rule;
+  the F-key crash some callers saw was an OLD binary predating graph.fullscreen,
+  not a key-mapping gap.)
+- No behavior change for the stub backend (headless, no key events).
+
+### graph: proportional fullscreen (render-to-texture scaling)
+
+- The raylib backend now renders each frame into an offscreen RenderTexture at
+  the logical (design) resolution passed to graph.init, then blits it to the
+  real window scaled to fit and centered, with black letterbox/pillarbox bars.
+  Previously fullscreen just enlarged the window and the game stayed at its
+  original size in the top-left corner with the rest painted in the clear color.
+- graph.begin_frame draws into the target (BeginTextureMode); graph.end_frame
+  finishes it and does the scaled DrawTexturePro blit. graph.close unloads the
+  texture.
+- graph.mouse_x / mouse_y now un-project window coordinates back into logical
+  space (accounting for the letterboxed scale), so mouse input still lines up
+  with what the game drew.
+- Stub backend unchanged (headless). NOTE: the raylib path can only be compiled
+  with raylib present; verify on a FLUXA_GRAPH_RAYLIB=1 build.
+
+## v0.22.3 — std.graph: fullscreen toggle
 
 - `graph.fullscreen(win)` → bool: toggles fullscreen and returns the new
   state. Raylib backend uses `ToggleFullscreen()`; stub tracks the flag so

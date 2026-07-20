@@ -27,6 +27,12 @@ typedef struct {
      * Used to mangle references inside fn bodies. */
     char  module_decls[256][64];
     int   module_decl_count;
+    /* v0.23: depth of function/method bodies currently being parsed.
+     * Module top-level decls (depth 0) get namespace-mangled; locals declared
+     * INSIDE a function body (depth > 0) must NOT be mangled — they are frame
+     * locals, private to the call, and mangling their name desynchronizes a
+     * dyn's type/identity binding from its later index read (bug J). */
+    int   fn_body_depth;
 } Parser;
 
 Parser   parser_new(const char *source, ASTPool *pool);
