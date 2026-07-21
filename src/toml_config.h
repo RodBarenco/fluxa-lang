@@ -101,6 +101,13 @@ typedef struct {
     int          gc_cap;
     int          prst_cap;
     int          prst_graph_cap;
+    int          scope_cap;       /* [runtime] scope_cap — resolver scope pool
+                                   * size: number of lexical scopes (one per
+                                   * function, method, Block, and if/while body)
+                                   * the resolver can allocate. Default 256.
+                                   * Large programs (many modules/Blocks) need
+                                   * more; raise this when the resolver aborts
+                                   * with "resolver errors" on a big codebase. */
     int          warm_func_cap;   /* WarmProfile hash table size: default 32,
                                    * range 4..256, must be power of 2.
                                    * Larger = more functions profiled, more RAM.
@@ -148,6 +155,7 @@ static inline void fluxa_config_defaults_fill(FluxaConfig *c) {
     c->gc_cap         = GC_TABLE_CAP;
     c->prst_cap       = PRST_POOL_INIT_CAP;
     c->prst_graph_cap = PRST_GRAPH_CAP_DEFAULT;
+    c->scope_cap      = 256;   /* resolver scope pool; matches resolver default */
     c->warm_func_cap  = 32;
     c->json_max_str      = 4096;
     c->ffi_str_buf_size  = 1024;
@@ -356,6 +364,13 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 cfg.prst_cap = v;
             } else if (strcmp(key, "prst_graph_cap") == 0) {
                 if (v <= PRST_GRAPH_CAP_MAX) cfg.prst_graph_cap = v;
+            } else if (strcmp(key, "scope_cap") == 0) {
+                /* Resolver scope pool size. Floor at the historical 256 so a
+                 * misconfigured toml can never make the resolver weaker than
+                 * the built-in default; cap at 65536 to keep the calloc sane. */
+                if (v < 256)   v = 256;
+                if (v > 65536) v = 65536;
+                cfg.scope_cap = v;
             } else if (strcmp(key, "warm_func_cap") == 0) {
                 /* Round up to next power of 2.
                  * Hard cap at 65536 — any higher initial slot count is

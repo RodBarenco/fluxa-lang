@@ -12,6 +12,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Resolver scope pool capacity — number of lexical scopes (function, method,
+ * Block, if/while body) the resolver can allocate in one run. Historically a
+ * hard-coded 256; now configurable via [runtime] scope_cap in fluxa.toml so a
+ * large codebase (many modules/Blocks) can grow past 256 without a rebuild.
+ * main.c/runtime set this from FluxaConfig before resolver_run(). The floor is
+ * 256 (set below) so it can never drop below the historical default. */
+static int g_scope_cap = 256;
+
+void resolver_set_scope_cap(int cap) {
+    if (cap < 256) cap = 256;          /* never weaker than the built-in default */
+    g_scope_cap = cap;
+}
+
 /* ── SymTable ────────────────────────────────────────────────────────────── */
 void symtable_init(SymTable *t, SymTable *parent) {
     t->count  = 0;
@@ -175,8 +188,8 @@ static void resolve_stmts(Resolver *r, ASTNode *root) {
 
     /* We need heap-allocated SymTables for child scopes created during
      * iteration (function bodies, Block methods). Keep a simple freelist. */
-#define SCOPE_POOL_CAP 256
-    SymTable *scope_pool = (SymTable *)calloc(SCOPE_POOL_CAP, sizeof(SymTable));
+    const int SCOPE_POOL_CAP = g_scope_cap;   /* configurable via [runtime] scope_cap */
+    SymTable *scope_pool = (SymTable *)calloc((size_t)SCOPE_POOL_CAP, sizeof(SymTable));
     int       scope_used = 0;
     if (!scope_pool) { free(ws); return; }
 
@@ -395,7 +408,6 @@ static void resolve_stmts(Resolver *r, ASTNode *root) {
     free(ws);
     free(scope_pool);
 #undef ALLOC_SCOPE
-#undef SCOPE_POOL_CAP
 }
 
 /* ── resolve_node: thin wrapper — pushes to iterative engine ─────────────── */

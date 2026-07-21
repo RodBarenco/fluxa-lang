@@ -212,18 +212,29 @@ prst int counter = 0    // survives reloads
 
 *prst contract: A removed prst variable atomically invalidates all state and execution that depended on it. Interruption is immediate and total.*
 
-### 4.2 PrstPool and PrstGraph Caps
+### 4.2 PrstPool, PrstGraph, and Resolver Caps
 
-The initial size of the prst variable pool and the dependency graph is configurable via `fluxa.toml`. Both structures are dynamic — grow via realloc without a fixed ceiling.
+The initial size of the prst variable pool and the dependency graph is configurable via `fluxa.toml`. Both structures are dynamic — grow via realloc without a fixed ceiling. The resolver scope pool is also configurable, but is a true capacity (see below).
 
 ```toml
 [runtime]
 gc_cap         = 1024   # GC hard cap (static array)
 prst_cap       = 64     # PrstPool initial capacity (dynamic, grows via realloc)
 prst_graph_cap = 256    # PrstGraph initial capacity (dynamic, max 65536)
+scope_cap      = 256    # resolver scope pool size (default 256, floor 256, max 65536)
 ```
 
 *`prst_cap` and `prst_graph_cap` are initial caps, not ceilings. Structures grow automatically. Setting the correct initial cap improves allocation performance — it does not limit usage.*
+
+**`scope_cap`** sizes the resolver's lexical-scope pool: the number of scopes the resolver can allocate for a single program. A scope is allocated for **each top-level function, each Block, and each Block method** — and only those; `if`/`while` bodies do not consume a scope. Unlike the prst caps, this pool does **not** grow — when a program needs more scopes than `scope_cap`, name resolution aborts cleanly (no crash, no partial state) with *"aborting due to resolver errors"* and no symbol name, since the failure is capacity rather than a bad reference. The default is 256, which suits small and medium programs; a large codebase can exceed it and must raise `scope_cap`. Values below 256 are clamped up to 256 so the setting can never be weaker than the built-in default; the nominal maximum is 65536.
+
+The scope count of a program is:
+
+```
+scopes = (top-level functions) + (Blocks) + (Block methods)
+```
+
+**Memory characteristics.** The pool is allocated once per resolver run and freed as soon as resolution completes — before the program executes — so its cost is transient, not part of steady-state footprint. The allocation is lazy: only the scopes actually used touch physical pages, so an unfilled `scope_cap` costs nothing in resident memory. The reservation is *virtual*, however: each scope slot is roughly 130 KB (`sizeof(SymTable)`, dominated by an inline symbol array), so `scope_cap = 1024` reserves ~130 MB of address space and `scope_cap = 65536` reserves ~8 GB. On an overcommit host the unused reservation is harmless; on a target without overcommit or a memory-constrained embedded build, an oversized `scope_cap` can make the pool allocation fail (handled by a graceful abort). Set `scope_cap` a margin above the real scope count, not to the maximum.
 
 ---
 

@@ -900,9 +900,47 @@ fn double(int n) int { return n + n }
 - `live/` convention: modules with `prst` state
 - `static/` convention: pure function modules
 
----
+### When a large program hits "aborting due to resolver errors"
 
-## 14. Common Mistakes Reference
+As a program grows across many modules, the resolver's scope pool can fill up.
+The resolver allocates one lexical scope per **top-level function, per Block, and
+per Block method** — and *only* those. `if`/`while` bodies do **not** consume a
+scope (verified: 256 sequential `while`s resolve fine under the default). The pool
+is sized by `scope_cap` (default 256). When a program needs more scopes than that,
+name resolution aborts with **"aborting due to resolver errors"** — cleanly, with
+no crash and no partial state, but also with no symbol name, because the failure
+is capacity, not a bad reference. The tell is that the error appears only after
+adding *more* code (another module, more methods), and each individual module
+resolves fine on its own. Note that `fluxa dis` only parses and will **not**
+surface this — validate a large program with `fluxa run`, which runs the resolver.
+
+The count that matters is therefore:
+
+```
+scopes = (top-level functions) + (Blocks) + (Block methods)
+```
+
+The fix is not to shrink the program but to raise the pool in `fluxa.toml`:
+
+```toml
+[runtime]
+scope_cap = 1024   # room for the resolver's scopes; raise as you grow
+```
+
+`scope_cap` has a floor of 256 (it can never be weaker than the default) and a
+nominal maximum of 65536. **On memory:** the pool is allocated once per resolver
+run and freed as soon as resolution finishes — before your program executes — so
+its cost is transient (milliseconds), not part of your program's steady-state
+footprint. The allocation is also lazy: only the scopes actually used touch
+physical pages, so a generous `scope_cap` you don't fill costs nothing in RSS
+(measured: a 1000-function program runs at the same ~10 MB resident whether
+`scope_cap` is 256 or 8192). The caveat is the *virtual* reservation: each scope
+slot is ~130 KB, so `scope_cap = 1024` reserves ~130 MB of address space and
+`scope_cap = 65536` reserves ~8 GB. On a normal (overcommit) Linux host the
+unused reservation is harmless, but on a target without overcommit — or a
+memory-constrained embedded build — an oversized `scope_cap` can make the pool
+allocation fail (the resolver then aborts gracefully). Set `scope_cap` a
+comfortable margin above your real scope count, not to the maximum.
 
 A quick checklist of the most frequent errors, grouped by topic. Each row links to
 the section that explains it in full.

@@ -1,6 +1,60 @@
 # Fluxa-lang Changelog
 
-## v0.23 — refcounted strings + module-local fix (current)
+## v0.24 — configurable resolver scope pool (`[runtime] scope_cap`) (current)
+
+The resolver's lexical-scope pool was a hard-coded 256 (`#define SCOPE_POOL_CAP
+256` in resolver.c). It allocates one scope per top-level function, per Block, and
+per Block method (`if`/`while` bodies consume none); a program with more scopes
+than 256 aborted with **"aborting due to resolver errors"** and no symbol name —
+because the failure is capacity, not a bad reference. Large multi-module codebases
+(many Blocks, each with several methods) hit this ceiling.
+
+`scope_cap` is now configurable via `fluxa.toml`, following the existing
+`[runtime]` cap pattern (`gc_cap`, `prst_cap`, …):
+
+```toml
+[runtime]
+scope_cap = 1024
+```
+
+**Implementation.** `resolver.c` replaces the compile-time `#define` with a
+settable global `g_scope_cap` (default 256) and a `resolver_set_scope_cap(int)`
+entry point (declared in resolver.h). `toml_config.h` adds the `scope_cap` field,
+its default (256), and `[runtime]` parsing with a floor of 256 (a misconfigured
+toml can never make the resolver weaker than the built-in default) and a ceiling
+of 65536. `main.c` and `handover.c` call `resolver_set_scope_cap()` from the
+loaded `FluxaConfig` before `resolver_run()` on every entry path (`run_once`,
+`-dev`, preflight, and the handover pass). The pool `calloc` uses the configured
+value; behavior is identical to before when `scope_cap` is unset (still 256).
+
+Note `fluxa dis` only parses and will not surface this error — validate large
+programs with `fluxa run`.
+
+**Measured behavior (empirical, not estimated).** A scope is allocated only for
+each top-level function, each Block, and each Block method — `if`/`while` bodies
+consume none (verified: 256 sequential `while`s resolve under the default). The
+exact count is `(top-level functions) + (Blocks) + (Block methods)`; the reference
+game measures 19 Blocks + 212 methods + 41 functions = 272 and breaks at
+scope_cap 271, runs at 272 — an exact match. Overflow aborts cleanly (`had_error`,
+`resolver_run` returns -1) with no crash or partial state. On memory: each scope
+slot is ~130 KB (`sizeof(SymTable)`, an inline symbol array), but the pool is
+allocated per resolver run and freed before the program executes, and the calloc
+is lazy — only used scopes touch pages. A 1000-function program runs at the same
+~10 MB resident whether scope_cap is 256 or 8192; the cost of a generous cap is a
+transient *virtual* reservation (scope_cap 1024 ≈ 130 MB, 65536 ≈ 8 GB address
+space), harmless under overcommit but a reason not to set the maximum on
+overcommit-disabled or embedded targets, where an oversized pool calloc fails and
+the resolver aborts gracefully.
+
+**Validation.** make test-all green: unit suite 82/82, config tests
+(sprint8/prst_cap and the other `[runtime]` cap cases) pass, floor-clamp verified
+(`scope_cap = 10` runs as 256), default-unset verified (still 256). Zero-warning
+build. The reference game (263 scopes, previously over the 256 ceiling) runs with
+`scope_cap = 1024`, ASan clean.
+
+---
+
+## v0.23 — refcounted strings + module-local fix
 
 The str memory model is now **refcounted immutable buffers** — designed with
 the language author around one rule: *free checks whether anyone else still

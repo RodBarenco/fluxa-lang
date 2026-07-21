@@ -208,6 +208,7 @@ static ASTNode *parse_file(const char *path, ASTPool *pool) {
 static int run_once(const char *path, int explain) {
     static ASTPool pool;
     FluxaConfig cfg = fluxa_config_find_and_load();
+    resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
     ASTNode *program = parse_file_ex(path, &pool,
         cfg.module_root[0] ? cfg.module_root : NULL);
     if (!program) return 1;
@@ -233,6 +234,7 @@ static void *dev_exec_thread(void *arg) {
     DevCtx *ctx = (DevCtx *)arg;
 
     FluxaConfig _cfg = fluxa_config_find_and_load();
+    resolver_set_scope_cap(_cfg.scope_cap);   /* [runtime] scope_cap */
     ASTNode *program = parse_file_ex(ctx->path, ctx->ast_pool,
         _cfg.module_root[0] ? _cfg.module_root : NULL);
     if (!program) {
@@ -353,6 +355,7 @@ static int run_prod(const char *path) {
         char toml_path[600];
         snprintf(toml_path, sizeof(toml_path), "%s/fluxa.toml", proj_dir);
         FluxaConfig cfg = fluxa_config_load(toml_path);
+        resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
         if (fluxa_security_check(
                 cfg.security.signing_key_path[0] ? cfg.security.signing_key_path : NULL,
                 cfg.security.ipc_hmac_key_path[0] ? cfg.security.ipc_hmac_key_path : NULL,
@@ -1154,6 +1157,7 @@ static int run_handover(const char *old_path, const char *new_path) {
     }
 
     FluxaConfig config = fluxa_config_find_and_load();
+    resolver_set_scope_cap(config.scope_cap);   /* [runtime] scope_cap */
     rt_a->scope            = scope_new();
     rt_a->global_table     = NULL;
     rt_a->stack_size       = 0;

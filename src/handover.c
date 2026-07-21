@@ -95,7 +95,8 @@ HandoverResult handover_step1_standby(HandoverCtx *ctx, ASTNode *program_b,
         return HANDOVER_ERR_NULL_PROGRAM;
     }
 
-    /* Resolver pass no novo programa */
+    /* Resolver pass no novo programa — herda scope_cap do runtime ativo */
+    if (ctx && ctx->rt_a) resolver_set_scope_cap(ctx->rt_a->config.scope_cap);
     int slots = resolver_run(program_b);
     if (slots < 0) {
         ctx_fail(ctx, HANDOVER_ERR_RESOLVE, "resolver failed on new program");
