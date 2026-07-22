@@ -49,7 +49,7 @@ static inline Value mylib_bool(int b)       { Value v; v.type = VAL_BOOL;   v.as
 static inline Value mylib_nil(void)         { Value v; v.type = VAL_NIL;                       return v; }
 static inline Value mylib_str(const char *s) {
     Value v; v.type = VAL_STRING;
-    v.as.string = strdup(s ? s : "");
+    v.as.string = fxstr_new(s ? s : "");   /* refcounted allocator — NOT strdup */
     return v;
 }
 
@@ -156,12 +156,12 @@ The runtime dispatch loop selects the right call path based on the flags in `FLU
 | `long` | `VAL_INT` | `v.as.integer` | `mylib_int(n)` |
 | `double` | `VAL_FLOAT` | `v.as.real` | `mylib_float(d)` |
 | `int` | `VAL_BOOL` | `v.as.boolean` | `mylib_bool(b)` |
-| `char*` | `VAL_STRING` | `v.as.string` | `mylib_str(s)` — always `strdup()` |
+| `char*` | `VAL_STRING` | `v.as.string` | `mylib_str(s)` — uses `fxstr_new()` |
 | `FluxaDyn*` | `VAL_DYN` | `v.as.dyn` | allocate manually |
 | `void*` | `VAL_PTR` | `v.as.ptr` | set directly |
 | nothing | `VAL_NIL` | — | `mylib_nil()` |
 
-**Critical:** `VAL_STRING` values are heap-allocated. Always `strdup()`. Never return a pointer to a stack buffer.
+**Critical:** `VAL_STRING` values returned to the runtime must be allocated with **`fxstr_new()`** (the refcounted string allocator from `scope.h`), **not** `strdup()`. Since the string refcount change, a `strdup`'d return is freed with the wrong allocator and aborts with `free(): invalid pointer`. `mylib_str()` already calls `fxstr_new` — always route returns through it. Never return a pointer to a stack buffer.
 
 ### Returning a dyn
 

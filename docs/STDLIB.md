@@ -1,7 +1,7 @@
 # Fluxa Standard Library
 **v0.19.2**
 
-Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
+Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.image`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
 
 ---
 
@@ -1212,6 +1212,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.should_close(win)` | `bool` | Window close requested |
 | `graph.begin_frame(win)` | `nil` | Begin draw frame |
 | `graph.end_frame(win)` | `nil` | Present frame |
+| `graph.capture(win)` | `dyn` | Snapshot the current frame as an RGBA image buffer (feeds `std.image`). Release with `image.discard`. Stub returns a blank buffer of the logical size. |
 | `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
 | `graph.fps(win)` | `int` | Current FPS |
 | `graph.set_fps(win, fps)` | `nil` | Set target FPS |
@@ -1284,6 +1285,72 @@ Notes:
   test layout logic without a display.
 
 ---
+
+## std.image — Encode / Decode / Transform Images
+
+Two backends: stub (default, zero deps — buffer transforms work, `save`/`load`
+report a clear "no codec" error) or the Raylib codec
+(`make FLUXA_IMAGE_RAYLIB=1`), which bundles stb_image / stb_image_write and
+encodes/decodes **PNG, JPG, BMP, TGA, and QOI**.
+
+```toml
+[libs]
+std.image = "1.0"
+```
+
+`std.image` pairs with `std.graph`: `graph.capture(win)` returns a raw RGBA
+buffer (a `dyn`), and `std.image` saves it, resizes it, or reads its size. The
+two libs share a neutral 32-bit RGBA buffer format, so neither depends on the
+other — a capture is just bytes. An image handle is an opaque `dyn` with the same
+ownership pattern as a window or font cursor: pass it as an argument, release it
+with `image.discard`. Because the release verb `free` is a reserved keyword, the
+lib uses **`image.discard`**.
+
+`image.save` and `image.load` touch the filesystem, so they **must** run inside a
+`danger {}` block, exactly like `sqlite`/`csv`/`fs`. The output format is chosen
+by the file **extension**.
+
+| Function | Returns | Description |
+|---|---|---|
+| `image.new(w, h)` | `dyn` | Blank RGBA buffer, all pixels transparent (zero) |
+| `image.save(img, path)` | `bool` | Encode by extension (`.png`/`.jpg`/`.bmp`/`.tga`/`.qoi`). **Needs `danger`.** |
+| `image.load(path)` | `dyn` | Decode a file into an RGBA buffer. **Needs `danger`.** |
+| `image.resize(img, w, h)` | `nil` | Scale in place (Bicubic on the codec backend, nearest-neighbour on stub) |
+| `image.width(img)` | `int` | Width in pixels |
+| `image.height(img)` | `int` | Height in pixels |
+| `image.discard(img)` | `nil` | Release the buffer (idempotent; also releases a `graph.capture` handle) |
+| `image.version()` | `str` | Backend version (reports whether the codec is present) |
+
+### Capturing and exporting a frame
+
+The canonical use — grab the current frame, shrink it to a thumbnail, and write
+a PNG. On the stub backend the transforms run and `save` reports the missing
+codec; with `FLUXA_IMAGE_RAYLIB=1` it writes a real file.
+
+```fluxa
+import std graph
+import std image
+
+danger {
+    dyn win = graph.init(800, 600, "capture")
+    graph.begin_frame(win)
+    graph.clear(win, 10, 20, 40)
+    graph.draw_rect(win, 100, 100, 200, 150, 240, 66, 66)
+    graph.end_frame(win)
+
+    dyn shot = graph.capture(win)          // RGBA snapshot of the frame
+    image.resize(shot, 400, 300)           // scale down to a thumbnail
+    image.save(shot, "card.png")           // encode by extension → PNG
+    image.discard(shot)                    // release (not free — reserved word)
+    graph.close(win)
+}
+if err != nil { print(err[0]) }
+```
+
+The same buffer can be written to more than one format before release — call
+`image.save` with `card.png`, then `card.jpg`, then `card.bmp` on the same
+handle. Any single `image.save` / `image.load` sits inside `danger`, with the
+`if err != nil` decision right after, per the error-handling idiom.
 
 ## std.infer — Local LLM Inference
 

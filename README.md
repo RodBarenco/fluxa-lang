@@ -111,7 +111,7 @@ Tier 2 — Compiled fn bodies   vm_run_fn with isolated register file
 
 ---
 
-## Standard library — 29 libs
+## Standard library — 31 libs
 
 ```toml
 # fluxa.toml — runtime selection
@@ -145,6 +145,8 @@ std.graph      = "1.0"   # 2D/3D graphics (stub or Raylib)
 std.infer      = "1.0"   # local LLM inference (stub or llama.cpp)
 std.wserver    = "1.0"   # resilient HTTP server — int handles, auto-scaling pool
 std.pg         = "1.0"   # PostgreSQL client — int handles (libpq)
+std.sound      = "1.0"   # audio playback + tone — wav/mp3/flac (stub or miniaudio)
+std.image      = "1.0"   # PNG/JPG/BMP/TGA/QOI encode/decode (stub or Raylib codec)
 ```
 
 **Optional backends:**
@@ -158,6 +160,8 @@ std.pg         = "1.0"   # PostgreSQL client — int handles (libpq)
 | `std.infer` | stub (placeholder) | `make FLUXA_INFER_LLAMA=1` → llama.cpp |
 | `std.wserver` | stub (clear error) | `apt install libmicrohttpd-dev` → real backend |
 | `std.pg` | stub (clear error) | `apt install libpq-dev` → real backend |
+| `std.sound` | stub (silent no-op) | `make FLUXA_SOUND_MINIAUDIO=1` → miniaudio |
+| `std.image` | stub (transforms only) | `make FLUXA_IMAGE_RAYLIB=1` → Raylib codec |
 
 ---
 
@@ -261,7 +265,7 @@ fluxa/
 | IPC server | ✅ stable |
 | Prod mode + FLUXA_SECURE | ✅ stable |
 | Runtime Update Protocol | ✅ stable |
-| Standard library (28 libs) | ✅ stable |
+| Standard library (31 libs) | ✅ stable |
 | Module system (import live/static) | ✅ stable |
 | Hardware simulation (RP2040/ESP32) | ✅ stable |
 | Docker torture testing | ✅ stable |

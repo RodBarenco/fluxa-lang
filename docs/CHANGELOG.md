@@ -1,6 +1,87 @@
 # Fluxa-lang Changelog
 
-## v0.24 — configurable resolver scope pool (`[runtime] scope_cap`) (current)
+## v0.25 — frame capture + `std.image` (PNG/JPG/BMP/TGA/QOI) (current)
+
+Two capabilities the Elite Achievement Cards need — snapshot the running game
+frame, and encode that snapshot to real image files — plus a build-ordering fix
+that surfaced while integrating them.
+
+**`graph.capture(win) → dyn`.** Snapshots the current frame into a neutral,
+backend-independent RGBA buffer. On the Raylib backend it pulls pixels from the
+offscreen render target (`win->target`, the same texture used for scaled
+fullscreen) via `LoadImageFromTexture`, normalizes to 32-bit RGBA, and flips
+vertically (GPU textures are bottom-up); with no target it falls back to
+`LoadImageFromScreen`. On the stub backend it returns a blank buffer of the
+logical size, so game logic and tests run headless. The result is released with
+`image.discard`.
+
+**New `std.image` lib.** `new`, `save`, `load`, `resize`, `width`, `height`,
+`discard`, `version`. `save` encodes by file **extension** — PNG, JPG, BMP, TGA,
+QOI — via Raylib's bundled stb_image_write; `load` decodes via stb_image.
+Dual-backend, like the rest of the graphics stack: the default stub keeps the
+full API (`new`/`width`/`height`/`resize`/`discard` run for real, with a
+nearest-neighbour resize), and `save`/`load` report a clear "no codec" error, so
+the card logic and tests run without the encoder. IO (`save`/`load`) runs inside
+`danger {}` like `sqlite`/`csv`/`fs`. Enable the real codec with
+`make FLUXA_IMAGE_RAYLIB=1`; when `std.graph` already links Raylib, the codec
+adds no new dependency.
+
+```fluxa
+import std graph
+import std image
+
+danger {
+    dyn shot = graph.capture(win)     // RGBA snapshot of the frame
+    image.resize(shot, 400, 300)      // scale to a card thumbnail
+    image.save(shot, "card.png")      // encode by extension → PNG
+    image.discard(shot)               // release (not free — reserved word)
+}
+if err != nil { print(err[0]) }
+```
+
+**Decoupling by design.** A shared header (`src/std/fluxa_image_buffer.h`) defines
+a neutral 32-bit RGBA buffer (`FluxaImageBuf`), so `std.graph` (producer) and
+`std.image` (consumer) never depend on each other — a capture is just bytes, and
+no Raylib type crosses the boundary. The buffer lives behind a `dyn` as a single
+`VAL_PTR`: the pixels are a separate heap allocation, never copied into the `dyn`,
+so even a 4K frame keeps the handle at one pointer. Size math is done in `long`
+before the `w*h*4` multiply (no integer-overflow → under-allocation), with a
+~268M-pixel cap and a graceful out-of-memory error rather than a crash.
+
+**Two bugs fixed along the way.**
+- **String returns must use `fxstr_new()`, not `strdup()`.** Since the
+  refcounted-string change (bug K), a `strdup`'d `VAL_STRING` return is freed with
+  the wrong allocator and aborts with `free(): invalid pointer` (hit on
+  `image.version()`). Fixed in the lib and corrected in `docs/CREATING_LIBS.md`,
+  which still said "always `strdup`" in three places — stale guidance that would
+  break any new lib.
+- **`image.free` didn't parse** — `free` is a reserved keyword (`TOK_FREE`).
+  Renamed to `image.discard`, matching the `json2.discard` precedent.
+
+**Build-ordering fix (Makefile).** A newly added lib was missing on the *first*
+build after adding it (`undefined identifier 'image'`) and only appeared on a
+second build. Cause: `-include src/lib_registry_flags.mk` is resolved at parse
+time, before the `build` recipe runs the registry generator, so each lib's
+`lib.mk` gate (`ifeq $(FLUXA_BUILDTIME_<LIB>),1`) saw an undefined flag. Fix: give
+`lib_registry_flags.mk` a real rule (depends on `fluxa.libs` + all lib headers);
+since it's a prerequisite of an included makefile, GNU Make regenerates it and
+re-executes itself before reading the `lib.mk` files, so a single `make build` is
+correct. Incremental builds don't over-regenerate. This benefits every future
+lib, not just `std.image`.
+
+**Tests.** `tests/libs/image.sh` (15 cases: version, new + size, zero-size and
+overflow rejection, resize in place / upscale / bad-size, save no-extension /
+bad-format / extension recognition, discard idempotence, use-after-discard,
+1×1 no-off-by-one, unknown-fn, load error path). `tests/libs/graph.sh` gains 3
+capture cases, including the full `graph.capture → image.resize → image.discard`
+flow. Zero-warning build; `std.image` 15/15, `std.graph` 25/25.
+
+**Docs.** `docs/STDLIB.md` — `graph.capture` row + full `std.image` section with
+the canonical capture→resize→save example. `README.md` — `std.image` and
+`std.sound` added to the library list and backend table (lib count 29/28 → 31).
+`docs/CREATING_LIBS.md` — the `strdup` → `fxstr_new` correction.
+
+## v0.24 — configurable resolver scope pool (`[runtime] scope_cap`)
 
 The resolver's lexical-scope pool was a hard-coded 256 (`#define SCOPE_POOL_CAP
 256` in resolver.c). It allocates one scope per top-level function, per Block, and

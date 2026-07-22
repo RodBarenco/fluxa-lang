@@ -321,6 +321,58 @@ FLX
 )
 echo "$out" | grep -q "error caught" && pass "fullscreen_bad_window_error" || fail "fullscreen_bad_window_error" "error caught" "$out"
 
+# capture returns a dyn handle sized to the logical resolution (stub: blank buffer)
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "test")
+    graph.begin_frame(w)
+    graph.clear(w, 10, 20, 40)
+    graph.end_frame(w)
+    dyn shot = graph.capture(w)
+    bool ok = shot != nil
+    print("captured", ok)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -q "captured true" && pass "capture_returns_handle" || fail "capture_returns_handle" "captured true" "$out"
+
+# a captured handle flows straight into std.image (width/height/discard)
+out=$(printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"; cat > "$P/main.flx" << 'FLX'
+import std graph
+import std image
+danger {
+    dyn w = graph.init(640, 480, "test")
+    graph.begin_frame(w)
+    graph.end_frame(w)
+    dyn shot = graph.capture(w)
+    print("w", image.width(shot))
+    print("h", image.height(shot))
+    image.resize(shot, 320, 240)
+    print("tw", image.width(shot))
+    image.discard(shot)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "w 640" && echo "$out" | grep -q "tw 320" \
+    && pass "capture_flows_to_image" || fail "capture_flows_to_image" "w 640 / tw 320" "$out"
+
+# capture on a bad window handle → clean error
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn bad = [9, 9]
+    dyn shot = graph.capture(bad)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "capture_bad_window_error" || fail "capture_bad_window_error" "error caught" "$out"
+
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.graph: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.graph: PASS" && exit 0 || exit 1

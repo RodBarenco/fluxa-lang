@@ -22,6 +22,7 @@
  *   graph.should_close(win)           → bool
  *   graph.begin_frame(win)            → nil
  *   graph.end_frame(win)              → nil
+ *   graph.capture(win)                → dyn   (RGBA snapshot; free via image.discard)
  *   graph.clear(win, r, g, b)         → nil   (RGB 0-255)
  *   graph.fps(win)                    → int
  *   graph.set_fps(win, fps)           → nil
@@ -48,6 +49,7 @@
 #include <stdio.h>
 #include "../../scope.h"
 #include "../../err.h"
+#include "../fluxa_image_buffer.h"   /* neutral RGBA buffer shared with std.image */
 
 /* ════════════════════════════════════════════════════════════════════
  * BACKEND: Raylib (when FLUXA_GRAPH_RAYLIB=1)
@@ -223,6 +225,15 @@ static inline GraphFont *graph_unwrap_font(const Value *v, ErrStack *err,
     return (GraphFont *)v->as.dyn->items[0].as.ptr;
 }
 
+/* Wrap a captured RGBA buffer as an opaque dyn the script hands to std.image. */
+static inline Value graph_wrap_img(FluxaImageBuf *b) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=b;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────── */
 static inline Value fluxa_std_graph_call(const char *fn_name,
                                           const Value *args, int argc,
@@ -334,6 +345,41 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         (void)win;
 #endif
         return graph_nil();
+    }
+
+    /* graph.capture(win) → dyn : snapshot the current frame as a neutral RGBA
+     * image buffer, ready for std.image to resize/export. Call it after the
+     * frame is drawn (after end_frame, or between begin_frame/end_frame on the
+     * offscreen target). The returned dyn is owned by the script: release it
+     * with image.free. On the stub backend it returns a blank buffer of the
+     * logical size so game logic and tests run without a display. */
+    if (!strcmp(fn_name,"capture")) {
+        NEED(1); GET_WIN(0,win);
+#ifdef FLUXA_GRAPH_RAYLIB
+        Image img;
+        if (win->has_target) {
+            /* pull the pixels straight from the offscreen render target */
+            img = LoadImageFromTexture(win->target.texture);
+        } else {
+            /* no target: grab the visible framebuffer via a screen-sized texture */
+            img = LoadImageFromScreen();
+        }
+        /* normalize to 32-bit RGBA regardless of the source pixel format */
+        ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        /* the GPU texture is bottom-up; flip so row 0 is the top of the frame */
+        ImageFlipVertical(&img);
+        FluxaImageBuf *b = fluxa_imgbuf_from_rgba((const unsigned char *)img.data,
+                                                  img.width, img.height);
+        UnloadImage(img);
+        if (!b) GRAPH_ERR("capture: out of memory");
+        return graph_wrap_img(b);
+#else
+        {
+            FluxaImageBuf *b = fluxa_imgbuf_new(win->width, win->height);
+            if (!b) GRAPH_ERR("capture: out of memory");
+            return graph_wrap_img(b);
+        }
+#endif
     }
 
     if (!strcmp(fn_name,"clear")) {
