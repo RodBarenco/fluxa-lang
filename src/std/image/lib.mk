@@ -20,10 +20,10 @@ ifdef FLUXA_IMAGE_RAYLIB
   # Check vendor first, then system
   ifneq ($(wildcard vendor/raylib.h),)
     FLUXA_EXTRA_CFLAGS  += -DFLUXA_IMAGE_RAYLIB=1 -Ivendor
-    FLUXA_EXTRA_LDFLAGS += vendor/libraylib.a -lm -lpthread -ldl
+    FLUXA_EXTRA_LDFLAGS += vendor/libraylib.a -lm -lpthread -ldl -lz
   else ifeq ($(shell pkg-config --exists raylib 2>/dev/null && echo 1 || echo 0),1)
     FLUXA_EXTRA_CFLAGS  += -DFLUXA_IMAGE_RAYLIB=1 $(shell pkg-config --cflags raylib)
-    FLUXA_EXTRA_LDFLAGS += $(shell pkg-config --libs raylib)
+    FLUXA_EXTRA_LDFLAGS += $(shell pkg-config --libs raylib) -lz
   else
     $(warning std.image: FLUXA_IMAGE_RAYLIB=1 requested but raylib not found — using stub)
   endif

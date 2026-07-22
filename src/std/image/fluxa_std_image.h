@@ -30,8 +30,10 @@
  *   image.save(img, path)      → bool  encode by extension (.png/.jpg/.bmp/.tga/.qoi)
  *   image.load(path)           → dyn   decode a file into an RGBA buffer
  *   image.resize(img, w, h)    → nil   scale in place (Bicubic on raylib, NN on stub)
+ *   image.blit(dst,src,x,y[,m]) → nil   compose src onto dst; optional mask image
  *   image.width(img)           → int
  *   image.height(img)          → int
+ *   image.set_text(path,k,t[,c])→ bool  embed PNG iTXt metadata; optional compress
  *   image.discard(img)         → nil   release the buffer (also frees graph.capture)
  *   image.version()            → str
  */
@@ -48,7 +50,48 @@
 #include <raylib.h>
 #endif
 
-/* ── Value constructors ─────────────────────────────────────────── */
+/* ── PNG iTXt metadata (for image.set_text) ─────────────────────────
+ * Raylib/stb writes a bare PNG with no text chunks, so to embed metadata we
+ * post-process the encoded file: read it, splice one iTXt chunk in just before
+ * the trailing IEND, and write it back. The chunk format is rigid, so this is
+ * done by hand with a CRC-32 over "type + data". iTXt supports an uncompressed
+ * form (compression flag 0) and a zlib-deflate form (flag 1); the deflate path
+ * uses the same zlib the runtime already links. */
+
+static const unsigned int FLUXA_CRC_POLY = 0xEDB88320u;
+static inline unsigned int fluxa_png_crc(const unsigned char *buf, size_t len) {
+    unsigned int c = 0xFFFFFFFFu;
+    for (size_t i=0; i<len; i++) {
+        c ^= buf[i];
+        for (int k=0; k<8; k++) c = (c & 1) ? (FLUXA_CRC_POLY ^ (c >> 1)) : (c >> 1);
+    }
+    return c ^ 0xFFFFFFFFu;
+}
+static inline void fluxa_put_be32(unsigned char *p, unsigned int v) {
+    p[0]=(unsigned char)(v>>24); p[1]=(unsigned char)(v>>16);
+    p[2]=(unsigned char)(v>>8);  p[3]=(unsigned char)(v);
+}
+
+#ifdef FLUXA_IMAGE_RAYLIB
+#include <zlib.h>
+/* deflate `src` into a freshly malloc'd buffer; returns len or -1. */
+static inline long fluxa_deflate(const unsigned char *src, size_t src_len,
+                                 unsigned char **out) {
+    z_stream zs; memset(&zs,0,sizeof(zs));
+    if (deflateInit(&zs, Z_DEFAULT_COMPRESSION) != Z_OK) return -1;
+    uLong bound = deflateBound(&zs, (uLong)src_len);
+    unsigned char *buf = (unsigned char *)malloc(bound);
+    if (!buf) { deflateEnd(&zs); return -1; }
+    zs.next_in=(Bytef *)src; zs.avail_in=(uInt)src_len;
+    zs.next_out=buf; zs.avail_out=(uInt)bound;
+    if (deflate(&zs, Z_FINISH) != Z_STREAM_END) { deflateEnd(&zs); free(buf); return -1; }
+    long n = (long)zs.total_out; deflateEnd(&zs);
+    *out = buf; return n;
+}
+#endif
+
+/* ── Value constructors continue below ──────────────────────────── */
+
 static inline Value image_int(long n)     { Value v; v.type=VAL_INT;  v.as.integer=n; return v; }
 static inline Value image_bool(int b)     { Value v; v.type=VAL_BOOL; v.as.boolean=b; return v; }
 static inline Value image_nil(void)       { Value v; v.type=VAL_NIL;                  return v; }
@@ -203,6 +246,55 @@ static inline Value fluxa_std_image_call(const char *fn_name,
         return image_nil();
     }
 
+    /* image.blit(dst, src, x, y [, mask]) → nil
+     * Compose src onto dst at (x, y), alpha-blending by src's alpha channel so
+     * transparent pixels don't overwrite the frame. Pixels landing outside dst
+     * are clipped. The optional 5th argument is a mask image: where the mask's
+     * alpha is 0 the src pixel is skipped, so a rounded/clipped frame shape
+     * (the card's stepped corners) only shows through the mask. Without the mask
+     * the blit is a plain rectangle. This is pure RGBA work — no codec needed,
+     * so it runs on both backends and needs no danger block. */
+    if (strcmp(fn_name,"blit")==0) {
+        NEED(4); GET_IMG(0,dst); GET_IMG(1,src); GET_INT(2,dx); GET_INT(3,dy);
+
+        FluxaImageBuf *mask = NULL;
+        if (argc >= 5) {
+            mask = image_unwrap(&args[4]);
+            if (!fluxa_imgbuf_valid(mask)) IMG_ERR("blit: mask is not a live image handle");
+            if (mask->width != src->width || mask->height != src->height)
+                IMG_ERR("blit: mask size must match the source image");
+        }
+
+        for (int sy=0; sy<src->height; sy++) {
+            int ty = (int)dy + sy;
+            if (ty < 0 || ty >= dst->height) continue;
+            for (int sx=0; sx<src->width; sx++) {
+                int tx = (int)dx + sx;
+                if (tx < 0 || tx >= dst->width) continue;
+
+                const unsigned char *sp = src->rgba + ((size_t)sy*src->width + sx)*4u;
+                int a = sp[3];
+
+                /* mask gates the source by its own alpha, when provided */
+                if (mask) {
+                    const unsigned char *mp = mask->rgba + ((size_t)sy*mask->width + sx)*4u;
+                    if (mp[3] == 0) continue;
+                    a = (a * mp[3]) / 255;    /* combine src and mask coverage */
+                }
+                if (a == 0) continue;
+
+                unsigned char *dp = dst->rgba + ((size_t)ty*dst->width + tx)*4u;
+                /* standard source-over alpha blend */
+                dp[0] = (unsigned char)((sp[0]*a + dp[0]*(255-a)) / 255);
+                dp[1] = (unsigned char)((sp[1]*a + dp[1]*(255-a)) / 255);
+                dp[2] = (unsigned char)((sp[2]*a + dp[2]*(255-a)) / 255);
+                int da = dp[3] + a - (dp[3]*a)/255;   /* accumulate coverage */
+                dp[3] = (unsigned char)(da > 255 ? 255 : da);
+            }
+        }
+        return image_nil();
+    }
+
     /* image.save(img, path) → bool  (format by extension) — IO: needs danger */
     if (strcmp(fn_name,"save")==0) {
         NEED(2); GET_IMG(0,b); GET_STR(1,path);
@@ -222,6 +314,107 @@ static inline Value fluxa_std_image_call(const char *fn_name,
 #else
         (void)b; (void)path;
         IMG_ERR("save: no image codec in this build (rebuild with FLUXA_IMAGE_RAYLIB=1)");
+#endif
+    }
+
+    /* image.set_text(path, key, text [, compress]) → bool
+     * Embed a text field in an existing PNG as an iTXt chunk (e.g. the card's
+     * cryptographic name / proof). Reads the PNG at `path`, splices the chunk in
+     * before IEND, and rewrites the file. Without the 4th argument the text is
+     * stored uncompressed (iTXt compression flag 0); pass a 4th argument to
+     * deflate the text (flag 1) — useful for long proofs. `key` is the Latin-1
+     * keyword (1–79 chars, e.g. "starfight-proof"); `text` is UTF-8.
+     * PNG only. IO: needs a danger block. */
+    if (strcmp(fn_name,"set_text")==0) {
+        NEED(3); GET_STR(0,path); GET_STR(1,key); GET_STR(2,text);
+        /* validate the key on both backends, before the codec check (like save) */
+        {
+            size_t klen0 = strlen(key);
+            if (klen0 < 1 || klen0 > 79) IMG_ERR("set_text: key must be 1–79 characters");
+        }
+#ifdef FLUXA_IMAGE_RAYLIB
+        {
+            int want_compress = (argc >= 4) ? 1 : 0;
+
+            size_t klen = strlen(key);
+
+            /* read the whole PNG file */
+            FILE *fp = fopen(path, "rb");
+            if (!fp) IMG_ERR("set_text: cannot open PNG file");
+            fseek(fp, 0, SEEK_END); long fsz = ftell(fp); fseek(fp, 0, SEEK_SET);
+            if (fsz < 57) { fclose(fp); IMG_ERR("set_text: file too small to be a PNG"); }
+            unsigned char *png = (unsigned char *)malloc((size_t)fsz);
+            if (!png) { fclose(fp); IMG_ERR("set_text: out of memory"); }
+            if (fread(png, 1, (size_t)fsz, fp) != (size_t)fsz) { free(png); fclose(fp); IMG_ERR("set_text: read failed"); }
+            fclose(fp);
+
+            /* verify PNG signature */
+            static const unsigned char sig[8] = {137,80,78,71,13,10,26,10};
+            if (memcmp(png, sig, 8) != 0) { free(png); IMG_ERR("set_text: not a PNG file"); }
+
+            /* locate the IEND chunk (last 12 bytes of a well-formed PNG) */
+            if (memcmp(png + fsz - 8, "IEND", 4) != 0 &&
+                memcmp(png + fsz - 12 + 4, "IEND", 4) != 0) {
+                /* scan for IEND to be safe */
+            }
+            long iend_pos = -1;
+            for (long i = 8; i + 8 <= fsz; ) {
+                unsigned int clen = ((unsigned)png[i]<<24)|((unsigned)png[i+1]<<16)|
+                                    ((unsigned)png[i+2]<<8)|((unsigned)png[i+3]);
+                const unsigned char *ctype = png + i + 4;
+                if (memcmp(ctype, "IEND", 4) == 0) { iend_pos = i; break; }
+                i += 4 + 4 + (long)clen + 4;   /* len + type + data + crc */
+            }
+            if (iend_pos < 0) { free(png); IMG_ERR("set_text: malformed PNG (no IEND)"); }
+
+            /* build the iTXt data payload:
+             * keyword \0 comp_flag(1) comp_method(1) lang \0 trans_keyword \0 text[...] */
+            unsigned char *textblob = (unsigned char *)text;
+            size_t textlen = strlen(text);
+            unsigned char *comp_buf = NULL;
+            if (want_compress) {
+                long n = fluxa_deflate((const unsigned char *)text, textlen, &comp_buf);
+                if (n < 0) { free(png); IMG_ERR("set_text: text compression failed"); }
+                textblob = comp_buf; textlen = (size_t)n;
+            }
+
+            /* data length: key + \0 + 1 + 1 + \0(lang) + \0(trans) + text */
+            size_t dlen = klen + 1 + 1 + 1 + 1 + 1 + textlen;
+            unsigned char *data = (unsigned char *)malloc(dlen);
+            if (!data) { free(comp_buf); free(png); IMG_ERR("set_text: out of memory"); }
+            size_t o = 0;
+            memcpy(data+o, key, klen); o += klen;
+            data[o++] = 0;                       /* null after keyword */
+            data[o++] = (unsigned char)want_compress; /* compression flag */
+            data[o++] = 0;                       /* compression method (0=zlib) */
+            data[o++] = 0;                       /* empty language tag + null */
+            data[o++] = 0;                       /* empty translated keyword + null */
+            memcpy(data+o, textblob, textlen); o += textlen;
+
+            /* full chunk = len(4) + "iTXt"(4) + data + crc(4) */
+            size_t chunk_sz = 4 + 4 + dlen + 4;
+            unsigned char *chunk = (unsigned char *)malloc(chunk_sz);
+            if (!chunk) { free(data); free(comp_buf); free(png); IMG_ERR("set_text: out of memory"); }
+            fluxa_put_be32(chunk, (unsigned int)dlen);
+            memcpy(chunk+4, "iTXt", 4);
+            memcpy(chunk+8, data, dlen);
+            unsigned int crc = fluxa_png_crc(chunk+4, 4 + dlen);   /* over type+data */
+            fluxa_put_be32(chunk + 8 + dlen, crc);
+
+            /* write: [png up to IEND] + [iTXt chunk] + [IEND to end] */
+            FILE *out = fopen(path, "wb");
+            if (!out) { free(chunk); free(data); free(comp_buf); free(png); IMG_ERR("set_text: cannot rewrite PNG"); }
+            fwrite(png, 1, (size_t)iend_pos, out);
+            fwrite(chunk, 1, chunk_sz, out);
+            fwrite(png + iend_pos, 1, (size_t)(fsz - iend_pos), out);
+            fclose(out);
+
+            free(chunk); free(data); free(comp_buf); free(png);
+            return image_bool(1);
+        }
+#else
+        (void)path; (void)key; (void)text;
+        IMG_ERR("set_text: no image codec in this build (rebuild with FLUXA_IMAGE_RAYLIB=1)");
 #endif
     }
 

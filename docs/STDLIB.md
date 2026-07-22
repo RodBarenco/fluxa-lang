@@ -1316,8 +1316,10 @@ by the file **extension**.
 | `image.save(img, path)` | `bool` | Encode by extension (`.png`/`.jpg`/`.bmp`/`.tga`/`.qoi`). **Needs `danger`.** |
 | `image.load(path)` | `dyn` | Decode a file into an RGBA buffer. **Needs `danger`.** |
 | `image.resize(img, w, h)` | `nil` | Scale in place (Bicubic on the codec backend, nearest-neighbour on stub) |
+| `image.blit(dst, src, x, y[, mask])` | `nil` | Compose `src` onto `dst` at (x,y), alpha-blended and clipped. Optional `mask` image gates the source by the mask's alpha (for clipped/rounded frames). Pure RGBA — both backends. |
 | `image.width(img)` | `int` | Width in pixels |
 | `image.height(img)` | `int` | Height in pixels |
+| `image.set_text(path, key, text[, compress])` | `bool` | Embed a text field in an existing PNG as an `iTXt` chunk. `key` is a 1–79 char Latin-1 keyword, `text` is UTF-8. Without the 4th arg the text is stored uncompressed; pass a 4th arg to deflate it. **PNG only. Needs `danger`.** |
 | `image.discard(img)` | `nil` | Release the buffer (idempotent; also releases a `graph.capture` handle) |
 | `image.version()` | `str` | Backend version (reports whether the codec is present) |
 
@@ -1351,6 +1353,39 @@ The same buffer can be written to more than one format before release — call
 `image.save` with `card.png`, then `card.jpg`, then `card.bmp` on the same
 handle. Any single `image.save` / `image.load` sits inside `danger`, with the
 `if err != nil` decision right after, per the error-handling idiom.
+
+### Composing a card and sealing metadata into it
+
+The full Elite Card flow: capture the unique game frame, compose it inside a
+pre-rendered frame image through a mask (so it takes the frame's clipped shape),
+save, then seal the card's cryptographic proof into the PNG itself as `iTXt`.
+
+```fluxa
+import std graph
+import std image
+
+danger {
+    dyn frame  = graph.capture(win)        // the run's unique frame
+    image.resize(frame, 360, 200)          // fit the card's art window
+
+    dyn card   = image.load("card_frame.png")   // pre-rendered border art
+    dyn mask   = image.load("card_mask.png")     // alpha = where art shows
+    image.blit(card, frame, 40, 92, mask)  // compose through the mask
+
+    image.save(card, "elite_card.png")     // encode the composed card
+    image.set_text("elite_card.png", "starfight-proof", proof_hex)  // seal proof
+
+    image.discard(frame)
+    image.discard(card)
+    image.discard(mask)
+}
+if err != nil { print(err[0]) }
+```
+
+The `iTXt` chunk travels inside the PNG, so the proof survives copying, sharing,
+and re-hosting the image — any PNG reader can read it back, and the card stays
+verifiable offline. Pass a 4th argument to `image.set_text` to deflate long
+proofs.
 
 ## std.infer — Local LLM Inference
 

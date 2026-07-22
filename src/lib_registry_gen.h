@@ -43,6 +43,9 @@
 #ifdef FLUXA_STD_I2C
 #  include "std/i2c/fluxa_std_i2c.h"
 #endif
+#ifdef FLUXA_STD_IMAGE
+#  include "std/image/fluxa_std_image.h"
+#endif
 #ifdef FLUXA_STD_INFER
 #  include "std/infer/fluxa_std_infer.h"
 #endif
@@ -190,6 +193,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "i2c", "std.i2c", "i2c", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_IMAGE
+    { "image", "std.image", "image", fluxa_std_image_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "image", "std.image", "image", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_INFER
     { "infer", "std.infer", "infer", fluxa_std_infer_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -292,7 +300,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 30
+#define FLUXA_LIB_COUNT 31
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

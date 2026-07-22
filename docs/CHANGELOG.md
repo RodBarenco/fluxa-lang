@@ -15,26 +15,40 @@ vertically (GPU textures are bottom-up); with no target it falls back to
 logical size, so game logic and tests run headless. The result is released with
 `image.discard`.
 
-**New `std.image` lib.** `new`, `save`, `load`, `resize`, `width`, `height`,
-`discard`, `version`. `save` encodes by file **extension** — PNG, JPG, BMP, TGA,
-QOI — via Raylib's bundled stb_image_write; `load` decodes via stb_image.
-Dual-backend, like the rest of the graphics stack: the default stub keeps the
-full API (`new`/`width`/`height`/`resize`/`discard` run for real, with a
-nearest-neighbour resize), and `save`/`load` report a clear "no codec" error, so
-the card logic and tests run without the encoder. IO (`save`/`load`) runs inside
-`danger {}` like `sqlite`/`csv`/`fs`. Enable the real codec with
-`make FLUXA_IMAGE_RAYLIB=1`; when `std.graph` already links Raylib, the codec
-adds no new dependency.
+**New `std.image` lib.** `new`, `save`, `load`, `resize`, `blit`, `width`,
+`height`, `set_text`, `discard`, `version`. `save` encodes by file **extension** —
+PNG, JPG, BMP, TGA, QOI — via Raylib's bundled stb_image_write; `load` decodes
+via stb_image. `blit` composes one buffer onto another (alpha-blended, clipped),
+with an optional mask argument that gates the source by the mask's alpha — so a
+captured frame drops into a card's clipped/rounded art window. `set_text` embeds
+a text field into an existing PNG as an `iTXt` chunk (the card's cryptographic
+proof), written by hand since stb emits no text chunks: it splices the chunk
+before IEND with a CRC-32 validated against zlib's, and takes an optional 4th
+argument to deflate long text. Both `blit` and `set_text` are designed so the
+optional mechanism is off when the trailing argument is omitted and engages when
+it's supplied — the signature is final now, so wiring the mask or compression
+later won't change the API. Dual-backend, like the rest of the graphics stack:
+the default stub keeps the full API (`new`/`width`/`height`/`resize`/`blit`/
+`discard` run for real, with a nearest-neighbour resize), and `save`/`load`/
+`set_text` report a clear "no codec" error, so the card logic and tests run
+without the encoder. IO (`save`/`load`/`set_text`) runs inside `danger {}` like
+`sqlite`/`csv`/`fs`. Enable the real codec with `make FLUXA_IMAGE_RAYLIB=1`; when
+`std.graph` already links Raylib, the codec adds no new dependency (only `-lz`,
+for the iTXt deflate path).
 
 ```fluxa
 import std graph
 import std image
 
 danger {
-    dyn shot = graph.capture(win)     // RGBA snapshot of the frame
-    image.resize(shot, 400, 300)      // scale to a card thumbnail
-    image.save(shot, "card.png")      // encode by extension → PNG
-    image.discard(shot)               // release (not free — reserved word)
+    dyn frame = graph.capture(win)         // RGBA snapshot of the frame
+    image.resize(frame, 360, 200)          // fit the card art window
+    dyn card  = image.load("card_frame.png")
+    dyn mask  = image.load("card_mask.png")
+    image.blit(card, frame, 40, 92, mask)  // compose through the mask shape
+    image.save(card, "elite_card.png")     // encode → PNG
+    image.set_text("elite_card.png", "starfight-proof", proof_hex)  // seal proof
+    image.discard(frame)  image.discard(card)  image.discard(mask)
 }
 if err != nil { print(err[0]) }
 ```

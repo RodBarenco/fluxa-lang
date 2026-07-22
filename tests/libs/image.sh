@@ -189,5 +189,91 @@ FLX
 )
 echo "$out" | grep -qiE "codec|could not|decode" && pass "load_reports_error" || fail "load_reports_error" "codec/decode" "$out"
 
+# 16. blit composes without a mask (pure RGBA — works on stub)
+out=$(run << 'FLX'
+import std image
+dyn canvas = image.new(420, 456)
+dyn frame = image.new(400, 300)
+image.blit(canvas, frame, 10, 40)
+print("w", image.width(canvas))
+image.discard(canvas)
+image.discard(frame)
+print("done")
+FLX
+)
+echo "$out" | grep -q "w 420" && echo "$out" | grep -q "done" \
+    && pass "blit_no_mask" || fail "blit_no_mask" "w 420 / done" "$out"
+
+# 17. blit with a mask (optional 5th arg) composes and clips by mask
+out=$(run << 'FLX'
+import std image
+dyn canvas = image.new(420, 456)
+dyn frame = image.new(400, 300)
+dyn mask = image.new(400, 300)
+image.blit(canvas, frame, 10, 40, mask)
+print("masked ok")
+image.discard(canvas)
+image.discard(frame)
+image.discard(mask)
+FLX
+)
+echo "$out" | grep -q "masked ok" && pass "blit_with_mask" || fail "blit_with_mask" "masked ok" "$out"
+
+# 18. blit clips out-of-bounds source instead of crashing
+out=$(run << 'FLX'
+import std image
+dyn canvas = image.new(100, 100)
+dyn frame = image.new(80, 80)
+image.blit(canvas, frame, 60, 60)
+print("clipped ok")
+image.discard(canvas)
+image.discard(frame)
+FLX
+)
+echo "$out" | grep -q "clipped ok" && pass "blit_clips_oob" || fail "blit_clips_oob" "clipped ok" "$out"
+
+# 19. blit with a mismatched-size mask → clean error
+out=$(run << 'FLX'
+import std image
+dyn canvas = image.new(200, 200)
+dyn frame = image.new(80, 80)
+dyn mask = image.new(50, 50)
+danger { image.blit(canvas, frame, 0, 0, mask) }
+if err != nil { print("caught") }
+image.discard(canvas)
+image.discard(frame)
+image.discard(mask)
+FLX
+)
+echo "$out" | grep -q "caught" && pass "blit_mask_size_error" || fail "blit_mask_size_error" "caught" "$out"
+
+# 20. set_text signature: key length validated before codec (short key → error)
+out=$(run << 'FLX'
+import std image
+danger { bool ok = image.set_text("card.png", "", "text") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qiE "1.79|key|character" && pass "set_text_key_validated" || fail "set_text_key_validated" "key length msg" "$out"
+
+# 21. set_text on the stub → clear "no codec" error (raylib build embeds iTXt)
+out=$(run << 'FLX'
+import std image
+danger { bool ok = image.set_text("card.png", "starfight-proof", "B2:abc") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "codec" && pass "set_text_reports_no_codec" || fail "set_text_reports_no_codec" "codec" "$out"
+
+# 22. set_text accepts the optional 4th (compress) argument without a parse/arity error
+out=$(run << 'FLX'
+import std image
+danger { bool ok = image.set_text("card.png", "proof", "B2:abc", 1) }
+if err != nil { print(err[0]) }
+FLX
+)
+# stub still reports no-codec, but NOT an arity error → proves the 4th arg is accepted
+echo "$out" | grep -qi "codec" && pass "set_text_optional_compress_arg" || fail "set_text_optional_compress_arg" "codec (arg accepted)" "$out"
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1
