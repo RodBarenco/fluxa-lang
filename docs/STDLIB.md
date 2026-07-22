@@ -1213,6 +1213,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.begin_frame(win)` | `nil` | Begin draw frame |
 | `graph.end_frame(win)` | `nil` | Present frame |
 | `graph.capture(win)` | `dyn` | Snapshot the current frame as an RGBA image buffer (feeds `std.image`). Release with `image.discard`. Stub returns a blank buffer of the logical size. |
+| `graph.draw_image(win, img, x, y[, scale])` | `nil` | Draw an RGBA image buffer (from `std.image` or `graph.capture`) at (x,y). Optional `scale` (1.0 = original). The GPU texture is **cached** on the buffer and reused across frames — re-uploaded only when the pixels change — so drawing every frame is cheap. Completes the round trip (`image → graph`). |
 | `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
 | `graph.fps(win)` | `int` | Current FPS |
 | `graph.set_fps(win, fps)` | `nil` | Set target FPS |
@@ -1231,6 +1232,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.mouse_y(win)` | `int` | Mouse Y |
 | `graph.mouse_pressed(win)` | `bool` | Left mouse button |
 | `graph.dt(win)` | `float` | Delta time in seconds |
+| `graph.open_url(url)` | `bool` | Open a URL in the system's default browser. Only `http://`, `https://` and `mailto:` are accepted. The URL is passed to `exec` as a single argument with no shell, so it cannot carry a command. Works on both backends (no display needed). **Needs `danger`.** |
 | `graph.version()` | `str` | Backend version |
 
 ### Custom fonts (TTF/OTF)
@@ -1386,6 +1388,23 @@ The `iTXt` chunk travels inside the PNG, so the proof survives copying, sharing,
 and re-hosting the image — any PNG reader can read it back, and the card stays
 verifiable offline. Pass a 4th argument to `image.set_text` to deflate long
 proofs.
+
+### The full round trip: graph ⇄ image
+
+`graph.capture` and `graph.draw_image` are inverses, so pixels flow both ways:
+`graph → image` (snapshot) and `image → graph` (draw). A card built with
+`image.load` + `blit` can be shown in-game with `graph.draw_image`, and a live
+frame can be captured, edited, and drawn back. `draw_image` caches the uploaded
+GPU texture on the image buffer and reuses it across frames — re-uploading only
+when the pixels change (`resize`/`blit` mark the buffer dirty) — so drawing a
+card or HUD image every frame in the game loop stays cheap.
+
+```fluxa
+dyn card = image.load("elite_card.png")   // decode once
+// ... in the render loop, every frame:
+graph.draw_image(win, card, 220, 80)       // texture uploaded once, then reused
+graph.draw_image(win, card, 40, 400, 0.4)  // same buffer, drawn small as a thumbnail
+```
 
 ## std.infer — Local LLM Inference
 

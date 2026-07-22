@@ -373,6 +373,146 @@ FLX
 )
 echo "$out" | grep -q "error caught" && pass "capture_bad_window_error" || fail "capture_bad_window_error" "error caught" "$out"
 
+# draw_image accepts an image buffer (round trip: image → graph)
+out=$(printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"; cat > "$P/main.flx" << 'FLX'
+import std graph
+import std image
+danger {
+    dyn w = graph.init(800, 600, "test")
+    dyn pic = image.new(120, 90)
+    graph.begin_frame(w)
+    graph.draw_image(w, pic, 40, 40)
+    graph.end_frame(w)
+    print("drew")
+    image.discard(pic)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "drew" && pass "draw_image_basic" || fail "draw_image_basic" "drew" "$out"
+
+# draw_image accepts the optional scale argument (int or float)
+out=$(printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"; cat > "$P/main.flx" << 'FLX'
+import std graph
+import std image
+danger {
+    dyn w = graph.init(800, 600, "test")
+    dyn pic = image.new(120, 90)
+    graph.begin_frame(w)
+    graph.draw_image(w, pic, 40, 40, 0.5)
+    graph.draw_image(w, pic, 200, 40, 2)
+    graph.end_frame(w)
+    print("scaled")
+    image.discard(pic)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "scaled" && pass "draw_image_scaled" || fail "draw_image_scaled" "scaled" "$out"
+
+# the full round trip: capture the frame, then draw it back
+out=$(printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"; cat > "$P/main.flx" << 'FLX'
+import std graph
+import std image
+danger {
+    dyn w = graph.init(640, 480, "test")
+    graph.begin_frame(w)
+    graph.clear(w, 20, 40, 60)
+    graph.end_frame(w)
+    dyn shot = graph.capture(w)
+    image.resize(shot, 160, 120)
+    graph.begin_frame(w)
+    graph.draw_image(w, shot, 10, 10)
+    graph.end_frame(w)
+    print("roundtrip ok")
+    image.discard(shot)
+    graph.close(w)
+}
+if err != nil { print(err[0]) }
+FLX
+timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true)
+echo "$out" | grep -q "roundtrip ok" && pass "draw_image_roundtrip" || fail "draw_image_roundtrip" "roundtrip ok" "$out"
+
+# draw_image on a bad image handle → clean error
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn w = graph.init(800, 600, "test")
+    dyn bad = [1, 2]
+    graph.begin_frame(w)
+    graph.draw_image(w, bad, 0, 0)
+    graph.end_frame(w)
+    graph.close(w)
+}
+if err != nil { print("error caught") }
+FLX
+)
+echo "$out" | grep -q "error caught" && pass "draw_image_bad_handle_error" || fail "draw_image_bad_handle_error" "error caught" "$out"
+
+# open_url accepts an https URL
+out=$(run << 'FLX'
+import std graph
+danger { bool ok = graph.open_url("https://example.com/support") }
+if err == nil { print("HTTPS_OK") }
+if err != nil { print("HTTPS_REFUSED") }
+FLX
+)
+echo "$out" | grep -q "HTTPS_OK" && pass "open_url_https" || fail "open_url_https" "HTTPS_OK" "$out"
+
+# open_url accepts a mailto: URL
+out=$(run << 'FLX'
+import std graph
+danger { bool ok = graph.open_url("mailto:someone@example.com") }
+if err == nil { print("MAILTO_OK") }
+if err != nil { print("MAILTO_REFUSED") }
+FLX
+)
+echo "$out" | grep -q "MAILTO_OK" && pass "open_url_mailto" || fail "open_url_mailto" "MAILTO_OK" "$out"
+
+# open_url refuses file:// (would expose local files)
+out=$(run << 'FLX'
+import std graph
+danger { bool ok = graph.open_url("file:///etc/passwd") }
+if err != nil { print("FILE_REFUSED") }
+FLX
+)
+echo "$out" | grep -q "FILE_REFUSED" && pass "open_url_rejects_file" || fail "open_url_rejects_file" "FILE_REFUSED" "$out"
+
+# open_url refuses other schemes (javascript:, ftp://)
+out=$(run << 'FLX'
+import std graph
+danger { bool a = graph.open_url("javascript:alert(1)") }
+if err != nil { print("JS_REFUSED") }
+danger { bool b = graph.open_url("ftp://example.com/x") }
+if err != nil { print("FTP_REFUSED") }
+FLX
+)
+echo "$out" | grep -q "JS_REFUSED" && echo "$out" | grep -q "FTP_REFUSED" \
+    && pass "open_url_rejects_schemes" || fail "open_url_rejects_schemes" "JS_REFUSED / FTP_REFUSED" "$out"
+
+# open_url refuses an empty / truncated URL (same validation path as controls)
+out=$(run << 'FLX'
+import std graph
+danger { bool a = graph.open_url("") }
+if err != nil { print("EMPTY_REFUSED") }
+danger { bool b = graph.open_url("http://") }
+if err != nil { print("SHORT_REFUSED") }
+FLX
+)
+echo "$out" | grep -q "EMPTY_REFUSED" && echo "$out" | grep -q "SHORT_REFUSED" \
+    && pass "open_url_rejects_malformed" || fail "open_url_rejects_malformed" "EMPTY_REFUSED / SHORT_REFUSED" "$out"
+
+# open_url with no argument → error
+out=$(run << 'FLX'
+import std graph
+danger { bool ok = graph.open_url() }
+if err != nil { print("ARITY_ERR") }
+FLX
+)
+echo "$out" | grep -q "ARITY_ERR" && pass "open_url_arity_error" || fail "open_url_arity_error" "ARITY_ERR" "$out"
+
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.graph: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.graph: PASS" && exit 0 || exit 1

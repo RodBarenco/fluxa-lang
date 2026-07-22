@@ -243,6 +243,7 @@ static inline Value fluxa_std_image_call(const char *fn_name,
             nb->rgba=NULL; fluxa_imgbuf_free(nb);
         }
 #endif
+        fluxa_imgbuf_touch(b);   /* pixels changed → invalidate any GPU cache */
         return image_nil();
     }
 
@@ -292,6 +293,7 @@ static inline Value fluxa_std_image_call(const char *fn_name,
                 dp[3] = (unsigned char)(da > 255 ? 255 : da);
             }
         }
+        fluxa_imgbuf_touch(dst);   /* pixels changed → invalidate any GPU cache */
         return image_nil();
     }
 

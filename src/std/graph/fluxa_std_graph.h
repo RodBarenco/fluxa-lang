@@ -23,6 +23,7 @@
  *   graph.begin_frame(win)            → nil
  *   graph.end_frame(win)              → nil
  *   graph.capture(win)                → dyn   (RGBA snapshot; free via image.discard)
+ *   graph.draw_image(win,img,x,y[,s]) → nil   (draw an image buffer; optional scale)
  *   graph.clear(win, r, g, b)         → nil   (RGB 0-255)
  *   graph.fps(win)                    → int
  *   graph.set_fps(win, fps)           → nil
@@ -41,6 +42,7 @@
  *   graph.mouse_y(win)                → int
  *   graph.mouse_pressed(win)          → bool  (left button)
  *   graph.dt(win)                     → float (delta time seconds)
+ *   graph.open_url(url)               → bool  (http/https/mailto → system browser)
  *   graph.version()                   → str
  */
 
@@ -51,12 +53,90 @@
 #include "../../err.h"
 #include "../fluxa_image_buffer.h"   /* neutral RGBA buffer shared with std.image */
 
+/* for graph.open_url — launching the system browser (no display required) */
+#if defined(_WIN32)
+#  include <windows.h>          /* ShellExecuteA — link with -lshell32 on Windows */
+#else
+#  include <unistd.h>
+#  include <sys/wait.h>
+#endif
+
+/* ── Opening a URL in the system's default browser ─────────────────
+ * Deliberately NOT raylib's OpenURL: that one shells out through system(), so a
+ * crafted URL can carry a command along with it. Here the URL is handed to exec
+ * as a single argv element with no shell in between, which makes injection
+ * impossible by construction, and the scheme is checked first. This lives
+ * outside the backend #ifdefs because opening a browser needs no display —
+ * it works on the stub build too. */
+
+/* Allow only http://, https:// and mailto:, and no control characters. */
+static inline int graph_url_ok(const char *u) {
+    if (!u) return 0;
+    size_t n = strlen(u);
+    if (n < 8 || n > 2048) return 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)u[i];
+        if (c < 0x20 || c == 0x7F) return 0;   /* newlines, NUL-ish, controls */
+    }
+    if (strncmp(u, "http://",  7) == 0) return 1;
+    if (strncmp(u, "https://", 8) == 0) return 1;
+    if (strncmp(u, "mailto:",  7) == 0) return 1;
+    return 0;
+}
+
+/* Hand the URL to the platform's default handler. Returns 1 if the launch
+ * started (what the browser does afterwards is out of our hands). */
+static inline int graph_launch_url(const char *url) {
+#if defined(_WIN32)
+    HINSTANCE r = ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+    return ((INT_PTR)r > 32) ? 1 : 0;
+#else
+    /* Double fork: the intermediate child exits immediately and the browser is
+     * reparented to init. That leaves no zombie for the game to reap and never
+     * blocks the frame loop, without touching the global SIGCHLD handler. */
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+    if (pid == 0) {
+        pid_t inner = fork();
+        if (inner == 0) {
+            setsid();                      /* detach from our session */
+#  if defined(__APPLE__)
+            execlp("open", "open", url, (char *)NULL);
+#  else
+            execlp("xdg-open", "xdg-open", url, (char *)NULL);
+#  endif
+            _exit(127);                    /* exec failed — nothing else to do */
+        }
+        _exit(0);
+    }
+    {
+        int st = 0;
+        waitpid(pid, &st, 0);              /* reap the intermediate child */
+    }
+    return 1;
+#endif
+}
+
 /* ════════════════════════════════════════════════════════════════════
  * BACKEND: Raylib (when FLUXA_GRAPH_RAYLIB=1)
  * ════════════════════════════════════════════════════════════════════ */
 #ifdef FLUXA_GRAPH_RAYLIB
 
 #include <raylib.h>
+
+/* The GPU cache stored in FluxaImageBuf.gpu_cache is a heap Texture2D. This hook
+ * lets the neutral image buffer unload it on free without knowing the type;
+ * graph_new_win installs it at window creation. Defined here so it precedes
+ * every use and sees the Raylib Texture2D type. */
+static inline void graph_img_gpu_free(void *gpu_cache) {
+    if (!gpu_cache) return;
+    Texture2D *tex = (Texture2D *)gpu_cache;
+    UnloadTexture(*tex);
+    free(tex);
+}
+static inline void graph_install_gpu_hook(void) {
+    fluxa_imgbuf_set_gpu_free_hook(graph_img_gpu_free);
+}
 
 typedef struct {
     int width, height;       /* logical (design) resolution — game draws here */
@@ -69,6 +149,7 @@ static GraphWin *graph_new_win(int w, int h, const char *title) {
     GraphWin *win = (GraphWin *)calloc(1, sizeof(GraphWin));
     win->width = w; win->height = h; win->fps_target = 60;
     InitWindow(w, h, title);
+    graph_install_gpu_hook();   /* so image buffers can free their cached textures */
     SetExitKey(KEY_NULL);   /* ESC must reach the program (quit-confirm UIs),
                              * not silently close the window (raylib default) */
     SetTargetFPS(60);
@@ -234,6 +315,7 @@ static inline Value graph_wrap_img(FluxaImageBuf *b) {
     Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
 }
 
+
 /* ── Dispatch ────────────────────────────────────────────────────── */
 static inline Value fluxa_std_graph_call(const char *fn_name,
                                           const Value *args, int argc,
@@ -266,6 +348,23 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 #define GET_STR(idx,var) \
     if(args[(idx)].type!=VAL_STRING||!args[(idx)].as.string) GRAPH_ERR("expected str"); \
     const char *(var)=args[(idx)].as.string;
+
+    /* graph.open_url(url) → bool : hand a URL to the system's default browser
+     * (a support / donation page, for instance). Only http://, https:// and
+     * mailto: are accepted — anything else is refused, so a URL that arrives
+     * from config or a database can't reach for a local file or an odd scheme.
+     * The URL goes straight to exec as one argument with no shell involved, so
+     * it cannot smuggle a command. Returns true once the launch has started;
+     * what the browser does next is outside our reach. Works on both backends
+     * (opening a browser needs no display). IO: needs a danger block. */
+    if (!strcmp(fn_name,"open_url")) {
+        NEED(1); GET_STR(0,url);
+        if (!graph_url_ok(url))
+            GRAPH_ERR("open_url: only http://, https:// and mailto: URLs are allowed");
+        if (!graph_launch_url(url))
+            GRAPH_ERR("open_url: could not launch the system browser");
+        return graph_bool(1);
+    }
 
     if (!strcmp(fn_name,"version")) {
 #ifdef FLUXA_GRAPH_RAYLIB
@@ -380,6 +479,53 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
             return graph_wrap_img(b);
         }
 #endif
+    }
+
+    /* graph.draw_image(win, img, x, y [, scale]) → nil : draw an RGBA image
+     * buffer (from std.image or graph.capture) onto the frame at (x, y). The
+     * optional 5th argument scales it (1.0 = original size; 0.5 = half). The
+     * uploaded GPU texture is CACHED on the image buffer and reused across
+     * frames — re-uploaded only when the pixels change (resize/blit bump the
+     * buffer's version) — so calling this every frame in the game loop is cheap.
+     * The texture is released when the image is discarded. Completes the round
+     * trip: graph.capture is graph→image; this is image→graph. */
+    if (!strcmp(fn_name,"draw_image")) {
+        NEED(4); GET_WIN(0,win);
+        FluxaImageBuf *b = (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>0
+                            && args[1].as.dyn->items[0].type==VAL_PTR)
+                           ? (FluxaImageBuf *)args[1].as.dyn->items[0].as.ptr : NULL;
+        if (!fluxa_imgbuf_valid(b)) GRAPH_ERR("draw_image: expected a live image handle");
+        GET_INT(2,dx); GET_INT(3,dy);
+        double scale = 1.0;
+        if (argc >= 5) {
+            if (args[4].type==VAL_FLOAT)      scale = args[4].as.real;
+            else if (args[4].type==VAL_INT)   scale = (double)args[4].as.integer;
+            else GRAPH_ERR("draw_image: scale must be a number");
+            if (scale <= 0.0) GRAPH_ERR("draw_image: scale must be positive");
+        }
+#ifdef FLUXA_GRAPH_RAYLIB
+        /* (re)upload the texture only when missing or stale */
+        Texture2D *tex = (Texture2D *)b->gpu_cache;
+        if (tex == NULL || b->gpu_version != b->version) {
+            if (tex != NULL) { UnloadTexture(*tex); free(tex); b->gpu_cache = NULL; }
+            Image img;
+            img.data = b->rgba; img.width = b->width; img.height = b->height;
+            img.mipmaps = 1; img.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            tex = (Texture2D *)malloc(sizeof(Texture2D));
+            if (!tex) GRAPH_ERR("draw_image: out of memory");
+            *tex = LoadTextureFromImage(img);
+            b->gpu_cache = tex;
+            b->gpu_version = b->version;
+        }
+        if (scale == 1.0) {
+            DrawTexture(*tex, (int)dx, (int)dy, WHITE);
+        } else {
+            DrawTextureEx(*tex, (Vector2){(float)dx,(float)dy}, 0.0f, (float)scale, WHITE);
+        }
+#else
+        (void)win; (void)b; (void)dx; (void)dy; (void)scale;
+#endif
+        return graph_nil();
     }
 
     if (!strcmp(fn_name,"clear")) {

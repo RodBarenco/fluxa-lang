@@ -1,6 +1,6 @@
 # Fluxa-lang Changelog
 
-## v0.25 — frame capture + `std.image` (PNG/JPG/BMP/TGA/QOI) (current)
+## v0.25 — frame capture, `std.image` (PNG/JPG/BMP/TGA/QOI), and `open_url` (current)
 
 Two capabilities the Elite Achievement Cards need — snapshot the running game
 frame, and encode that snapshot to real image files — plus a build-ordering fix
@@ -14,6 +14,18 @@ vertically (GPU textures are bottom-up); with no target it falls back to
 `LoadImageFromScreen`. On the stub backend it returns a blank buffer of the
 logical size, so game logic and tests run headless. The result is released with
 `image.discard`.
+
+**`graph.draw_image(win, img, x, y [, scale]) → nil`** — the inverse of
+`capture`, completing the round trip: `graph.capture` is `graph → image`, this is
+`image → graph`. Draws any RGBA image buffer (a loaded/composed card, or a
+captured frame) onto the current frame, with an optional scale argument
+(1.0 = original; 0.5 = half). The uploaded GPU texture is **cached on the image
+buffer** and reused across frames — re-uploaded only when the pixels change
+(`resize`/`blit` bump a version counter on the buffer) — so drawing a card or HUD
+image every frame in the game loop is cheap, not a per-frame GPU upload. The
+cache is an opaque `void*` on the shared buffer that only `std.graph` interprets
+(via a cleanup hook), so `std.image` still never sees a GPU type and the two libs
+stay decoupled; the texture is freed when the image is discarded.
 
 **New `std.image` lib.** `new`, `save`, `load`, `resize`, `blit`, `width`,
 `height`, `set_text`, `discard`, `version`. `save` encodes by file **extension** —
@@ -53,6 +65,18 @@ danger {
 if err != nil { print(err[0]) }
 ```
 
+**`graph.open_url(url) → bool`** — hands a URL to the system's default browser
+(a support or donation page, for instance). Implemented deliberately *without*
+Raylib's `OpenURL`, which shells out through `system()` and so lets a crafted URL
+carry a command alongside it. Here the URL goes to `exec` as a single argv
+element with no shell in between — injection is impossible by construction, not
+by filtering — behind a scheme check that accepts only `http://`, `https://` and
+`mailto:` (so a URL arriving from config or a database can't reach a local file
+or an odd scheme). A double `fork` reparents the browser to init, leaving no
+zombie and never blocking the frame loop. Uses `xdg-open` / `open` /
+`ShellExecuteA` per platform, and lives outside the backend `#ifdef`s since
+opening a browser needs no display — it works on the stub build too.
+
 **Decoupling by design.** A shared header (`src/std/fluxa_image_buffer.h`) defines
 a neutral 32-bit RGBA buffer (`FluxaImageBuf`), so `std.graph` (producer) and
 `std.image` (consumer) never depend on each other — a capture is just bytes, and
@@ -87,8 +111,8 @@ lib, not just `std.image`.
 overflow rejection, resize in place / upscale / bad-size, save no-extension /
 bad-format / extension recognition, discard idempotence, use-after-discard,
 1×1 no-off-by-one, unknown-fn, load error path). `tests/libs/graph.sh` gains 3
-capture cases, including the full `graph.capture → image.resize → image.discard`
-flow. Zero-warning build; `std.image` 15/15, `std.graph` 25/25.
+capture cases plus `draw_image` and `open_url` coverage, including the full
+`graph.capture → image.resize → image.discard` flow. Zero-warning build; `std.image` 22/22, `std.graph` 35/35.
 
 **Docs.** `docs/STDLIB.md` — `graph.capture` row + full `std.image` section with
 the canonical capture→resize→save example. `README.md` — `std.image` and

@@ -26,7 +26,24 @@ typedef struct {
     int            width;   /* pixels across */
     int            height;  /* pixels down   */
     unsigned char *rgba;    /* width*height*4 bytes, or NULL once freed */
+    unsigned int   version; /* bumped whenever the pixels change (cache invalidation) */
+    void          *gpu_cache;   /* opaque: std.graph stashes a cached GPU texture here.
+                                 * std.image NEVER touches this — it stays decoupled;
+                                 * only the graphics backend interprets it. NULL means
+                                 * no texture uploaded yet. */
+    unsigned int   gpu_version; /* the `version` the cached texture was built from */
 } FluxaImageBuf;
+
+/* Optional GPU-texture cleanup hook. std.graph sets this to a function that
+ * unloads the cached texture; the neutral buffer calls it on free WITHOUT
+ * knowing what a texture is, so the decoupling holds. NULL when std.graph
+ * isn't linked (stub) or never drew the image. */
+typedef void (*FluxaImgGpuFree)(void *gpu_cache);
+static FluxaImgGpuFree fluxa_img_gpu_free_hook = NULL;
+
+static inline void fluxa_imgbuf_set_gpu_free_hook(FluxaImgGpuFree fn) {
+    fluxa_img_gpu_free_hook = fn;
+}
 
 /* Allocate a zeroed RGBA buffer of w x h. Returns NULL on bad size or OOM. */
 static inline FluxaImageBuf *fluxa_imgbuf_new(int w, int h) {
@@ -58,9 +75,20 @@ static inline int fluxa_imgbuf_valid(const FluxaImageBuf *b) {
     return b && b->magic == FLUXA_IMG_MAGIC && b->rgba && b->width > 0 && b->height > 0;
 }
 
-/* Release the buffer. Safe to call twice (idempotent). */
+/* Mark the pixels as changed so a cached GPU texture is rebuilt on next draw.
+ * Call after any in-place pixel edit (resize, blit). */
+static inline void fluxa_imgbuf_touch(FluxaImageBuf *b) {
+    if (b) b->version++;
+}
+
+/* Release the buffer. Safe to call twice (idempotent). Also releases the
+ * cached GPU texture through the hook, if one was uploaded. */
 static inline void fluxa_imgbuf_free(FluxaImageBuf *b) {
     if (!b) return;
+    if (b->gpu_cache && fluxa_img_gpu_free_hook) {
+        fluxa_img_gpu_free_hook(b->gpu_cache);
+        b->gpu_cache = NULL;
+    }
     if (b->rgba) { free(b->rgba); b->rgba = NULL; }
     b->magic = 0;
     b->width = 0;
