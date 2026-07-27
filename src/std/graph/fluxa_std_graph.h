@@ -42,6 +42,8 @@
  *   graph.mouse_y(win)                → int
  *   graph.mouse_pressed(win)          → bool  (left button)
  *   graph.dt(win)                     → float (delta time seconds)
+ *   graph.key_pressed/key_down also accept: SHIFT, CTRL, ALT, PLUS, MINUS
+ *   graph.is_fullscreen(win)          → bool  (query only; fullscreen() toggles)
  *   graph.open_url(url)               → bool  (http/https/mailto → system browser)
  *   graph.version()                   → str
  */
@@ -213,6 +215,26 @@ static int graph_key_code(const char *key) {
         return KEY_A + (key[0] - 'A');
     if (strlen(key) == 1 && key[0] >= '0' && key[0] <= '9')
         return KEY_ZERO + (key[0] - '0');
+    return 0;
+}
+
+/* Some logical keys answer to more than one physical key: SHIFT/CTRL/ALT exist
+ * on both sides of the keyboard, and +/- exist on the main row and again on the
+ * keypad. A player holding the right shift, or using the numeric keypad, is
+ * doing the ordinary thing — so these names resolve to whichever is active.
+ * Returns 1 when `key` is one of them and writes the answer to *out. */
+static inline int graph_multi_key(const char *key, int held, int *out) {
+#define GRAPH_PAIR(a,b) do { \
+    *out = held ? (IsKeyDown(a)    || IsKeyDown(b)) \
+                : (IsKeyPressed(a) || IsKeyPressed(b)); \
+    return 1; \
+} while (0)
+    if (!strcmp(key,"SHIFT")) GRAPH_PAIR(KEY_LEFT_SHIFT,   KEY_RIGHT_SHIFT);
+    if (!strcmp(key,"CTRL"))  GRAPH_PAIR(KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL);
+    if (!strcmp(key,"ALT"))   GRAPH_PAIR(KEY_LEFT_ALT,     KEY_RIGHT_ALT);
+    if (!strcmp(key,"PLUS"))  GRAPH_PAIR(KEY_EQUAL,        KEY_KP_ADD);
+    if (!strcmp(key,"MINUS")) GRAPH_PAIR(KEY_MINUS,        KEY_KP_SUBTRACT);
+#undef GRAPH_PAIR
     return 0;
 }
 
@@ -559,6 +581,20 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 #endif
     }
 
+    /* graph.is_fullscreen(win) → bool : report the current mode WITHOUT changing
+     * it. graph.fullscreen() toggles, so there was no way to ask; mirroring the
+     * state in the program desyncs as soon as the window manager changes it
+     * (alt+enter, a WM shortcut), which is exactly when you need the truth. */
+    if (!strcmp(fn_name,"is_fullscreen")) {
+        NEED(1); GET_WIN(0,win);
+#ifdef FLUXA_GRAPH_RAYLIB
+        (void)win;
+        return graph_bool(IsWindowFullscreen());
+#else
+        return graph_bool(win->fullscreen);
+#endif
+    }
+
     if (!strcmp(fn_name,"set_fps")) {
         NEED(2); GET_WIN(0,win); GET_INT(1,fps);
         win->fps_target = (int)fps;
@@ -681,6 +717,10 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(2); GET_WIN(0,win); GET_STR(1,key);
         (void)win;
 #ifdef FLUXA_GRAPH_RAYLIB
+        {
+            int multi = 0;
+            if (graph_multi_key(key, 0, &multi)) return graph_bool(multi);
+        }
         return graph_bool(IsKeyPressed(graph_key_code(key)));
 #else
         (void)key; return graph_bool(0);
@@ -691,6 +731,10 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(2); GET_WIN(0,win); GET_STR(1,key);
         (void)win;
 #ifdef FLUXA_GRAPH_RAYLIB
+        {
+            int multi = 0;
+            if (graph_multi_key(key, 1, &multi)) return graph_bool(multi);
+        }
         return graph_bool(IsKeyDown(graph_key_code(key)));
 #else
         (void)key; return graph_bool(0);
