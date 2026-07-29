@@ -275,5 +275,100 @@ FLX
 # stub still reports no-codec, but NOT an arity error → proves the 4th arg is accepted
 echo "$out" | grep -qi "codec" && pass "set_text_optional_compress_arg" || fail "set_text_optional_compress_arg" "codec (arg accepted)" "$out"
 
+# ── sload: secure load with pre-decode validation ────────────────────────
+# These checks (size, magic bytes) run BEFORE the codec, so they hold in the
+# stub build. A valid PNG/QOI passes validation and reaches the "no codec"
+# message; hostile inputs are rejected before any decode.
+
+# 23. sload rejects an empty file
+printf '' > "$P/empty.png"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/empty.png") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "empty" && pass "sload_rejects_empty" || fail "sload_rejects_empty" "empty file" "$out"
+
+# 24. sload rejects an unexpected format (JPEG magic, not PNG/QOI)
+printf '\xFF\xD8\xFF\xE0\x00\x10JFIF' > "$P/evil.jpg"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/evil.jpg") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "unsupported\|unexpected" && pass "sload_rejects_bad_format" || fail "sload_rejects_bad_format" "unsupported format" "$out"
+
+# 25. sload rejects a file too short to identify
+printf 'ab' > "$P/tiny.bin"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/tiny.bin") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "too short\|unsupported" && pass "sload_rejects_too_short" || fail "sload_rejects_too_short" "too short" "$out"
+
+# 26. sload rejects a missing file
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/does_not_exist.png") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "could not open" && pass "sload_rejects_missing" || fail "sload_rejects_missing" "could not open" "$out"
+
+# 27. sload accepts a valid PNG signature (passes validation → stub reports no codec)
+printf '\x89\x50\x4E\x47\x0D\x0A\x1A\x0A\x00\x00\x00\x0D' > "$P/valid.png"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/valid.png") }
+if err != nil { print(err[0]) }
+FLX
+)
+# validation passed (no size/format error); stub then reports no codec
+echo "$out" | grep -qi "codec" && pass "sload_accepts_valid_png" || fail "sload_accepts_valid_png" "codec (validation passed)" "$out"
+
+# 28. sload accepts a valid QOI signature (passes validation → stub reports no codec)
+printf 'qoif\x00\x00\x04\x00\x00\x00\x04\x00' > "$P/valid.qoi"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/valid.qoi") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "codec" && pass "sload_accepts_valid_qoi" || fail "sload_accepts_valid_qoi" "codec (validation passed)" "$out"
+
+# 29. sload with a tightened max_bytes rejects a file that would pass the default.
+#     A 100 KB PNG passes the 24 MB default but not a 50 KB caller limit.
+printf '\x89\x50\x4E\x47\x0D\x0A\x1A\x0A' > "$P/big.png"
+head -c 100000 /dev/zero >> "$P/big.png"
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/big.png", 50000) }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "too large" && pass "sload_tight_max_bytes_rejects" || fail "sload_tight_max_bytes_rejects" "file too large" "$out"
+
+# 30. sload with a generous caller limit accepts the same file (passes → no codec)
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/big.png", 200000, 1200) }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "codec" && pass "sload_tight_limits_accept" || fail "sload_tight_limits_accept" "codec (within limits)" "$out"
+
+# 31. sload with a non-int limit is a clear error
+out=$(run << FLX
+import std image
+danger { dyn im = image.sload("$P/valid.qoi", "big") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "max_bytes must be int" && pass "sload_bad_limit_type" || fail "sload_bad_limit_type" "max_bytes must be int" "$out"
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1

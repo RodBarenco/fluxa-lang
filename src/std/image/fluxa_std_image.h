@@ -443,6 +443,94 @@ static inline Value fluxa_std_image_call(const char *fn_name,
 #endif
     }
 
+    /* image.sload(path[, max_bytes[, max_edge]]) → dyn   SECURE load: validates
+     * the file BEFORE and around the decode, to shrink the attack surface of
+     * untrusted images (e.g. a card PNG dropped into the gallery folder, or a
+     * swapped capture). It is not a guarantee against every decoder bug — the
+     * underlying stb_image parser still runs — but it rejects the common hostile
+     * inputs (oversized files, wrong formats, absurd dimensions) before they
+     * reach deep parsing. Use this for any image whose bytes are not fully under
+     * the program's control.
+     *
+     * The optional limits let a caller tighten the bounds to what its own images
+     * should never exceed — e.g. a game card is tens of KB and ~1024 px, so
+     * sload(path, 262144, 1200) is far stricter than the defaults and rejects
+     * more. Omit them for a safe generic default; a non-positive value falls back
+     * to the default for that bound.
+     *
+     * The file checks (size, magic bytes) run before the codec #ifdef, mirroring
+     * save's validation-first shape, so they hold in the stub build too. Only the
+     * actual decode needs the codec. */
+    if (strcmp(fn_name,"sload")==0) {
+        NEED(1); GET_STR(0,path);
+
+        /* Defaults: 24 MB covers any legitimate card render with room to spare
+         * while blocking decompression bombs; 8192 is a generous max edge. A
+         * caller who knows its images are smaller can pass tighter bounds. */
+        long max_bytes = 24L * 1024L * 1024L;
+        long max_edge  = 8192L;
+        if (argc >= 2) {
+            if (args[1].type != VAL_INT) IMG_ERR("sload: max_bytes must be int");
+            if (args[1].as.integer > 0) max_bytes = args[1].as.integer;
+        }
+        if (argc >= 3) {
+            if (args[2].type != VAL_INT) IMG_ERR("sload: max_edge must be int");
+            if (args[2].as.integer > 0) max_edge = args[2].as.integer;
+        }
+
+        /* 1) File size, before opening for decode. Rejects absurd/bomb files
+         *    without letting the decoder touch them. */
+        FILE *fp = fopen(path, "rb");
+        if (!fp) IMG_ERR("sload: could not open file");
+        if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); IMG_ERR("sload: cannot size file"); }
+        long fsize = ftell(fp);
+        if (fsize < 0) { fclose(fp); IMG_ERR("sload: cannot size file"); }
+        if (fsize == 0) { fclose(fp); IMG_ERR("sload: empty file"); }
+        if (fsize > max_bytes) { fclose(fp); IMG_ERR("sload: file too large"); }
+
+        /* 2) Magic bytes. Read the first bytes and accept only known-good
+         *    signatures (PNG or QOI — the two formats the game produces).
+         *    Anything else is rejected before decode. */
+        unsigned char magic[8] = {0};
+        if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); IMG_ERR("sload: cannot read header"); }
+        size_t got = fread(magic, 1, sizeof(magic), fp);
+        fclose(fp);
+        if (got < 4) IMG_ERR("sload: file too short to identify");
+        {
+            int is_png = (got >= 8 && magic[0]==0x89 && magic[1]==0x50 &&
+                          magic[2]==0x4E && magic[3]==0x47 && magic[4]==0x0D &&
+                          magic[5]==0x0A && magic[6]==0x1A && magic[7]==0x0A);
+            int is_qoi = (magic[0]==0x71 && magic[1]==0x6F &&
+                          magic[2]==0x69 && magic[3]==0x66); /* 'qoif' */
+            if (!is_png && !is_qoi) IMG_ERR("sload: unsupported or unexpected format");
+        }
+        (void)max_edge; /* used only in the codec branch below; keep stub warning-free */
+#ifdef FLUXA_IMAGE_RAYLIB
+        {
+            /* 3) Decode, then bound the dimensions before we format/allocate. A
+             *    header can claim huge dimensions; cap them so ImageFormat and the
+             *    RGBA copy can't be driven to exhaust memory. */
+            Image img = LoadImage(path);
+            if (img.data==NULL || img.width<=0 || img.height<=0) {
+                if (img.data) UnloadImage(img);
+                IMG_ERR("sload: could not read or decode file");
+            }
+            if ((long)img.width > max_edge || (long)img.height > max_edge) {
+                UnloadImage(img);
+                IMG_ERR("sload: image dimensions exceed the allowed maximum");
+            }
+            ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+            FluxaImageBuf *b = fluxa_imgbuf_from_rgba((const unsigned char *)img.data,
+                                                      img.width, img.height);
+            UnloadImage(img);
+            if (!b) IMG_ERR("sload: out of memory");
+            return image_wrap(b);
+        }
+#else
+        IMG_ERR("sload: no image codec in this build (rebuild with FLUXA_IMAGE_RAYLIB=1)");
+#endif
+    }
+
 #undef IMG_ERR
 #undef NEED
 #undef GET_INT

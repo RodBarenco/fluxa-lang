@@ -1312,11 +1312,27 @@ lib uses **`image.discard`**.
 `danger {}` block, exactly like `sqlite`/`csv`/`fs`. The output format is chosen
 by the file **extension**.
 
+**`load` vs `sload`.** Use `image.load` for files your program produced or fully
+controls. Use `image.sload` for any image whose bytes are **not** under your
+control — for example a card PNG dropped into a gallery folder, or a capture file
+that could have been swapped between write and read. `sload` runs three checks
+around the decode: it rejects files over `max_bytes` (default 24 MB — decompression
+bombs), files whose first bytes are not a PNG or QOI signature (wrong/hostile
+formats), and decoded images larger than `max_edge` per side (default 8192 px —
+memory exhaustion). The two limits are optional trailing arguments: pass tighter
+values when you know your own images are smaller (a game card is tens of KB and
+~1024 px, so `sload(path, 262144, 1200)` rejects far more than the defaults). A
+non-positive limit falls back to its default. These checks shrink the attack
+surface but are **not** a guarantee against every decoder bug — the underlying
+codec still parses the file — so treat `sload` as defense-in-depth, and still
+validate/re-encode untrusted images server-side before redistributing them.
+
 | Function | Returns | Description |
 |---|---|---|
 | `image.new(w, h)` | `dyn` | Blank RGBA buffer, all pixels transparent (zero) |
 | `image.save(img, path)` | `bool` | Encode by extension (`.png`/`.jpg`/`.bmp`/`.tga`/`.qoi`). **Needs `danger`.** |
 | `image.load(path)` | `dyn` | Decode a file into an RGBA buffer. **Needs `danger`.** |
+| `image.sload(path[, max_bytes[, max_edge]])` | `dyn` | **Secure** decode of an untrusted file: validates size, magic bytes (PNG or QOI only), and dimensions around the decode, to shrink the attack surface of hostile images. Defaults: ≤24 MB, ≤8192 px per edge. Pass `max_bytes` / `max_edge` to tighten the bounds to what your own images should never exceed (e.g. `sload(p, 262144, 1200)` for game cards). Same result as `load` for a valid file within limits. **Needs `danger`.** |
 | `image.resize(img, w, h)` | `nil` | Scale in place (Bicubic on the codec backend, nearest-neighbour on stub) |
 | `image.blit(dst, src, x, y[, mask])` | `nil` | Compose `src` onto `dst` at (x,y), alpha-blended and clipped. Optional `mask` image gates the source by the mask's alpha (for clipped/rounded frames). Pure RGBA — both backends. |
 | `image.width(img)` | `int` | Width in pixels |
