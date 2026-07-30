@@ -1,0 +1,36 @@
+fn add(int a, int b) int {
+    return a + b
+}
+
+int arr values[4] = 0
+values[0] = 3
+values[1] = 1
+values[2] = 4
+values[3] = 2
+
+int total = 0
+int i = 0
+while i < 4 {
+    total = total + values[i]
+    i = i + 1
+}
+
+Block Counter {
+    int value = 0
+    fn inc() int {
+        value = value + 1
+        return value
+    }
+}
+
+print(add(20, 22))
+print(total)
+print(Counter.inc())
+print(Counter.inc())
+
+danger {
+    int broken = 1 / 0
+}
+if err != nil {
+    print("danger-ok")
+}

@@ -107,6 +107,14 @@ static inline Value https_do_request(const char *url, HttpsMethod method,
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "fluxa-https/1.0");
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+    {
+        const char *ca_bundle = getenv("CURL_CA_BUNDLE");
+        if (ca_bundle && ca_bundle[0])
+            curl_easy_setopt(curl, CURLOPT_CAINFO, ca_bundle);
+    }
+#endif
 
     if (method == HTTPS_POST || method == HTTPS_PUT) {
         if (content_type) {

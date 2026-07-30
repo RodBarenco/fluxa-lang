@@ -4,6 +4,10 @@
 fluxa
 fluxa.exe
 /fluxa-*.exe
+/dist/
+/.deps/
+/.build-tmp/
+/.builder-validation-registry/
 fluxa_asan
 fluxa_debug
 

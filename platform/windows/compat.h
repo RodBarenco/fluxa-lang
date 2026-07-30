@@ -6,13 +6,26 @@
 #  include <string.h>
 #  include <direct.h>
 /*
- * winnt.h exposes an enum member named TokenType. Include the Win32 headers
- * before Fluxa's lexer and rename only that SDK symbol while they are parsed.
+ * Win32 exposes names that collide with Fluxa and raylib declarations.
+ * Include the SDK before those headers and rename only the conflicting SDK
+ * symbols while windows.h is being parsed.
  */
 #  define TokenType Win32TokenType
+#  define Rectangle Win32Rectangle
+#  define CloseWindow Win32CloseWindow
+#  define ShowCursor Win32ShowCursor
+#  define LoadImage Win32LoadImage
+#  define DrawText Win32DrawText
+#  define DrawTextEx Win32DrawTextEx
 #  include <windows.h>
 #  include <shellapi.h>
 #  undef TokenType
+#  undef Rectangle
+#  undef CloseWindow
+#  undef ShowCursor
+#  undef LoadImage
+#  undef DrawText
+#  undef DrawTextEx
 #  include <pthread.h>
 #  define strdup  _strdup
 #  define strtok_r strtok_s

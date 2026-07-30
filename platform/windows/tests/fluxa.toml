@@ -1,0 +1,15 @@
+[project]
+name = "windows-stdlib-smoke"
+entry = "stdlib.flx"
+
+[libs]
+std.graph   = "1.0"
+std.image   = "1.0"
+std.strings = "1.0"
+std.sqlite  = "1.0"
+std.sound   = "1.0"
+std.crypto  = "1.0"
+std.json2   = "1.0"
+std.fs      = "1.0"
+std.httpc   = "1.0"
+std.https   = "1.0"

@@ -15,6 +15,10 @@
 #include "runtime.h"
 #include "toml_config.h"
 
+#define FLUXA_BUILDER_AUTH \
+    "fluxa-builder-packaged-runtime-v1:" \
+    "4f726967696e2d6c6f636b65642d72756e74696d65"
+
 static char *load_file(const char *path) {
     FILE *f = fopen(path, "rb");
     char *buf;
@@ -154,12 +158,48 @@ static void usage(void) {
         "runtime update, native threads and C FFI.\n");
 }
 
+static int runtime_info(void) {
+    printf("Fluxa Runtime\n");
+    printf("Target: windows-x64\n");
+#if defined(FLUXA_PACKAGED_RUNTIME)
+    printf("Packaged: true\n");
+#else
+    printf("Packaged: false\n");
+#endif
+    return 0;
+}
+
 int main(int argc, char **argv) {
     FluxaConfig config;
     ASTPool pool;
     ASTNode *program;
     int explain;
     int result;
+
+    if (argc == 3 && strcmp(argv[1], "runtime") == 0 &&
+        strcmp(argv[2], "info") == 0)
+        return runtime_info();
+
+#if defined(FLUXA_PACKAGED_RUNTIME)
+    if (argc == 4 && strcmp(argv[1], "__fluxa_builder_run_v1") == 0) {
+        const char *auth = getenv("FLUXA_BUILDER_RUNTIME_AUTH");
+        if (!auth || strcmp(auth, FLUXA_BUILDER_AUTH) != 0) {
+            fprintf(stderr, "[fluxa] packaged runtime authorization failed\n");
+            return 126;
+        }
+        if (_chdir(argv[3]) != 0) {
+            fprintf(stderr, "[fluxa] cannot enter packaged project: %s\n",
+                    argv[3]);
+            return 1;
+        }
+        argv[1] = "run";
+        argc = 3;
+    } else {
+        fprintf(stderr,
+                "[fluxa] this private runtime can only be used by Fluxa Builder\n");
+        return 126;
+    }
+#endif
 
     if (argc != 3 ||
         (strcmp(argv[1], "run") != 0 && strcmp(argv[1], "explain") != 0)) {

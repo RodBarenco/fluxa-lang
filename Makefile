@@ -167,6 +167,7 @@ WINDOWS_SQLITE_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
 WINDOWS_SODIUM_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
 WINDOWS_CURL_PREFIX   ?= $(WINDOWS_DEPS_PREFIX)
 WINDOWS_RAYLIB_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_RAYLIB_STATIC_PREFIX ?= .deps/raylib-static
 WINDOWS_ZLIB_PREFIX   ?= $(WINDOWS_DEPS_PREFIX)
 WINDOWS_PKG_CONFIG    ?= pkg-config
 
@@ -177,6 +178,8 @@ WINDOWS_SODIUM_LDFLAGS = -L$(WINDOWS_SODIUM_PREFIX)/lib -lsodium
 WINDOWS_CURL_CFLAGS = -I$(WINDOWS_CURL_PREFIX)/include
 WINDOWS_CURL_PC_LIBS := $(shell PKG_CONFIG_LIBDIR="$(WINDOWS_CURL_PREFIX)/lib/pkgconfig" \
                          PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --libs libcurl 2>/dev/null)
+WINDOWS_CURL_STATIC_LDFLAGS := $(shell PKG_CONFIG_LIBDIR="$(WINDOWS_CURL_PREFIX)/lib/pkgconfig" \
+                         PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --static --libs libcurl 2>/dev/null)
 WINDOWS_CURL_LDFLAGS ?= $(if $(WINDOWS_CURL_PC_LIBS),$(WINDOWS_CURL_PC_LIBS),\
                          -L$(WINDOWS_CURL_PREFIX)/lib -lcurl -lws2_32 -lcrypt32)
 WINDOWS_RAYLIB_CFLAGS = -I$(WINDOWS_RAYLIB_PREFIX)/include
@@ -319,6 +322,8 @@ CORTEXM_CFLAGS = $(EMBEDDED_CFLAGS)  \
 # ─────────────────────────────────────────────────────────────────────────────
 .PHONY: all build build-windows build-windows-profile          \
         build-windows-essential                                \
+        build-windows-essential-static build-windows-packaged   \
+        prepare-windows-raylib-static windows-test              \
         build-windows-graph build-windows-image                \
         build-windows-strings build-windows-json2               \
         build-windows-fs build-windows-time                     \
@@ -502,6 +507,36 @@ build-windows-essential: check-windows-raylib check-windows-zlib check-windows-s
 	    WINDOWS_PROFILE_CFLAGS="-DFLUXA_STD_GRAPH=1 -DFLUXA_GRAPH_RAYLIB=1 -DFLUXA_IMAGE_RAYLIB=1 -DFLUXA_STD_FS=1 -DFLUXA_STD_TIME=1 -DFLUXA_STD_SOUND=1 -DFLUXA_SOUND_MINIAUDIO=1 $(WINDOWS_RAYLIB_CFLAGS) $(WINDOWS_ZLIB_CFLAGS) $(WINDOWS_SQLITE_CFLAGS) $(WINDOWS_SODIUM_CFLAGS) $(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPC=1 -DFLUXA_STD_HTTPS=1" \
 	    WINDOWS_PROFILE_SRCS=src/std/sound/fluxa_std_sound_ma.c \
 	    WINDOWS_PROFILE_LDFLAGS="-lshell32 $(WINDOWS_RAYLIB_LDFLAGS) $(WINDOWS_ZLIB_LDFLAGS) $(WINDOWS_PTHREAD_LDFLAGS) -lwinmm -lole32 -luuid $(WINDOWS_SQLITE_LDFLAGS) $(WINDOWS_SODIUM_LDFLAGS) $(WINDOWS_CURL_LDFLAGS)"
+
+# Standalone Windows runtime: all third-party dependencies are linked into the
+# PE. The resulting executable may import Windows system DLLs, but does not
+# require MinGW/MSYS2 DLLs beside it.
+prepare-windows-raylib-static: $(WINDOWS_RAYLIB_STATIC_PREFIX)/lib/libraylib.a
+
+$(WINDOWS_RAYLIB_STATIC_PREFIX)/lib/libraylib.a: platform/windows/build-raylib-static.sh
+	@bash platform/windows/build-raylib-static.sh
+
+build-windows-essential-static: prepare-windows-raylib-static check-windows-zlib check-windows-sqlite check-windows-sodium check-windows-curl
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-runtime.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DCURL_STATICLIB -DFLUXA_STD_GRAPH=1 -DFLUXA_GRAPH_RAYLIB=1 -DFLUXA_IMAGE_RAYLIB=1 -DFLUXA_STD_FS=1 -DFLUXA_STD_TIME=1 -DFLUXA_STD_SOUND=1 -DFLUXA_SOUND_MINIAUDIO=1 -I$(WINDOWS_RAYLIB_STATIC_PREFIX)/include $(WINDOWS_ZLIB_CFLAGS) $(WINDOWS_SQLITE_CFLAGS) $(WINDOWS_SODIUM_CFLAGS) $(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPC=1 -DFLUXA_STD_HTTPS=1" \
+	    WINDOWS_PROFILE_SRCS=src/std/sound/fluxa_std_sound_ma.c \
+	    WINDOWS_PROFILE_LDFLAGS="-static -lshell32 -L$(WINDOWS_RAYLIB_STATIC_PREFIX)/lib -lraylib -lopengl32 -lgdi32 -lwinmm $(WINDOWS_ZLIB_LDFLAGS) -lwinpthread -lwinmm -lole32 -luuid $(WINDOWS_SQLITE_LDFLAGS) $(WINDOWS_SODIUM_LDFLAGS) $(WINDOWS_CURL_STATIC_LDFLAGS)"
+
+# Private standalone runtime consumed by Fluxa Builder. It preserves the
+# offline `runtime info` probe and accepts only the authenticated launcher
+# protocol; public CLI execution exits with code 126.
+build-windows-packaged: prepare-windows-raylib-static check-windows-zlib check-windows-sqlite check-windows-sodium check-windows-curl
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-runtime.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DCURL_STATICLIB -DFLUXA_PACKAGED_RUNTIME=1 -DFLUXA_STD_GRAPH=1 -DFLUXA_GRAPH_RAYLIB=1 -DFLUXA_IMAGE_RAYLIB=1 -DFLUXA_STD_FS=1 -DFLUXA_STD_TIME=1 -DFLUXA_STD_SOUND=1 -DFLUXA_SOUND_MINIAUDIO=1 -I$(WINDOWS_RAYLIB_STATIC_PREFIX)/include $(WINDOWS_ZLIB_CFLAGS) $(WINDOWS_SQLITE_CFLAGS) $(WINDOWS_SODIUM_CFLAGS) $(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPC=1 -DFLUXA_STD_HTTPS=1" \
+	    WINDOWS_PROFILE_SRCS=src/std/sound/fluxa_std_sound_ma.c \
+	    WINDOWS_PROFILE_LDFLAGS="-static -lshell32 -L$(WINDOWS_RAYLIB_STATIC_PREFIX)/lib -lraylib -lopengl32 -lgdi32 -lwinmm $(WINDOWS_ZLIB_LDFLAGS) -lwinpthread -lwinmm -lole32 -luuid $(WINDOWS_SQLITE_LDFLAGS) $(WINDOWS_SODIUM_LDFLAGS) $(WINDOWS_CURL_STATIC_LDFLAGS)"
+
+windows-test: build-windows-essential-static
+	@powershell.exe -NoProfile -ExecutionPolicy Bypass \
+	    -File platform/windows/tests/run.ps1 \
+	    -Fluxa "$(CURDIR)/fluxa-runtime.exe"
 
 # Hardened prod binary — FLUXA_SECURE=1 enables:
 #   rate limiting (100 invalid/sec → RESCUE_MODE)

@@ -1,0 +1,54 @@
+import std strings
+import std json2
+import std fs
+import std sqlite
+import std crypto
+import std graph
+import std image
+import std sound
+
+print(strings.upper("fluxa"))
+
+danger {
+    dyn doc = json2.parse("{\"answer\":42,\"ok\":true}")
+    print(json2.get_int(doc, "answer"))
+    print(json2.get_bool(doc, "ok"))
+    json2.discard(doc)
+}
+
+danger {
+    fs.write("windows-smoke.txt", "hello")
+    fs.append("windows-smoke.txt", "-windows")
+    print(fs.read("windows-smoke.txt"))
+    print(fs.exists("windows-smoke.txt"))
+    fs.delete("windows-smoke.txt")
+}
+
+danger {
+    dyn db = sqlite.open("windows-smoke.db")
+    sqlite.exec(db, "CREATE TABLE IF NOT EXISTS checks (value INTEGER)")
+    sqlite.exec(db, "DELETE FROM checks")
+    sqlite.exec(db, "INSERT INTO checks (value) VALUES (7)")
+    dyn rows = sqlite.query(db, "SELECT value FROM checks")
+    dyn row = rows[0]
+    print(row[0])
+    sqlite.close(db)
+    fs.delete("windows-smoke.db")
+}
+
+dyn digest = crypto.hash("fluxa-windows")
+print(len(digest))
+print(graph.version())
+print(image.version())
+print(sound.version())
+
+dyn img = image.new(2, 2)
+danger {
+    image.save(img, "windows-smoke.png")
+    dyn loaded = image.load("windows-smoke.png")
+    print(image.width(loaded))
+    print(image.height(loaded))
+    image.discard(loaded)
+    fs.delete("windows-smoke.png")
+}
+image.discard(img)
