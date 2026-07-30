@@ -65,6 +65,33 @@ pacman -S --needed \
 Python 3 is required by `scripts/gen_lib_registry.py`. Git is required only
 when the pinned static Raylib source is not present in `.deps`.
 
+## Build targets and generated files
+
+Run these commands from the repository root in an MSYS2 MinGW64 shell:
+
+| Command | Generated file | Purpose |
+| --- | --- | --- |
+| `make build-windows-essential` | `fluxa-essential.exe` | Dynamic development runtime. It requires the corresponding MSYS2 third-party DLLs and is not a standalone distribution artifact. |
+| `make build-windows-essential-static` | `fluxa-runtime.exe` | Public standalone Fluxa Lang runtime. Use it to run or explain `.flx` files on Windows. |
+| `make build-windows-packaged` | `fluxa-runtime.exe` | Private standalone runtime for Fluxa Builder. Builder must register it with schema-v2 `runtime.json`; users must not execute it directly. |
+| `make windows-test` | `fluxa-runtime.exe` | Rebuilds the public standalone runtime and runs the Windows dependency, language, and standard-library test gate. |
+
+The two static build targets intentionally use the same output filename.
+Running one after the other replaces the previous `fluxa-runtime.exe`. Check
+which variant is present with:
+
+```powershell
+.\fluxa-runtime.exe runtime info
+```
+
+`Packaged: false` identifies the public Fluxa Lang runtime.
+`Packaged: true` identifies the private Fluxa Builder runtime.
+
+Generated executables are build artifacts in the repository root and are not
+committed. Distribution folders, archives, `runtime.json`, application
+launchers, and installers are produced or assembled by Fluxa Builder, not by
+these Fluxa Lang Make targets.
+
 ## Shared-library development build
 
 ```sh
