@@ -2,6 +2,8 @@
 
 # Binários nativos
 fluxa
+fluxa.exe
+/fluxa-*.exe
 fluxa_asan
 fluxa_debug
 

@@ -5,6 +5,7 @@
 #
 # QUICK START
 #   make                   Build native binary → ./fluxa
+#   make build-windows     Cross-build minimal Windows runtime → ./fluxa.exe
 #   make test-runner       Run full test suite (PASS/FAIL report)
 #   make test-suite2       Run Suite 2 — edge cases & integration (70 cases)
 #   make test-all          Run everything: unit + suite2 + integration
@@ -27,6 +28,13 @@
 # ── Native compiler ───────────────────────────────────────────────────────────
 
 CC = gcc
+ifeq ($(OS),Windows_NT)
+CC_WINDOWS ?= gcc
+WINDOWS_DEPS_PREFIX ?= /mingw64
+else
+CC_WINDOWS ?= x86_64-w64-mingw32-gcc
+WINDOWS_DEPS_PREFIX ?= /usr/x86_64-w64-mingw32
+endif
 
 # libffi: detected via pkg-config (Linux x86/ARM64, macOS with Homebrew).
 # If pkg-config or libffi is unavailable, FFI support is disabled and the
@@ -117,6 +125,79 @@ SRCS = src/main.c       \
        src/std/wserver/fluxa_std_wserver.c
 
 TARGET = fluxa
+TARGET_WINDOWS = fluxa.exe
+
+# Windows minimal profile
+#
+# This is deliberately an allowlist, independent from FLUXA_EXTRA_* and the
+# host pkg-config.  Reusing those variables would leak Linux headers and .so
+# dependencies into the MinGW link command.
+#
+# Included: pure-C libraries and API-complete stub backends.
+# Excluded: POSIX/pthread libraries and libraries requiring target-specific
+# packages (curl, libpq, sqlite, sodium, mosquitto, microhttpd, zlib, etc.).
+WINDOWS_MINIMAL_LIBS = \
+	-DFLUXA_STD_MATH=1     \
+	-DFLUXA_STD_CSV=1      \
+	-DFLUXA_STD_JSON=1     \
+	-DFLUXA_STD_JSON2=1    \
+	-DFLUXA_STD_STRINGS=1  \
+	-DFLUXA_STD_PID=1      \
+	-DFLUXA_STD_LIBDSP=1   \
+	-DFLUXA_STD_IMAGE=1    \
+	-DFLUXA_STD_INFER=1
+
+WINDOWS_CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
+                 -D_WIN32_WINNT=0x0601 -DWIN32_LEAN_AND_MEAN \
+                 -include platform/windows/compat.h \
+                 -Isrc -Ivendor -DFLUXA_WINDOWS_MINIMAL=1 \
+                 -DFLUXA_HAS_FFI=0 -DFLUXA_IPC_NONE=1 \
+                 $(WINDOWS_MINIMAL_LIBS)
+WINDOWS_LDFLAGS = -lm -Wl,-subsystem,console
+
+# Extra inputs used by the named Windows library profiles below.
+WINDOWS_PROFILE_CFLAGS  ?=
+WINDOWS_PROFILE_SRCS    ?=
+WINDOWS_PROFILE_LDFLAGS ?=
+WINDOWS_PROFILE_TARGET  ?= $(TARGET_WINDOWS)
+
+# Prefixes containing dependencies compiled for x86_64 Windows. They must not
+# point at /usr/include or native Linux libraries.
+WINDOWS_SQLITE_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_SODIUM_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_CURL_PREFIX   ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_RAYLIB_PREFIX ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_ZLIB_PREFIX   ?= $(WINDOWS_DEPS_PREFIX)
+WINDOWS_PKG_CONFIG    ?= pkg-config
+
+WINDOWS_SQLITE_CFLAGS = -I$(WINDOWS_SQLITE_PREFIX)/include -DFLUXA_STD_SQLITE=1
+WINDOWS_SQLITE_LDFLAGS = -L$(WINDOWS_SQLITE_PREFIX)/lib -lsqlite3
+WINDOWS_SODIUM_CFLAGS = -I$(WINDOWS_SODIUM_PREFIX)/include -DFLUXA_STD_CRYPTO=1
+WINDOWS_SODIUM_LDFLAGS = -L$(WINDOWS_SODIUM_PREFIX)/lib -lsodium
+WINDOWS_CURL_CFLAGS = -I$(WINDOWS_CURL_PREFIX)/include
+WINDOWS_CURL_PC_LIBS := $(shell PKG_CONFIG_LIBDIR="$(WINDOWS_CURL_PREFIX)/lib/pkgconfig" \
+                         PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --libs libcurl 2>/dev/null)
+WINDOWS_CURL_LDFLAGS ?= $(if $(WINDOWS_CURL_PC_LIBS),$(WINDOWS_CURL_PC_LIBS),\
+                         -L$(WINDOWS_CURL_PREFIX)/lib -lcurl -lws2_32 -lcrypt32)
+WINDOWS_RAYLIB_CFLAGS = -I$(WINDOWS_RAYLIB_PREFIX)/include
+WINDOWS_RAYLIB_LDFLAGS = -L$(WINDOWS_RAYLIB_PREFIX)/lib -lraylib \
+                          -lopengl32 -lgdi32 -lwinmm
+WINDOWS_ZLIB_CFLAGS = -I$(WINDOWS_ZLIB_PREFIX)/include
+WINDOWS_ZLIB_LDFLAGS = -L$(WINDOWS_ZLIB_PREFIX)/lib -lz
+WINDOWS_PTHREAD_LDFLAGS = -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
+
+# A separate source list keeps all POSIX-only runtime services out of the PE:
+# native main, FFI/dlopen, handover sleeps, Unix IPC, pthread stdlibs and dis.
+SRCS_WINDOWS = platform/windows/main.c          \
+               platform/windows/runtime_stubs.c \
+               src/lexer.c                      \
+               src/parser.c                     \
+               src/scope.c                      \
+               src/resolver.c                   \
+               src/bytecode.c                   \
+               src/builtins.c                   \
+               src/block.c                      \
+               src/runtime.c
 
 
 # ── Embedded build flags ──────────────────────────────────────────────────────
@@ -236,10 +317,20 @@ CORTEXM_CFLAGS = $(EMBEDDED_CFLAGS)  \
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all build                                                \
+.PHONY: all build build-windows build-windows-profile          \
+        build-windows-essential                                \
+        build-windows-graph build-windows-image                \
+        build-windows-strings build-windows-json2               \
+        build-windows-fs build-windows-time                     \
+        build-windows-sound build-windows-sqlite                \
+        build-windows-crypto build-windows-httpc                \
+        build-windows-https                                     \
         build-rp2040 build-esp32 build-cortex-m build-embedded  \
         build-asan                                               \
         check-toolchain-rp2040 check-toolchain-esp32            \
+        check-toolchain-windows check-windows-sqlite            \
+        check-windows-sodium check-windows-curl                  \
+        check-windows-raylib check-windows-zlib                  \
         test test-runner                                         \
         test-sprint5 test-sprint8 test-sprint9 test-sprint9b    \
         test-suite2                                              \
@@ -278,6 +369,139 @@ build-dis:
 	    -lm
 	@echo "✓ build ok → ./fluxa_dis"
 
+check-toolchain-windows:
+	@command -v $(CC_WINDOWS) > /dev/null 2>&1 || \
+	  (echo "✗ $(CC_WINDOWS) not found." && \
+	   echo "  Install MinGW-w64 (e.g. sudo apt install mingw-w64)" && \
+	   exit 1)
+
+build-windows: check-toolchain-windows
+	@python3 scripts/gen_lib_registry.py
+	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(SRCS_WINDOWS) -o $(TARGET_WINDOWS) $(WINDOWS_LDFLAGS)
+	@echo "✓ Windows minimal build ok → $(TARGET_WINDOWS)"
+	@echo "  commands: run, explain"
+
+# Internal profile builder. Named targets below invoke this with isolated
+# feature flags, sources and target-Windows libraries.
+build-windows-profile: check-toolchain-windows
+	@python3 scripts/gen_lib_registry.py
+	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(WINDOWS_PROFILE_CFLAGS) \
+	    $(SRCS_WINDOWS) $(WINDOWS_PROFILE_SRCS) \
+	    -o $(WINDOWS_PROFILE_TARGET) \
+	    $(WINDOWS_LDFLAGS) $(WINDOWS_PROFILE_LDFLAGS)
+	@echo "✓ Windows profile build ok → $(WINDOWS_PROFILE_TARGET)"
+
+check-windows-raylib:
+	@test -f "$(WINDOWS_RAYLIB_PREFIX)/include/raylib.h" && \
+	 (test -f "$(WINDOWS_RAYLIB_PREFIX)/lib/libraylib.a" || \
+	  test -f "$(WINDOWS_RAYLIB_PREFIX)/lib/libraylib.dll.a") || \
+	  (echo "✗ Raylib for Windows not found under $(WINDOWS_RAYLIB_PREFIX)" && \
+	   echo "  Set WINDOWS_RAYLIB_PREFIX to a MinGW Raylib prefix containing include/raylib.h and lib/libraylib.a" && \
+	   exit 1)
+
+check-windows-zlib:
+	@test -f "$(WINDOWS_ZLIB_PREFIX)/include/zlib.h" && \
+	 (test -f "$(WINDOWS_ZLIB_PREFIX)/lib/libz.a" || \
+	  test -f "$(WINDOWS_ZLIB_PREFIX)/lib/libz.dll.a") || \
+	  (echo "✗ zlib for Windows not found under $(WINDOWS_ZLIB_PREFIX)" && \
+	   echo "  Set WINDOWS_ZLIB_PREFIX to a MinGW zlib prefix containing include/zlib.h and lib/libz.a" && \
+	   exit 1)
+
+build-windows-graph: check-windows-raylib
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-graph.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DFLUXA_STD_GRAPH=1 -DFLUXA_GRAPH_RAYLIB=1 $(WINDOWS_RAYLIB_CFLAGS)" \
+	    WINDOWS_PROFILE_LDFLAGS="-lshell32 $(WINDOWS_RAYLIB_LDFLAGS)"
+
+build-windows-image: check-windows-raylib check-windows-zlib
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-image.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DFLUXA_IMAGE_RAYLIB=1 $(WINDOWS_RAYLIB_CFLAGS) $(WINDOWS_ZLIB_CFLAGS)" \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_RAYLIB_LDFLAGS) $(WINDOWS_ZLIB_LDFLAGS)"
+
+build-windows-strings:
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-strings.exe
+
+build-windows-json2:
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-json2.exe
+
+build-windows-fs:
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-fs.exe \
+	    WINDOWS_PROFILE_CFLAGS=-DFLUXA_STD_FS=1
+
+build-windows-time:
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-time.exe \
+	    WINDOWS_PROFILE_CFLAGS=-DFLUXA_STD_TIME=1 \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_PTHREAD_LDFLAGS)"
+
+# Functional Windows audio via the vendored miniaudio WASAPI backend.
+build-windows-sound:
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-sound.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DFLUXA_STD_SOUND=1 -DFLUXA_SOUND_MINIAUDIO=1" \
+	    WINDOWS_PROFILE_SRCS=src/std/sound/fluxa_std_sound_ma.c \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_PTHREAD_LDFLAGS) -lwinmm -lole32 -luuid"
+
+check-windows-sqlite:
+	@test -f "$(WINDOWS_SQLITE_PREFIX)/include/sqlite3.h" && \
+	 (test -f "$(WINDOWS_SQLITE_PREFIX)/lib/libsqlite3.a" || \
+	  test -f "$(WINDOWS_SQLITE_PREFIX)/lib/libsqlite3.dll.a") || \
+	  (echo "✗ SQLite for Windows not found under $(WINDOWS_SQLITE_PREFIX)" && \
+	   echo "  Set WINDOWS_SQLITE_PREFIX to a MinGW SQLite prefix containing include/sqlite3.h and lib/libsqlite3.a" && \
+	   exit 1)
+
+build-windows-sqlite: check-windows-sqlite
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-sqlite.exe \
+	    WINDOWS_PROFILE_CFLAGS="$(WINDOWS_SQLITE_CFLAGS)" \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_SQLITE_LDFLAGS)"
+
+check-windows-sodium:
+	@test -f "$(WINDOWS_SODIUM_PREFIX)/include/sodium.h" && \
+	 (test -f "$(WINDOWS_SODIUM_PREFIX)/lib/libsodium.a" || \
+	  test -f "$(WINDOWS_SODIUM_PREFIX)/lib/libsodium.dll.a") || \
+	  (echo "✗ libsodium for Windows not found under $(WINDOWS_SODIUM_PREFIX)" && \
+	   echo "  Set WINDOWS_SODIUM_PREFIX to a MinGW libsodium prefix containing include/sodium.h and lib/libsodium.a" && \
+	   exit 1)
+
+build-windows-crypto: check-windows-sodium
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-crypto.exe \
+	    WINDOWS_PROFILE_CFLAGS="$(WINDOWS_SODIUM_CFLAGS)" \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_SODIUM_LDFLAGS)"
+
+check-windows-curl:
+	@test -f "$(WINDOWS_CURL_PREFIX)/include/curl/curl.h" && \
+	 (test -f "$(WINDOWS_CURL_PREFIX)/lib/libcurl.a" || \
+	  test -f "$(WINDOWS_CURL_PREFIX)/lib/libcurl.dll.a") || \
+	  (echo "✗ libcurl for Windows not found under $(WINDOWS_CURL_PREFIX)" && \
+	   echo "  Set WINDOWS_CURL_PREFIX to a MinGW curl prefix; override WINDOWS_CURL_LDFLAGS when using a static curl build" && \
+	   exit 1)
+
+build-windows-httpc: check-windows-curl
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-httpc.exe \
+	    WINDOWS_PROFILE_CFLAGS="$(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPC=1" \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_CURL_LDFLAGS)"
+
+build-windows-https: check-windows-curl
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-https.exe \
+	    WINDOWS_PROFILE_CFLAGS="$(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPS=1" \
+	    WINDOWS_PROFILE_LDFLAGS="$(WINDOWS_CURL_LDFLAGS)"
+
+# One executable with the requested essential set. External dependencies must
+# all be present in their Windows prefixes before this target is invoked.
+build-windows-essential: check-windows-raylib check-windows-zlib check-windows-sqlite check-windows-sodium check-windows-curl
+	@$(MAKE) --no-print-directory build-windows-profile \
+	    WINDOWS_PROFILE_TARGET=fluxa-essential.exe \
+	    WINDOWS_PROFILE_CFLAGS="-DFLUXA_STD_GRAPH=1 -DFLUXA_GRAPH_RAYLIB=1 -DFLUXA_IMAGE_RAYLIB=1 -DFLUXA_STD_FS=1 -DFLUXA_STD_TIME=1 -DFLUXA_STD_SOUND=1 -DFLUXA_SOUND_MINIAUDIO=1 $(WINDOWS_RAYLIB_CFLAGS) $(WINDOWS_ZLIB_CFLAGS) $(WINDOWS_SQLITE_CFLAGS) $(WINDOWS_SODIUM_CFLAGS) $(WINDOWS_CURL_CFLAGS) -DFLUXA_STD_HTTPC=1 -DFLUXA_STD_HTTPS=1" \
+	    WINDOWS_PROFILE_SRCS=src/std/sound/fluxa_std_sound_ma.c \
+	    WINDOWS_PROFILE_LDFLAGS="-lshell32 $(WINDOWS_RAYLIB_LDFLAGS) $(WINDOWS_ZLIB_LDFLAGS) $(WINDOWS_PTHREAD_LDFLAGS) -lwinmm -lole32 -luuid $(WINDOWS_SQLITE_LDFLAGS) $(WINDOWS_SODIUM_LDFLAGS) $(WINDOWS_CURL_LDFLAGS)"
 
 # Hardened prod binary — FLUXA_SECURE=1 enables:
 #   rate limiting (100 invalid/sec → RESCUE_MODE)
@@ -840,6 +1064,7 @@ fuzz: fuzz-build
 # ─────────────────────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(TARGET) $(TARGET_RP2040) $(TARGET_ESP32) $(TARGET_CORTEXM)
+	rm -f $(TARGET) $(TARGET_WINDOWS) $(TARGET_RP2040) $(TARGET_ESP32) $(TARGET_CORTEXM)
+	rm -f fluxa-*.exe
 	rm -f $(TARGET)_asan $(TARGET)_debug
 	rm -f *.o

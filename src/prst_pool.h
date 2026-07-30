@@ -221,7 +221,7 @@ static inline uint32_t prst_pool_checksum(const PrstPool *p) {
         h ^= (uint8_t)p->entries[i].declared_type;
         h *= 16777619u;
         if (p->entries[i].value.type == VAL_INT) {
-            long v = p->entries[i].value.as.integer;
+            uint64_t v = (uint64_t)(int64_t)p->entries[i].value.as.integer;
             h ^= (uint32_t)(v & 0xFFFFFFFF);
             h *= 16777619u;
             h ^= (uint32_t)((v >> 32) & 0xFFFFFFFF);
