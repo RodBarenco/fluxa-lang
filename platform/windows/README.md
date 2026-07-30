@@ -137,7 +137,17 @@ shared GLFW ABI and is therefore unsuitable for a truly standalone runtime.
 raylib version: 6.0
 commit: dbc56a87da87d973a9c5baa4e7438a9d20121d28
 backend: PLATFORM_DESKTOP_WIN32
+graphics API: GRAPHICS_API_OPENGL_21
 library type: STATIC
+```
+
+OpenGL 2.1 is the Windows default because it works with a wider range of GPU
+drivers, virtual machines, and remote-display environments than Raylib's
+OpenGL 3.3 desktop default. A build intended specifically for modern drivers
+can override it with:
+
+```sh
+WINDOWS_RAYLIB_GRAPHICS=GRAPHICS_API_OPENGL_33 make build-windows-essential-static
 ```
 
 The pinned source and generated prefix live under `.deps/` and are not
