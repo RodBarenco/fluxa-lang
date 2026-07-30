@@ -6,7 +6,8 @@ RAYLIB_VERSION="6.0"
 RAYLIB_COMMIT="dbc56a87da87d973a9c5baa4e7438a9d20121d28"
 SOURCE_DIR="${WINDOWS_RAYLIB_SOURCE_DIR:-.deps/raylib-src}"
 PREFIX="${WINDOWS_RAYLIB_STATIC_PREFIX:-.deps/raylib-static}"
-GRAPHICS_API="${WINDOWS_RAYLIB_GRAPHICS:-GRAPHICS_API_OPENGL_21}"
+PLATFORM="${WINDOWS_RAYLIB_PLATFORM:-PLATFORM_DESKTOP_GLFW}"
+GRAPHICS_API="${WINDOWS_RAYLIB_GRAPHICS:-GRAPHICS_API_OPENGL_33}"
 GIT_BIN="${GIT_BIN:-git}"
 
 if ! command -v "$GIT_BIN" >/dev/null 2>&1; then
@@ -45,8 +46,9 @@ PY
 
 rm -f "$SOURCE_DIR"/src/*.o "$SOURCE_DIR"/src/libraylib.a
 make -C "$SOURCE_DIR/src" \
-    PLATFORM=PLATFORM_DESKTOP_WIN32 \
+    PLATFORM="$PLATFORM" \
     GRAPHICS="$GRAPHICS_API" \
+    USE_EXTERNAL_GLFW=FALSE \
     RAYLIB_LIBTYPE=STATIC
 
 mkdir -p "$PREFIX/include" "$PREFIX/lib"
@@ -57,5 +59,5 @@ cp "$SOURCE_DIR/src/libraylib.a" "$PREFIX/lib/"
 
 actual_commit="$("$GIT_BIN" -C "$SOURCE_DIR" rev-parse HEAD)"
 test "$actual_commit" = "$RAYLIB_COMMIT"
-printf 'raylib %s static Win32 (%s) ready at %s\n' \
-    "$RAYLIB_VERSION" "$GRAPHICS_API" "$PREFIX"
+printf 'raylib %s static Windows (%s, %s) ready at %s\n' \
+    "$RAYLIB_VERSION" "$PLATFORM" "$GRAPHICS_API" "$PREFIX"

@@ -136,18 +136,20 @@ shared GLFW ABI and is therefore unsuitable for a truly standalone runtime.
 ```text
 raylib version: 6.0
 commit: dbc56a87da87d973a9c5baa4e7438a9d20121d28
-backend: PLATFORM_DESKTOP_WIN32
-graphics API: GRAPHICS_API_OPENGL_21
+backend: PLATFORM_DESKTOP_GLFW
+GLFW linkage: internal static module (USE_EXTERNAL_GLFW=FALSE)
+graphics API: GRAPHICS_API_OPENGL_33
 library type: STATIC
 ```
 
-OpenGL 2.1 is the Windows default because it works with a wider range of GPU
-drivers, virtual machines, and remote-display environments than Raylib's
-OpenGL 3.3 desktop default. A build intended specifically for modern drivers
-can override it with:
+The GLFW module is compiled into `libraylib.a`; it does not add a
+`glfw3.dll` runtime dependency. The backend and graphics API remain
+overridable for development builds:
 
 ```sh
-WINDOWS_RAYLIB_GRAPHICS=GRAPHICS_API_OPENGL_33 make build-windows-essential-static
+WINDOWS_RAYLIB_PLATFORM=PLATFORM_DESKTOP_WIN32 \
+WINDOWS_RAYLIB_GRAPHICS=GRAPHICS_API_OPENGL_21 \
+make build-windows-essential-static
 ```
 
 The pinned source and generated prefix live under `.deps/` and are not
@@ -209,6 +211,72 @@ bundle can be selected with `CURL_CA_BUNDLE`.
 
 The test fixtures and native PowerShell runner are under
 `platform/windows/tests/`.
+
+## Virtual machines and Mesa3D
+
+`std.graph` requires a working OpenGL driver. Enabling VirtualBox 3D
+acceleration is not sufficient when the Windows guest still reports
+`Microsoft Basic Display Adapter` or `VirtualBox VESA BIOS`. Typical failures
+are:
+
+```text
+GLAD: Cannot load OpenGL extensions
+WGL: The driver does not appear to support OpenGL
+```
+
+Install the matching VirtualBox Guest Additions and use the `VBoxSVGA`
+controller first. If the guest still has no usable OpenGL driver, Mesa3D can
+provide an application-local fallback. Do not replace the system
+`C:\Windows\System32\opengl32.dll`.
+
+The validated fallback used the community
+[`mesa-dist-win`](https://github.com/pal1000/mesa-dist-win/releases) 26.1.3
+`release-mingw` archive:
+
+```text
+SHA-256: 80d5add64254c839b4c784bdab6a2b504e448675604b0fe54a9bce3c543303a7
+```
+
+These x64 files were placed beside `fluxa-runtime.exe`:
+
+```text
+dxil.dll
+libgallium_wgl.dll
+opengl32.dll
+opengl32sw.dll
+fluxa-runtime.exe.local
+```
+
+`opengl32sw.dll` is a second copy of Mesa's `opengl32.dll`.
+`fluxa-runtime.exe.local` is a non-empty text file that enables
+application-local DLL redirection for this executable name. If the runtime is
+renamed, the `.local` filename must be renamed to match, for example
+`fluxa.exe.local`.
+
+This configuration was validated with both Mesa renderers:
+
+```text
+Renderer: D3D12 (Microsoft Basic Render Driver)
+Renderer: llvmpipe (LLVM ..., 256 bits)
+GLAD: OpenGL extensions loaded successfully
+FBO: Framebuffer object created successfully
+```
+
+Mesa normally selects a renderer automatically. To force CPU rendering for
+diagnosis:
+
+```powershell
+$env:GALLIUM_DRIVER = "llvmpipe"
+$env:LIBGL_ALWAYS_SOFTWARE = "true"
+.\fluxa-runtime.exe run main.flx
+```
+
+Mesa is an optional companion distribution, not linked into
+`fluxa-runtime.exe`. It substantially increases the application size and
+software rendering can be slow. Download Windows binaries from a trusted
+release, verify the published checksum, preserve the accompanying licenses,
+and prefer per-application deployment. Fluxa Builder must explicitly include
+these companion files when producing a VM-compatible application bundle.
 
 ## HTTPS trust
 
