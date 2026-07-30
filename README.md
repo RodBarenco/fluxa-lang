@@ -45,6 +45,22 @@ fluxa run main.flx -dev      # watch + auto-reload
 
 ---
 
+## Windows runtime and distribution
+
+Windows has separate dynamic-development, public standalone, and private
+Fluxa Builder runtime profiles. The complete guide covers:
+
+- required MSYS2, compiler, Make, Python, and native-library packages;
+- the command that generates each Windows executable and its intended use;
+- the standalone runtime and its system-DLL-only dependency gate;
+- the private runtime contract consumed by Fluxa Builder;
+- `make windows-test` and the Windows language/stdlib tests;
+- VirtualBox OpenGL diagnosis and the validated Mesa3D fallback.
+
+See **[Fluxa Lang Windows runtime and distribution](docs/WINDOWS.md)**.
+
+---
+
 ## Language
 
 ```fluxa
