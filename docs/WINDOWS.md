@@ -1,16 +1,21 @@
 # Fluxa Lang Windows runtime and distribution
 
-This directory contains the native Windows entrypoint, compatibility layer,
-dependency preparation, and Windows-specific tests for **Fluxa Lang**.
+Fluxa Lang provides a native Windows runtime as a standalone x86-64 PE
+console executable. This document covers the native entrypoint,
+compatibility layer, dependency preparation, and Windows-specific tests
+for the language runtime.
 
-Fluxa Lang and Fluxa Builder are separate projects:
+Fluxa Lang and [Fluxa Builder](https://github.com/RodBarenco/fluxa-builder)
+are separate projects:
 
-- this repository builds and tests the Fluxa language runtime;
-- Fluxa Builder consumes a verified packaged-runtime build and creates the
-  final application launcher, FLXPKG, metadata, archives, and installers.
+- **Fluxa Lang** (this repository) builds and tests the language runtime.
+- **[Fluxa Builder](https://github.com/RodBarenco/fluxa-builder)** consumes a
+  verified packaged-runtime build and creates the final application launcher,
+  FLXPKG, metadata, archives, and installers.
 
-Building `fluxa-runtime.exe` here does not package an application. Conversely,
-Fluxa Builder does not compile or reimplement the Fluxa language runtime.
+Building `fluxa-runtime.exe` here does **not** package an application.
+Conversely, Fluxa Builder does not compile or reimplement the Fluxa language
+runtime.
 
 ## Supported runtime
 
