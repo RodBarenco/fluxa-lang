@@ -222,6 +222,96 @@ FLX
 )
 echo "$out" | grep -q "error caught" && pass "read_missing_error" || fail "read_missing_error" "error caught" "$out"
 
+# --- read_base64: secure binary read as base64, with per-type validation ---
+mkdir -p "$P/cards"
+printf '\x89PNG\r\n\x1a\x0a\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89' > "$P/cards/ok.png"
+
+# 16. read_base64 of a PNG (type "png") → returns base64 (starts with iVBOR)
+out=$(run << 'FLX'
+import std fs
+danger {
+    str b = fs.read_base64("cards/ok.png", 262144, "png")
+    print(b)
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "iVBOR" && pass "read_base64_png_ok" || fail "read_base64_png_ok" "base64 starting iVBOR" "$out"
+
+# 17. path traversal escape → rejected (even the type can't be reached)
+out=$(run << 'FLX'
+import std fs
+danger { str b = fs.read_base64("cards/../../../etc/passwd", 262144, "any") }
+if err != nil { print("blocked") }
+FLX
+)
+echo "$out" | grep -q "blocked" && pass "read_base64_blocks_traversal" || fail "read_base64_blocks_traversal" "blocked" "$out"
+
+# 18. a non-PNG file asked for as "png" → rejected (magic mismatch). This is what
+#     protects e.g. a local DB that sits in the working dir.
+printf 'SQLite format 3 secret' > "$P/secret.db"
+out=$(run << 'FLX'
+import std fs
+danger { str b = fs.read_base64("secret.db", 262144, "png") }
+if err != nil { print("blocked") }
+FLX
+)
+echo "$out" | grep -q "blocked" && pass "read_base64_type_mismatch_blocked" || fail "read_base64_type_mismatch_blocked" "blocked" "$out"
+
+# 19. file larger than max_bytes → rejected
+printf '\x89PNG\r\n\x1a\x0a' > "$P/cards/big.png"
+head -c 40000 /dev/zero >> "$P/cards/big.png"
+out=$(run << 'FLX'
+import std fs
+danger { str b = fs.read_base64("cards/big.png", 1024, "png") }
+if err != nil { print("blocked") }
+FLX
+)
+echo "$out" | grep -q "blocked" && pass "read_base64_blocks_oversize" || fail "read_base64_blocks_oversize" "blocked" "$out"
+
+# 20. unknown type name → distinct error
+out=$(run << 'FLX'
+import std fs
+danger { str b = fs.read_base64("cards/ok.png", 262144, "xyz") }
+if err != nil { print("blocked") }
+FLX
+)
+echo "$out" | grep -q "blocked" && pass "read_base64_unknown_type" || fail "read_base64_unknown_type" "blocked" "$out"
+
+# 21. a text type (csv) validates by extension
+printf 'a,b\n1,2\n' > "$P/data.csv"
+out=$(run << 'FLX'
+import std fs
+danger {
+    str b = fs.read_base64("data.csv", 262144, "csv")
+    print("ok", len(b))
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "ok" && pass "read_base64_csv_ok" || fail "read_base64_csv_ok" "ok" "$out"
+
+# 22. "any" reads a file the type check would reject, but confinement still holds
+out=$(run << 'FLX'
+import std fs
+danger {
+    str b = fs.read_base64("secret.db", 262144, "any")
+    print("any", len(b))
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "any" && pass "read_base64_any_reads" || fail "read_base64_any_reads" "any reads" "$out"
+
+# 23. non-int max_bytes → clear error
+out=$(run << 'FLX'
+import std fs
+danger { str b = fs.read_base64("cards/ok.png", "big", "png") }
+if err != nil { print("blocked") }
+FLX
+)
+echo "$out" | grep -q "blocked" && pass "read_base64_bad_limit_type" || fail "read_base64_bad_limit_type" "blocked" "$out"
+
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.fs: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.fs: PASS" && exit 0 || exit 1

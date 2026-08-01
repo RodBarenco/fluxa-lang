@@ -1479,7 +1479,8 @@ std.fs = "1.0"
 
 | Function | Returns | Description |
 |---|---|---|
-| `fs.read(path)` | `str` | Read entire file |
+| `fs.read(path)` | `str` | Read entire file (stops at first NUL — text only, not binary) |
+| `fs.read_base64(path, max_bytes, type)` | `str` | **Secure** binary read as base64. Reads a file only if it is a regular file **inside the working directory**, no larger than `max_bytes`, and matches `type` (extension **and** magic bytes). `type` is one of `png`, `jpg`, `gif`, `webp`, `qoi`, `bmp`, `pdf`, `zip`, `xlsx`, `docx`, `mp3`, `wav`, `flac`, `ogg`, `mp4`, `webm`, `avi`, `csv`, `json`, `txt` — or `any` to skip the type check (dir-confinement and size still apply). Rejects path traversal, symlink escape, wrong-type files (e.g. a local DB asked for as `png`), and oversized files. Use to send a file over the network without the NUL-truncation of `read`. |
 | `fs.write(path, data)` | `int` | Write file, return bytes written |
 | `fs.append(path, data)` | `int` | Append to file |
 | `fs.exists(path)` | `bool` | Check existence |
