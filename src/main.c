@@ -107,19 +107,24 @@ static void usage(void) {
  * mod_root: value of [project] module_root from config, or NULL for CWD.
  * pool must be zero-initialized by the caller. Returns NULL on error. */
 static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
-                               const char *mod_root) {
+                               const char *mod_root, int module_cap) {
     char *main_src = load_file(path);
     if (!main_src) return NULL;
 
     pool_init(pool);
 
     typedef struct { char ns[64]; char *src; } ModEntry;
-    ModEntry mods[32];
+    /* Fluxa targets small systems, so allocate exactly module_cap slots rather
+     * than reserving a large fixed array. Default cap is 32 (see config). */
+    if (module_cap < 1) module_cap = 32;
+    ModEntry *mods = (ModEntry *)calloc((size_t)module_cap, sizeof(ModEntry));
+    if (!mods) { free(main_src); pool_free(pool); return NULL; }
     int mod_count = 0;
+    int mod_overflow = 0;
 
     /* Pass 1: scan for imports and load module sources */
     const char *scan = main_src;
-    while (*scan && mod_count < 32) {
+    while (*scan) {
         while (*scan == ' ' || *scan == '\t') scan++;
         if (strncmp(scan, "import", 6) == 0) {
             const char *s = scan + 6;
@@ -137,6 +142,9 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
                        *s != '\n' && *s != '\r' && ni < 63)
                     ns[ni++] = *s++;
                 if (ni > 0) {
+                    /* Refuse past the cap with a clear message rather than
+                     * silently dropping modules. */
+                    if (mod_count >= module_cap) { mod_overflow = 1; break; }
                     const char *kind = is_live ? "live" : "static";
                     char fpath[640];
                     if (mod_root)
@@ -148,6 +156,7 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
                     char *mod_src = load_file(fpath);
                     if (!mod_src) {
                         for (int i = 0; i < mod_count; i++) free(mods[i].src);
+                        free(mods);
                         free(main_src); pool_free(pool);
                         return NULL;
                     }
@@ -160,6 +169,14 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
         }
         while (*scan && *scan != '\n') scan++;
         if (*scan == '\n') scan++;
+    }
+
+    if (mod_overflow) {
+        fprintf(stderr, "[fluxa] too many modules: the import limit is %d "
+                "(raise module_cap in [runtime])\n", module_cap);
+        for (int i = 0; i < mod_count; i++) free(mods[i].src);
+        free(mods); free(main_src); pool_free(pool);
+        return NULL;
     }
 
     /* Pass 2: parse all modules then main into a single program node */
@@ -177,12 +194,14 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
         if (err != 0) {
             fprintf(stderr, "[fluxa] error in module '%s'\n", mods[i].ns);
             for (int j = i+1; j < mod_count; j++) free(mods[j].src);
+            free(mods);
             free(main_src);
             parser_free(&main_p);
             pool_free(pool);
             return NULL;
         }
     }
+    free(mods);
 
     ASTNode *main_prog = parser_parse(&main_p);
     free(main_src);
@@ -201,7 +220,7 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
 }
 
 static ASTNode *parse_file(const char *path, ASTPool *pool) {
-    return parse_file_ex(path, pool, NULL);
+    return parse_file_ex(path, pool, NULL, 32);
 }
 
 /* Single run — no watcher */
@@ -209,8 +228,9 @@ static int run_once(const char *path, int explain) {
     static ASTPool pool;
     FluxaConfig cfg = fluxa_config_find_and_load();
     resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
+    parser_set_module_cap(cfg.module_cap);   /* [runtime] module_cap */
     ASTNode *program = parse_file_ex(path, &pool,
-        cfg.module_root[0] ? cfg.module_root : NULL);
+        cfg.module_root[0] ? cfg.module_root : NULL, cfg.module_cap);
     if (!program) return 1;
     int result = explain ? runtime_exec_explain(program) : runtime_exec(program);
     pool_free(&pool);
@@ -235,8 +255,9 @@ static void *dev_exec_thread(void *arg) {
 
     FluxaConfig _cfg = fluxa_config_find_and_load();
     resolver_set_scope_cap(_cfg.scope_cap);   /* [runtime] scope_cap */
+    parser_set_module_cap(_cfg.module_cap);   /* [runtime] module_cap */
     ASTNode *program = parse_file_ex(ctx->path, ctx->ast_pool,
-        _cfg.module_root[0] ? _cfg.module_root : NULL);
+        _cfg.module_root[0] ? _cfg.module_root : NULL, _cfg.module_cap);
     if (!program) {
         fprintf(stderr, "[fluxa] -dev: parse error — waiting for fix...\n");
         ctx->exit_code = 1;
@@ -356,6 +377,7 @@ static int run_prod(const char *path) {
         snprintf(toml_path, sizeof(toml_path), "%s/fluxa.toml", proj_dir);
         FluxaConfig cfg = fluxa_config_load(toml_path);
         resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
+    parser_set_module_cap(cfg.module_cap);   /* [runtime] module_cap */
         if (fluxa_security_check(
                 cfg.security.signing_key_path[0] ? cfg.security.signing_key_path : NULL,
                 cfg.security.ipc_hmac_key_path[0] ? cfg.security.ipc_hmac_key_path : NULL,

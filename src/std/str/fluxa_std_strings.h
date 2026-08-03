@@ -49,7 +49,8 @@ static inline Value strlib_nil(void) {
 static inline Value fluxa_std_strings_call(const char *fn_name,
                                         const Value *args, int argc,
                                         ErrStack *err, int *had_error,
-                                        int line) {
+                                        int line,
+                                        const FluxaConfig *cfg) {
     char errbuf[320];
 
 #define STR_ERR(msg) do { \
@@ -345,26 +346,65 @@ static inline Value fluxa_std_strings_call(const char *fn_name,
     }
 
     if (strcmp(fn_name, "concat") == 0) {
-        /* str.concat(a, b, ...) — joins any number of values as strings */
+        /* str.concat(a, b, ...) — joins any number of values as strings.
+         * Allocates to fit: strings can be large (e.g. a base64-encoded file),
+         * so no fixed cap. Two passes — measure the total length, then build. */
         if (argc == 0) return strlib_str("");
-        char out[4096]; out[0] = '\0';
-        int pos = 0;
-        for (int _i = 0; _i < argc && pos < (int)sizeof(out) - 1; _i++) {
-            char tmp[512]; tmp[0] = '\0';
+
+        /* Pass 1: compute the exact length needed. Scalars are formatted into a
+         * small local buffer just to measure; strings are measured directly. */
+        size_t total = 0;
+        for (int _i = 0; _i < argc; _i++) {
             Value v = args[_i];
-            if (v.type == VAL_INT)        snprintf(tmp, sizeof(tmp), "%ld", v.as.integer);
-            else if (v.type == VAL_FLOAT) snprintf(tmp, sizeof(tmp), "%g",  v.as.real);
-            else if (v.type == VAL_BOOL)  snprintf(tmp, sizeof(tmp), "%s",  v.as.boolean ? "true" : "false");
-            else if (v.type == VAL_STRING && v.as.string)
-                                          snprintf(tmp, sizeof(tmp), "%s",  v.as.string);
-            int tlen = (int)strlen(tmp);
-            if (pos + tlen < (int)sizeof(out) - 1) {
-                memcpy(out + pos, tmp, (size_t)tlen);
-                pos += tlen;
+            char numbuf[64]; numbuf[0] = '\0';
+            if (v.type == VAL_INT)        snprintf(numbuf, sizeof(numbuf), "%ld", v.as.integer);
+            else if (v.type == VAL_FLOAT) snprintf(numbuf, sizeof(numbuf), "%g",  v.as.real);
+            else if (v.type == VAL_BOOL)  snprintf(numbuf, sizeof(numbuf), "%s",  v.as.boolean ? "true" : "false");
+            if (v.type == VAL_STRING && v.as.string) total += strlen(v.as.string);
+            else total += strlen(numbuf);
+        }
+
+        /* Allocate the result once (+1 for the NUL). Enforce the configured
+         * cap: a concat over str_concat_cap errors unless str_autogrow is on.
+         * This bounds a single concat driven by untrusted input, instead of
+         * growing without limit. */
+        long cap = (cfg && cfg->str_concat_cap > 0)
+                   ? cfg->str_concat_cap : (long)(8 * 1024 * 1024);
+        int autogrow = cfg ? cfg->str_autogrow : 0;
+        if ((long)total > cap && !autogrow) {
+            char msg[192];
+            snprintf(msg, sizeof(msg),
+                     "str.concat: result %zu bytes exceeds str_concat_cap %ld "
+                     "(raise it or set str_autogrow in [runtime])", total, cap);
+            errstack_push(err, ERR_FLUXA, msg, "str", line);
+            *had_error = 1;
+            return strlib_nil();
+        }
+
+        char *out = fxstr_alloc(total);
+        if (!out) return strlib_str("");
+
+        /* Pass 2: append each argument. */
+        size_t pos = 0;
+        for (int _i = 0; _i < argc; _i++) {
+            Value v = args[_i];
+            char numbuf[64]; numbuf[0] = '\0';
+            const char *src;
+            if (v.type == VAL_STRING && v.as.string) {
+                src = v.as.string;
+            } else {
+                if (v.type == VAL_INT)        snprintf(numbuf, sizeof(numbuf), "%ld", v.as.integer);
+                else if (v.type == VAL_FLOAT) snprintf(numbuf, sizeof(numbuf), "%g",  v.as.real);
+                else if (v.type == VAL_BOOL)  snprintf(numbuf, sizeof(numbuf), "%s",  v.as.boolean ? "true" : "false");
+                src = numbuf;
             }
+            size_t slen = strlen(src);
+            memcpy(out + pos, src, slen);
+            pos += slen;
         }
         out[pos] = '\0';
-        return strlib_str(out);
+        Value result; result.type = VAL_STRING; result.as.string = out;
+        return result;
     }
 
 #undef STR_ERR
@@ -388,7 +428,8 @@ FLUXA_LIB_EXPORT(
     toml_key = "std.strings",
     owner    = "strings",
     call     = fluxa_std_strings_call,
-    rt_aware = 0
+    rt_aware = 0,
+    cfg_aware = 1
 )
 
 #endif /* FLUXA_STD_STRINGS_H */

@@ -19,6 +19,14 @@ static void mangle(const char *ns, const char *name, char *out, size_t outsz) {
          (int)(outsz/2 - 2), ns, (int)(outsz/2 - 2), name);
 }
 
+static int g_module_cap = 32;
+
+void parser_set_module_cap(int cap) {
+    if (cap < 1)    cap = 1;
+    if (cap > 4096) cap = 4096;
+    g_module_cap = cap;
+}
+
 static int is_imported_ns(Parser *p, const char *name) {
     for (int i = 0; i < p->imported_count; i++)
         if (strcmp(p->imported[i], name) == 0) return 1;
@@ -26,7 +34,7 @@ static int is_imported_ns(Parser *p, const char *name) {
 }
 
 static void register_ns(Parser *p, const char *name) {
-    if (p->imported_count >= 32) return;
+    if (!p->imported || p->imported_count >= p->imported_cap) return;
     strncpy(p->imported[p->imported_count++], name, 63);
     p->imported[p->imported_count-1][63] = '\0';
 }
@@ -1451,6 +1459,9 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.current   = lexer_next(&p.lexer);
     p.next      = lexer_next(&p.lexer);
     p.ns[0]           = '\0';
+    /* Allocate exactly g_module_cap namespace slots (default 32). */
+    p.imported_cap    = g_module_cap;
+    p.imported        = (char (*)[64])calloc((size_t)p.imported_cap, 64);
     p.imported_count  = 0;
     p.module_decl_count = 0;
     p.expr_depth = 0;
@@ -1479,9 +1490,12 @@ int parser_parse_module(Parser *main_p, ASTNode *program,
     Parser mp = parser_new(source, main_p->pool);
     strncpy(mp.ns, ns, sizeof(mp.ns) - 1);
     mp.ns[sizeof(mp.ns) - 1] = '\0';
-    /* Propagate already-known namespaces so module can reference them */
-    mp.imported_count = main_p->imported_count;
-    for (int i = 0; i < main_p->imported_count; i++)
+    /* Propagate already-known namespaces so module can reference them. Both
+     * parsers share the same cap (g_module_cap), so this fits. */
+    int copy_n = main_p->imported_count;
+    if (copy_n > mp.imported_cap) copy_n = mp.imported_cap;
+    mp.imported_count = copy_n;
+    for (int i = 0; i < copy_n; i++)
         strncpy(mp.imported[i], main_p->imported[i], 63);
 
     /* Register the current module's namespace in both mp and main_p */
@@ -1500,4 +1514,5 @@ int parser_parse_module(Parser *main_p, ASTNode *program,
 void parser_free(Parser *p) {
     token_free(&p->current);
     token_free(&p->next);
+    if (p->imported) { free(p->imported); p->imported = NULL; }
 }

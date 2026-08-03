@@ -507,6 +507,18 @@ else
 $(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
 fi
 
+# ── sprint12: configurable limits (str_concat_cap, module_cap) ───────────────
+printf "  %-56s" "sprint12/limits (str_concat_cap, module_cap)"
+_s12_out=$(bash "$SCRIPT_DIR/sprint12_limits.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_s12_out" | grep -q "limits: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint12/limits:
+$(echo "$_s12_out" | grep "FAIL" | sed 's/^/    /')"
+fi
+
 # ── sprint13: Runtime Update Protocol ───────────────────────────────────────
 printf "  %-56s" "sprint13/update_protocol (Runtime Update Protocol)"
 _s13_out=$(timeout 30s bash "$SCRIPT_DIR/sprint13/update_protocol.sh" --fluxa "$FLUXA" 2>&1 || true)

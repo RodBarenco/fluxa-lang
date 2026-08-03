@@ -1,5 +1,43 @@
 # Fluxa-lang Changelog
 
+## v0.26 — configurable str_concat_cap and module_cap
+
+Two more fixed limits are now configurable via `[runtime]` in `fluxa.toml`,
+and a truncation bug in `strings.concat` is fixed.
+
+### strings.concat no longer truncates; `str_concat_cap` added
+`strings.concat` used fixed 512-byte per-argument and 4096-byte total buffers,
+silently truncating larger results (e.g. a base64-encoded file). It now allocates
+to fit. A new `[runtime] str_concat_cap` (default 8 MiB, matching common HTTP
+body limits) bounds a single concat driven by untrusted input; a concat over the
+cap errors unless `str_autogrow = yes`. Range 4096..256 MiB. The strings lib is
+now `cfg_aware` to read the cap.
+
+```toml
+[runtime]
+str_concat_cap = 8388608   # 8 MiB (default)
+str_autogrow   = no        # error over cap rather than grow (default)
+```
+
+### `module_cap` — configurable module import limit
+The number of importable live/static modules was hard-coded at 32. It is now
+`[runtime] module_cap` (default 32). Fluxa targets small systems, so the loader
+and parser allocate exactly `module_cap` slots — no fixed waste. Over the cap
+errors with a clear message. Range 1..4096.
+
+```toml
+[runtime]
+module_cap = 48   # default 32
+```
+
+Implementation: `main.c` allocates the module list dynamically (was `mods[32]`);
+`parser.c` allocates the imported-namespace list dynamically (was `imported[32]`)
+with a settable global `g_module_cap` and `parser_set_module_cap(int)`. Both
+free on every exit path (verified). `toml_config.h` adds `str_concat_cap`,
+`str_autogrow`, and `module_cap` with range checks. Behavior is identical to
+before when unset (concat cap 8 MiB, module cap 32).
+
+
 ## v0.25 — frame capture, `std.image` (PNG/JPG/BMP/TGA/QOI), and `open_url` (current)
 
 Two capabilities the Elite Achievement Cards need — snapshot the running game

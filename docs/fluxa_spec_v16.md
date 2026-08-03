@@ -222,6 +222,9 @@ gc_cap         = 1024   # GC hard cap (static array)
 prst_cap       = 64     # PrstPool initial capacity (dynamic, grows via realloc)
 prst_graph_cap = 256    # PrstGraph initial capacity (dynamic, max 65536)
 scope_cap      = 256    # resolver scope pool size (default 256, floor 256, max 65536)
+module_cap     = 32     # max imported live/static modules (default 32, 1..4096)
+str_concat_cap = 8388608 # max bytes one strings.concat may build (default 8 MiB, 4096..256 MiB)
+str_autogrow   = false  # if true, a concat over str_concat_cap grows instead of erroring
 ```
 
 *`prst_cap` and `prst_graph_cap` are initial caps, not ceilings. Structures grow automatically. Setting the correct initial cap improves allocation performance — it does not limit usage.*
@@ -235,6 +238,10 @@ scopes = (top-level functions) + (Blocks) + (Block methods)
 ```
 
 **Memory characteristics.** The pool is allocated once per resolver run and freed as soon as resolution completes — before the program executes — so its cost is transient, not part of steady-state footprint. The allocation is lazy: only the scopes actually used touch physical pages, so an unfilled `scope_cap` costs nothing in resident memory. The reservation is *virtual*, however: each scope slot is roughly 130 KB (`sizeof(SymTable)`, dominated by an inline symbol array), so `scope_cap = 1024` reserves ~130 MB of address space and `scope_cap = 65536` reserves ~8 GB. On an overcommit host the unused reservation is harmless; on a target without overcommit or a memory-constrained embedded build, an oversized `scope_cap` can make the pool allocation fail (handled by a graceful abort). Set `scope_cap` a margin above the real scope count, not to the maximum.
+
+**`module_cap`** bounds how many `import live` / `import static` modules `main.flx` may load. The default is 32. Because Fluxa targets small systems, the loader and the parser each allocate *exactly* `module_cap` slots — the module source list in the loader and the imported-namespace list in the parser — rather than reserving a large fixed array, so the memory cost tracks the actual limit set. Importing more modules than the cap aborts cleanly before execution with *"too many modules: the import limit is N (raise module_cap in [runtime])"*; nothing is partially loaded. Values are clamped to the range 1..4096. Only `live`/`static` module namespaces count against this; `std.*` libraries declared under `[libs]` do not.
+
+**`str_concat_cap`** bounds the size, in bytes, of the result a single `strings.concat` call may build. The default is 8 MiB, chosen to match common HTTP request-body limits (and this project's own 8 MiB server body limit) so that a base64-encoded file — the largest thing an ordinary program concatenates — fits comfortably. `strings.concat` allocates its result to fit (two passes: measure, then build), so there is no truncation; the cap is a **safety limit**, not a buffer size. A concat whose result would exceed the cap raises an error — *"str.concat: result N bytes exceeds str_concat_cap M"* — rather than performing a very large allocation driven by (possibly untrusted) input. Setting **`str_autogrow = true`** changes this: an over-cap concat then allocates anyway, for programs that legitimately build large strings and accept the cost. `str_concat_cap` is clamped to 4096..256 MiB; below 4096 would break ordinary string building. This makes the concat path bounded by default while remaining flexible when a program genuinely needs it.
 
 ---
 

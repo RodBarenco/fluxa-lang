@@ -21,7 +21,13 @@ typedef struct {
      * imported: namespaces registered from `import live/static X` in main.
      * imported_count: number of registered namespaces. */
     char  ns[64];
-    char  imported[32][64];
+    /* imported: dynamically allocated to hold up to g_module_cap namespaces
+     * (default 32). Fluxa targets small systems, so we size exactly to the cap
+     * rather than reserving a large fixed array. Each Parser allocates and frees
+     * its own; parser_parse_module copies the names (not the pointer) into a
+     * fresh Parser, so there is no sharing and no double-free. */
+    char (*imported)[64];
+    int   imported_cap;
     int   imported_count;
     /* Names declared at top-level in the current module parse pass.
      * Used to mangle references inside fn bodies. */
@@ -43,5 +49,9 @@ int      parser_parse_module(Parser *main_p, ASTNode *program,
                               const char *ns, const char *source);
 ASTNode *parser_parse(Parser *p);
 void     parser_free(Parser *p);
+
+/* Set the max number of importable modules (namespace slots). From
+ * [runtime] module_cap in fluxa.toml. Default 32. */
+void     parser_set_module_cap(int cap);
 
 #endif /* FLUXA_PARSER_H */

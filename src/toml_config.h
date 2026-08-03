@@ -118,6 +118,24 @@ typedef struct {
     int          json_max_str;    /* [libs.json] max_str_bytes, default 4096  */
     int          ffi_str_buf_size; /* [ffi] str_buf_size — writable char* buffer
                                    * allocated per pointer arg, default 1024   */
+    long         str_concat_cap;  /* [runtime] str_concat_cap — max bytes a
+                                   * single strings.concat result may reach.
+                                   * Default 8 MiB (matches common HTTP body
+                                   * limits, e.g. this project's 8 MiB server
+                                   * body). A concat over this errors unless
+                                   * str_autogrow is on. Guards against a huge
+                                   * allocation driven by untrusted input. */
+    int          str_autogrow;    /* [runtime] str_autogrow — if 1, a concat
+                                   * over str_concat_cap allocates anyway
+                                   * instead of erroring. Default 0 (safe:
+                                   * refuse rather than grow unbounded). */
+    int          module_cap;      /* [runtime] module_cap — max number of
+                                   * live/static modules main.flx may import.
+                                   * Default 32. Fluxa targets small systems
+                                   * (ESP32-class), so the loader allocates
+                                   * exactly this many slots — no fixed waste.
+                                   * Raise it only when a program genuinely
+                                   * needs more modules. */
     /* [libs.pg] — PostgreSQL client limits */
     int          pg_max_conns;    /* max simultaneous PGconn*,   default 16  */
     int          pg_max_results;  /* max simultaneous PGresult*, default 64  */
@@ -158,6 +176,9 @@ static inline void fluxa_config_defaults_fill(FluxaConfig *c) {
     c->scope_cap      = 256;   /* resolver scope pool; matches resolver default */
     c->warm_func_cap  = 32;
     c->json_max_str      = 4096;
+    c->str_concat_cap    = 8 * 1024 * 1024;   /* 8 MiB */
+    c->str_autogrow      = 0;                  /* refuse over-cap by default */
+    c->module_cap        = 32;                 /* max imported modules */
     c->ffi_str_buf_size  = 1024;
     c->ft_max_msg_args   = 2;
     strncpy(c->libdsp_backend, "native", sizeof(c->libdsp_backend)-1);
@@ -345,6 +366,29 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
 
         /* ── [runtime] keys ── */
         if (in_runtime) {
+            /* str_concat_cap is a long (can exceed INT_MAX conceptually) and
+             * str_autogrow is a 0/1 flag — handle both before the int path. */
+            if (strcmp(key, "str_concat_cap") == 0) {
+                char *ep = NULL;
+                long lv = strtol(val, &ep, 10);
+                /* Floor at 4096 (a concat cap below this would break ordinary
+                 * string building); ceiling at 256 MiB to keep allocation sane. */
+                if (ep && ep != val && lv >= 4096 && lv <= (long)256 * 1024 * 1024) {
+                    cfg.str_concat_cap = lv;
+                } else {
+                    fprintf(stderr, "[fluxa] toml: str_concat_cap %s out of range "
+                            "[4096..268435456], keeping default %ld\n",
+                            val, cfg.str_concat_cap);
+                }
+                continue;
+            }
+            if (strcmp(key, "str_autogrow") == 0) {
+                /* Accept 1/true/yes as on, anything else as off. */
+                cfg.str_autogrow = (strcmp(val, "1") == 0 || strcmp(val, "true") == 0
+                                    || strcmp(val, "yes") == 0) ? 1 : 0;
+                continue;
+            }
+
             /* Use strtol so arbitrarily large toml values don't invoke UB.
              * Clamp to INT_MAX before any int arithmetic. */
             char *endp = NULL;
@@ -379,6 +423,13 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 int p = 4;
                 while (p < v) p *= 2;
                 cfg.warm_func_cap = p;
+            } else if (strcmp(key, "module_cap") == 0) {
+                /* Number of importable modules. Floor at 1 (a program with
+                 * modules needs at least one); ceiling at 4096 to keep the
+                 * loader's allocation bounded. Default 32. */
+                if (v < 1)    v = 1;
+                if (v > 4096) v = 4096;
+                cfg.module_cap = v;
             }
             continue;
         }
