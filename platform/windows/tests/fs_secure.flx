@@ -1,0 +1,50 @@
+// std.fs directory confinement, exercised natively on Windows.
+//
+// fs.read_base64 keeps reads inside the working directory by canonicalizing
+// the path first. MinGW has no realpath(), so the Windows build resolves the
+// path through the Win32 final-name API instead. These cases cover what that
+// resolution has to get right: separators, on-disk casing, '..' collapsing,
+// and the escapes that must still be refused.
+
+import std fs
+import std image
+import std strings
+
+dyn img = image.new(2, 2)
+danger {
+    fs.mkdir("b64sub")
+    image.save(img, "b64sub/card.png")
+}
+image.discard(img)
+
+// 1. a real PNG in a subdirectory of the working dir reads back as base64
+danger {
+    str nested = fs.read_base64("b64sub/card.png", 262144, "png")
+    print(strings.starts_with(nested, "iVBOR"))
+}
+if err != nil { print("ERR-nested", err[0]) }
+
+// 2. '..' that lands back inside the working dir is allowed — the guard
+//    collapses the path, it does not just reject the characters
+danger {
+    str rejoin = fs.read_base64("b64sub/../b64sub/card.png", 262144, "png")
+    print(strings.starts_with(rejoin, "iVBOR"))
+}
+if err != nil { print("ERR-rejoin", err[0]) }
+
+// 3. '..' escaping to a file that really does exist outside → refused
+danger { str escaped = fs.read_base64("../README.md", 262144, "any") }
+if err != nil { print("blocked-traversal") }
+
+// 4. absolute path outside the working dir → refused
+danger { str outside = fs.read_base64("C:\\Windows\\win.ini", 262144, "any") }
+if err != nil { print("blocked-absolute") }
+
+// 5. wrong type for a file that is inside the working dir → still refused
+danger { str mismatch = fs.read_base64("language.flx", 262144, "png") }
+if err != nil { print("blocked-type") }
+
+danger {
+    fs.delete("b64sub/card.png")
+    fs.rmdir("b64sub")
+}

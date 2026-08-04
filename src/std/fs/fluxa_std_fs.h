@@ -49,6 +49,102 @@ static inline Value fs_str(const char *s) {
     Value v; v.type = VAL_STRING; v.as.string = fxstr_new(s ? s : ""); return v;
 }
 
+/* ── Canonical path resolution ───────────────────────────────────────
+ * fs.read_base64's directory confinement needs a canonical absolute path:
+ * '..' collapsed and every symlink followed, so nothing can name a target
+ * outside the working directory. POSIX gets both from realpath().
+ *
+ * MinGW has no realpath(), and _fullpath() is not a substitute: it collapses
+ * '..' only lexically, does not require the target to exist, and does not
+ * follow symlinks or NTFS junctions — a link planted inside the working
+ * directory would still resolve "inside" and defeat the guard. The Win32
+ * branch instead opens the target and asks the kernel for its final name,
+ * which resolves links and fails when the target is missing: the same two
+ * guarantees realpath() gives.
+ *
+ * The Win32 branch needs windows.h, which platform/windows/compat.h force
+ * includes for every Windows build; the guard covers a build that does not.
+ */
+#if defined(_WIN32)
+#  ifndef _WINDOWS_
+#    include <windows.h>
+#  endif
+/* MinGW defines PATH_MAX as 260. GetFinalPathNameByHandleA prepends the
+ * "\\?\" extended prefix and Windows paths legitimately run past 260 bytes,
+ * so the canonical buffers are sized independently of PATH_MAX — matching the
+ * 4096 that PATH_MAX already is on Linux. */
+#  define FS_PATH_CAP 4096
+#else
+#  define FS_PATH_CAP PATH_MAX
+#endif
+
+/* Resolve `path` to its canonical absolute form in `out` (capacity `out_sz`).
+ * Returns 1 on success, 0 when the path cannot be resolved or does not fit —
+ * callers treat 0 as "deny", never as "allow". */
+static inline int fs_real_path(const char *path, char *out, size_t out_sz) {
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path, 0,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    char buf[FS_PATH_CAP];
+    DWORD n = GetFinalPathNameByHandleA(h, buf, (DWORD)sizeof(buf),
+                                        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    CloseHandle(h);
+    if (n == 0 || n >= (DWORD)sizeof(buf)) return 0;
+    /* Drop the extended prefix so the result is an ordinary path that stat()
+     * and fopen() accept:
+     *   "\\?\C:\dir\f"       → "C:\dir\f"
+     *   "\\?\UNC\srv\shr\f"  → "\\srv\shr\f"                                */
+    const char *p = buf;
+    if (!strncmp(p, "\\\\?\\UNC\\", 8)) {
+        p += 8;
+        if (strlen(p) + 2 >= out_sz) return 0;
+        out[0] = '\\'; out[1] = '\\';
+        strcpy(out + 2, p);
+        return 1;
+    }
+    if (!strncmp(p, "\\\\?\\", 4)) p += 4;
+    if (strlen(p) >= out_sz) return 0;
+    strcpy(out, p);
+    return 1;
+#else
+    char buf[FS_PATH_CAP];
+    if (!realpath(path, buf)) return 0;
+    if (strlen(buf) >= out_sz) return 0;
+    strcpy(out, buf);
+    return 1;
+#endif
+}
+
+/* Path separator test — Windows accepts both forms. */
+static inline int fs_path_is_sep(char c) {
+#if defined(_WIN32)
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
+/* Prefix compare over canonical paths. Windows filesystems are
+ * case-insensitive, so comparing case-sensitively there would reject valid
+ * paths. The fold is hand-rolled to match fs_has_ext and to avoid a CRT
+ * extension that -std=c99 can hide. Returns 0 when equal. */
+static inline int fs_path_ncmp(const char *a, const char *b, size_t n) {
+#if defined(_WIN32)
+    for (size_t i = 0; i < n; i++) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return 1;
+        if (!x) return 0;      /* both strings ended here */
+    }
+    return 0;
+#else
+    return strncmp(a, b, n);
+#endif
+}
+
 /* Compare `len` bytes of `want` against `sig` at byte offset `off`. */
 static inline int fs_sig_match(const unsigned char *sig, size_t sig_len,
                                size_t off, const unsigned char *want, size_t len) {
@@ -371,8 +467,9 @@ static inline Value fluxa_std_fs_call(const char *fn_name,
      *
      * Because the result can be uploaded, an unrestricted read here would be an
      * exfiltration primitive (read a key file, send it out). So it is locked down:
-     *   1) the path must resolve (realpath) INSIDE the process's working dir — no
-     *      '..' escape, no absolute path out, no symlink pointing outside;
+     *   1) the path must canonically resolve (fs_real_path) INSIDE the process's
+     *      working dir — no '..' escape, no absolute path out, no symlink or
+     *      NTFS junction pointing outside;
      *   2) it must be a regular file (not a dir, device, or pipe);
      *   3) it must match `type` — both the extension and the file's magic bytes
      *      (see fs_type_ok). This is what stops a path aimed at a sensitive file
@@ -392,17 +489,25 @@ static inline Value fluxa_std_fs_call(const char *fn_name,
         GET_STR(2, type);
 
         /* 1) Resolve the real, absolute path and the working directory, then
-         *    require the file to live inside the working dir. realpath collapses
-         *    '..' and follows symlinks, so this catches escape attempts. */
-        char real_path[PATH_MAX];
-        char real_cwd[PATH_MAX];
-        if (!realpath(path, real_path)) FS_ERR("read_base64: file not found or unreadable");
-        if (!getcwd(real_cwd, sizeof(real_cwd))) FS_ERR("read_base64: cannot resolve working directory");
+         *    require the file to live inside the working dir. fs_real_path
+         *    collapses '..' and follows symlinks, so this catches escape
+         *    attempts. Resolving "." through the same call keeps both sides in
+         *    one canonical form — on Windows that means matching separators and
+         *    matching on-disk casing. */
+        char real_path[FS_PATH_CAP];
+        char real_cwd[FS_PATH_CAP];
+        if (!fs_real_path(path, real_path, sizeof(real_path)))
+            FS_ERR("read_base64: file not found or unreadable");
+        if (!fs_real_path(".", real_cwd, sizeof(real_cwd)))
+            FS_ERR("read_base64: cannot resolve working directory");
         size_t cwd_len = strlen(real_cwd);
-        /* The real path must start with the working dir followed by a separator
-         * (so '/work' does not match '/workother'). */
-        if (strncmp(real_path, real_cwd, cwd_len) != 0 ||
-            (real_path[cwd_len] != '/' && real_path[cwd_len] != '\0')) {
+        /* Drop a trailing separator so a working dir that is a filesystem root
+         * ("/" or "C:\") does not reject every path beneath it. */
+        while (cwd_len > 0 && fs_path_is_sep(real_cwd[cwd_len - 1])) cwd_len--;
+        /* The real path must be the working dir followed by a separator (so
+         * '/work' does not match '/workother'), or the working dir itself. */
+        if (fs_path_ncmp(real_path, real_cwd, cwd_len) != 0 ||
+            (real_path[cwd_len] != '\0' && !fs_path_is_sep(real_path[cwd_len]))) {
             FS_ERR("read_base64: path is outside the allowed directory");
         }
 

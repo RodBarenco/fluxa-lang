@@ -81,6 +81,15 @@ Invoke-FluxaCase `
         'miniaudio/0.11.25', '2', '2'
     )
 
+Invoke-FluxaCase `
+    -Name 'stdlib/fs-confinement' `
+    -WorkingDirectory $tests `
+    -File 'fs_secure.flx' `
+    -Expected @(
+        'true', 'true',
+        'blocked-traversal', 'blocked-absolute', 'blocked-type'
+    )
+
 if ($env:FLUXA_WINDOWS_NETWORK_TESTS -eq '1') {
     Invoke-FluxaCase `
         -Name 'stdlib/network' `
