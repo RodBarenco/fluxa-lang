@@ -1207,7 +1207,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 
 | Function | Returns | Description |
 |---|---|---|
-| `graph.init(w, h, title)` | `dyn` | Open window |
+| `graph.init(w, h, title)` | `dyn` | Open window. **Needs `danger`** on the raylib backend — with no usable OpenGL driver it raises a catchable error rather than opening a broken window (Windows: see [WINDOWS.md](WINDOWS.md#virtual-machines-and-mesa3d)). |
 | `graph.close(win)` | `nil` | Close window |
 | `graph.should_close(win)` | `bool` | Window close requested |
 | `graph.begin_frame(win)` | `nil` | Begin draw frame |

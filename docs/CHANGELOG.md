@@ -1,5 +1,60 @@
 # Fluxa-lang Changelog
 
+## v0.27.3 — `graph.init` fails cleanly instead of crashing with no GL driver
+
+On a Windows machine with no usable OpenGL driver — the exact case
+`docs/WINDOWS.md`'s Mesa3D section exists for — `graph.init` did not error.
+It crashed the process (access violation, exit `-1073741819` /
+`0xC0000005`), bypassing `danger` entirely, later in the script.
+
+**Root cause.** `InitWindow()` fails by design without aborting: on a
+failed platform init it logs a `WARNING` and returns, leaving
+`IsWindowReady() == false`. `graph_new_win()` never checked that, so it
+kept going — installing the GPU-free hook, calling `LoadRenderTexture()`
+— and handed back what looked like a valid window. Everything downstream
+runs on an `rlgl` state that was never allocated: draw calls quietly
+warn-and-no-op (confirmed with a minimal repro under `gdb`), but
+`CloseWindow()` does not — it crashes in
+`rlglClose() -> rlUnloadRenderBatch()`, dereferencing a render batch that
+`rlglInit()` never got to build. Because the working directory is where
+the game runs it, and this is precisely the failure mode a VM without
+Guest Additions or 3D acceleration hits, this was reachable by exactly
+the audience `docs/WINDOWS.md` already tells to expect it — they just
+crashed instead of seeing the documented Mesa3D fallback pointer.
+
+**Fix.** `graph_new_win()` (raylib backend) now checks `IsWindowReady()`
+immediately after `InitWindow()` and returns `NULL` on failure, before
+installing the GPU hook or calling `LoadRenderTexture()` — and, critically,
+without ever calling `CloseWindow()` on it, since that call is what
+crashes. `graph.init`'s dispatch checks for that `NULL` and raises a
+catchable error pointing at the Mesa3D fallback instead of wrapping and
+returning an unusable window. The stub backend (no Raylib) is unaffected;
+`graph_new_win()` there always succeeds by design.
+
+**Validation.** New `platform/windows/tests/graph_init_safety.flx`
+(`stdlib/graph-init-safety` in `run.ps1`) opens and immediately closes a
+window inside `danger` and prints unconditionally afterward — on a host
+with no GL driver that exercises the fixed error path, on a host with one
+it exercises the ordinary success path, and either way a crash still
+shows up as the harness's PASS/FAIL check already catches: a non-zero
+exit code. `run.ps1`'s log filter grew to drop `WARNING:` lines alongside
+the existing `INFO`/`DEBUG`/`TRACE` ones — raylib logs `WARNING` for the
+exact failure this test deliberately triggers, and that is diagnostic
+noise, not part of the test's output contract.
+
+Manually confirmed on this GPU-less host both ways: without Mesa,
+`graph.init` now returns `graph.init: no usable OpenGL driver — see the
+Mesa3D fallback in docs/WINDOWS.md` inside `err[0]` and the script runs to
+completion (exit 0, previously exit `-1073741819`); with the Mesa3D
+fallback from v0.27's validation still in place, the full open → 5 frames
+→ capture → PNG export → close sequence is byte-identical to before this
+change (320×240, 3638-byte PNG). `make windows-test` is 6/6
+(`standalone/system-dlls-only`, `language/core`, `stdlib/essential`,
+`stdlib/fs-confinement`, `stdlib/graph-init-safety`, `stdlib/network`),
+zero warnings from Fluxa sources on both the shared and static Windows
+profiles.
+
+
 ## v0.27.2 — Windows HTTPS verifies against the machine's own trust store
 
 Every HTTPS request from the standalone Windows runtime failed:

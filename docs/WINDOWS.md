@@ -227,6 +227,8 @@ The target builds the public standalone runtime and verifies:
 - `fs.read_base64` directory confinement — a nested read and a `..` that
   rejoins the working directory both succeed, while a `..` escape, an absolute
   path outside, and a type mismatch are all refused;
+- `graph.init` never crashes the process, with or without a usable OpenGL
+  driver — it either opens a window or raises a catchable error;
 - real SQLite create/insert/query operations;
 - real libsodium hashing;
 - Raylib, image codec, and miniaudio backends;
@@ -253,6 +255,16 @@ are:
 ```text
 GLAD: Cannot load OpenGL extensions
 WGL: The driver does not appear to support OpenGL
+```
+
+`graph.init` catches this and returns a normal Fluxa error —
+`init: no usable OpenGL driver — see the Mesa3D fallback in docs/WINDOWS.md`
+— instead of leaving a half-initialized window behind. Handle it like any
+other `danger` failure:
+
+```fluxa
+danger { dyn win = graph.init(800, 600, "game") }
+if err != nil { print(err[0]) }   // → the message above, on a driver-less host
 ```
 
 Install the matching VirtualBox Guest Additions and use the `VBoxSVGA`
