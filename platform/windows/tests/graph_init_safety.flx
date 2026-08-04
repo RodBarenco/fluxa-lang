@@ -1,0 +1,13 @@
+// graph.init must never crash the process, whether or not this machine has a
+// usable OpenGL driver. Without one, InitWindow() fails silently (raylib logs
+// a WARNING and returns rather than aborting) — graph.init must turn that into
+// a catchable error instead of returning a window that later crashes the
+// process in graph.close(). Both outcomes below are correct; what this test
+// actually checks is the process exit code, via run.ps1's PASS/FAIL harness.
+import std graph
+
+danger {
+    dyn win = graph.init(64, 64, "graph-init-safety")
+    graph.close(win)
+}
+print("safe")

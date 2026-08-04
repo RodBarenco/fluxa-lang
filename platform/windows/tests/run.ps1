@@ -23,7 +23,11 @@ function Invoke-FluxaCase {
         $lines = @(
             & $runtime run $File 2>&1 |
                 ForEach-Object { "$_".TrimEnd() } |
-                Where-Object { $_ -notmatch '^(INFO|DEBUG|TRACE): ' }
+                # Raylib's own log lines, not test assertions. WARNING is included
+                # because graph-init-safety deliberately runs on hosts with no GL
+                # driver, where raylib logs WARNING lines for the exact condition
+                # being tested rather than failing silently.
+                Where-Object { $_ -notmatch '^(INFO|DEBUG|TRACE|WARNING): ' }
         )
         $code = $LASTEXITCODE
     } finally {
@@ -89,6 +93,12 @@ Invoke-FluxaCase `
         'true', 'true',
         'blocked-traversal', 'blocked-absolute', 'blocked-type'
     )
+
+Invoke-FluxaCase `
+    -Name 'stdlib/graph-init-safety' `
+    -WorkingDirectory $tests `
+    -File 'graph_init_safety.flx' `
+    -Expected @('safe')
 
 if ($env:FLUXA_WINDOWS_NETWORK_TESTS -eq '1') {
     Invoke-FluxaCase `

@@ -147,10 +147,21 @@ typedef struct {
     int has_target;          /* 1 once the render texture is created */
 } GraphWin;
 
+/* Returns NULL when no usable OpenGL driver was found. InitWindow() fails
+ * silently by design (it logs a WARNING and returns) rather than aborting, so
+ * without this check the caller would keep going with no GL context at all:
+ * every draw call would quietly no-op or warn, and CloseWindow() would
+ * eventually segfault in rlglClose() -> rlUnloadRenderBatch(), which
+ * dereferences a render batch that rlglInit() never got to allocate. Caught
+ * here instead: the caller gets a clean NULL and never touches raylib again
+ * for this window, including never calling CloseWindow() on it — that call is
+ * exactly what crashes, so a failed window must never reach it. */
 static GraphWin *graph_new_win(int w, int h, const char *title) {
+    InitWindow(w, h, title);
+    if (!IsWindowReady()) return NULL;
+
     GraphWin *win = (GraphWin *)calloc(1, sizeof(GraphWin));
     win->width = w; win->height = h; win->fps_target = 60;
-    InitWindow(w, h, title);
     graph_install_gpu_hook();   /* so image buffers can free their cached textures */
     SetExitKey(KEY_NULL);   /* ESC must reach the program (quit-confirm UIs),
                              * not silently close the window (raylib default) */
@@ -399,6 +410,9 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     if (!strcmp(fn_name,"init")) {
         NEED(3); GET_INT(0,w); GET_INT(1,h); GET_STR(2,title);
         GraphWin *win = graph_new_win((int)w, (int)h, title);
+        if (!win)
+            GRAPH_ERR("init: no usable OpenGL driver — see the Mesa3D fallback "
+                      "in docs/WINDOWS.md");
         return graph_wrap(win);
     }
 
