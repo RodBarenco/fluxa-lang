@@ -179,8 +179,8 @@ WINDOWS_CURL_CFLAGS = -I$(WINDOWS_CURL_PREFIX)/include
 WINDOWS_CURL_PC_LIBS := $(shell PKG_CONFIG_LIBDIR="$(WINDOWS_CURL_PREFIX)/lib/pkgconfig" \
                          PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --libs libcurl 2>/dev/null)
 WINDOWS_CURL_STATIC_LDFLAGS := $(shell PKG_CONFIG_LIBDIR="$(WINDOWS_CURL_PREFIX)/lib/pkgconfig" \
-                         PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --static --libs libcurl 2>/dev/null)
-WINDOWS_CURL_LDFLAGS ?= $(if $(WINDOWS_CURL_PC_LIBS),$(WINDOWS_CURL_PC_LIBS),\
+                         PKG_CONFIG_PATH= $(WINDOWS_PKG_CONFIG) --static --libs libcurl 2>/dev/null) -lcrypt32
+WINDOWS_CURL_LDFLAGS ?= $(if $(WINDOWS_CURL_PC_LIBS),$(WINDOWS_CURL_PC_LIBS) -lcrypt32,\
                          -L$(WINDOWS_CURL_PREFIX)/lib -lcurl -lws2_32 -lcrypt32)
 WINDOWS_RAYLIB_CFLAGS = -I$(WINDOWS_RAYLIB_PREFIX)/include
 WINDOWS_RAYLIB_LDFLAGS = -L$(WINDOWS_RAYLIB_PREFIX)/lib -lraylib \

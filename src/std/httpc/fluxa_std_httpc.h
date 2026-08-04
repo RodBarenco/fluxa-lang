@@ -23,6 +23,7 @@
 #include <curl/curl.h>
 #include "../../scope.h"
 #include "../../err.h"
+#include "../fluxa_win_ca.h"   /* no-op off Windows */
 
 /* ── Response buffer ─────────────────────────────────────────────── */
 typedef struct {
@@ -101,13 +102,8 @@ static inline Value http_do_request(const char *url, HttpMethod method,
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "fluxa-httpc/1.0");
-#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
-    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
-    {
-        const char *ca_bundle = getenv("CURL_CA_BUNDLE");
-        if (ca_bundle && ca_bundle[0])
-            curl_easy_setopt(curl, CURLOPT_CAINFO, ca_bundle);
-    }
+#if defined(_WIN32)
+    fluxa_win_ca_apply(curl);
 #endif
 
     if (method == HTTP_POST || method == HTTP_PUT) {
