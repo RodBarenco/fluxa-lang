@@ -49,6 +49,30 @@ std.https   = "1.0"
 It also retains the pure-C libraries from the Windows minimal profile:
 `std.math`, `std.csv`, `std.json`, `std.pid`, and `std.libdsp`.
 
+## Filesystem path resolution
+
+`fs.read_base64` confines reads to the working directory, and that decision is
+only sound against a canonical absolute path: `..` collapsed and every link
+followed. POSIX gets both from `realpath()`, which MinGW does not provide.
+
+`_fullpath()` is not a drop-in replacement. It collapses `..` lexically, does
+not require the target to exist, and follows neither symlinks nor NTFS
+junctions — so a junction planted inside the working directory would still
+resolve "inside" and defeat the guard. The Windows build instead opens the
+target and asks the kernel for its final name
+(`CreateFileA` + `GetFinalPathNameByHandleA` with `FILE_NAME_NORMALIZED`),
+which resolves links and fails when the target is missing: the same two
+guarantees `realpath()` provides. The `\\?\` extended prefix is stripped from
+the result so ordinary `stat()` and `fopen()` still accept it.
+
+Two Windows-specific comparison rules follow from that. Path matching is
+case-insensitive, because the filesystem is; and either separator is accepted.
+The working directory is canonicalized through the same call, so both sides of
+the comparison always share one form.
+
+This applies to every Windows profile that enables `std.fs`. The
+`stdlib/fs-confinement` case in `make windows-test` covers it.
+
 ## Build environment
 
 Use an **MSYS2 MinGW64 shell**, not the MSYS shell, Command Prompt, or a plain
@@ -200,19 +224,21 @@ The target builds the public standalone runtime and verifies:
 - core functions, arrays, loops, Blocks, and `danger`;
 - `std.strings` and `std.json2`;
 - real Windows filesystem operations;
+- `fs.read_base64` directory confinement — a nested read and a `..` that
+  rejoins the working directory both succeed, while a `..` escape, an absolute
+  path outside, and a type mismatch are all refused;
 - real SQLite create/insert/query operations;
 - real libsodium hashing;
 - Raylib, image codec, and miniaudio backends;
 - PNG encode and decode.
 
-Network tests are opt-in because they require external connectivity:
+Network tests are opt-in because they require external connectivity, not
+because they need extra setup — they cover plain HTTP and a verified HTTPS
+request and pass against the machine's own trust store:
 
 ```sh
 FLUXA_WINDOWS_NETWORK_TESTS=1 make windows-test
 ```
-
-On Windows, curl is configured to request the native CA store. A custom PEM
-bundle can be selected with `CURL_CA_BUNDLE`.
 
 The test fixtures and native PowerShell runner are under
 `platform/windows/tests/`.
@@ -285,12 +311,33 @@ these companion files when producing a VM-compatible application bundle.
 
 ## HTTPS trust
 
-`std.https` always verifies the peer certificate and hostname. The Windows
-build enables libcurl's native-CA option. Environments using a private proxy or
-private certificate authority can set:
+`std.https` always verifies the peer certificate and hostname, and `std.httpc`
+does the same whenever it is handed an `https://` URL.
+
+Trust anchors come from the machine the executable runs on. The runtime reads
+the Windows **ROOT** certificate store through `crypt32` and passes it to
+libcurl as an in-memory CA bundle, so no `.pem` file travels beside the
+executable and nothing goes stale.
+
+That is necessary because the standalone runtime links MSYS2's libcurl, which
+is built against OpenSSL with its bundle path compiled in as
+`/mingw64/etc/ssl/certs/ca-bundle.crt`. On a machine that only runs the
+distributed executable, that path does not exist. `CURLSSLOPT_NATIVE_CA` does
+not cover the gap either: `curl_easy_setopt` accepts it and returns `CURLE_OK`,
+but the OpenSSL backend acts on it only when curl was built with native-CA
+support, which MSYS2's is not. The runtime still sets the option, because a
+Schannel-backed libcurl honours it — and there the Windows store is consulted
+directly, including its automatic root updates, so the runtime leaves that
+backend alone rather than overriding it with a snapshot.
+
+Environments using a private proxy or private certificate authority can
+override the store with an explicit bundle, which takes precedence:
 
 ```powershell
 $env:CURL_CA_BUNDLE = "C:\path\to\organization-ca-bundle.pem"
 ```
+
+An override that cannot be read fails the request rather than falling back —
+an explicit trust decision is never silently replaced by a different one.
 
 Disabling TLS verification is not supported.

@@ -1499,6 +1499,17 @@ std.fs = "1.0"
 | `fs.ext(path)` | `str` | Extension including dot |
 | `fs.tempfile()` | `str` | Create and return path to temp file |
 
+**Directory confinement across platforms.** `fs.read_base64` decides "inside the
+working directory" from a canonical absolute path — `..` collapsed and every link
+followed — so the check cannot be fooled by a path that merely looks contained.
+POSIX gets that from `realpath()`. MinGW has no `realpath()`, and `_fullpath()`
+is not a substitute (it collapses `..` only lexically and follows neither
+symlinks nor NTFS junctions), so the Windows build asks the kernel for the file's
+final name instead. Both paths therefore refuse the same escapes; on Windows the
+comparison is additionally case-insensitive and accepts either separator, matching
+how the filesystem behaves. See
+[WINDOWS.md](WINDOWS.md#filesystem-path-resolution).
+
 ---
 
 ## std.libv — Vectors, Matrices, Tensors

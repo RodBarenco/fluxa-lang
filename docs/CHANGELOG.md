@@ -1,5 +1,147 @@
 # Fluxa-lang Changelog
 
+## v0.27.2 — Windows HTTPS verifies against the machine's own trust store
+
+Every HTTPS request from the standalone Windows runtime failed:
+
+```text
+https: SSL peer certificate or SSH remote key was not OK
+```
+
+Plain HTTP was fine, so this was a trust problem, not a transport one.
+
+**Root cause.** The runtime links MSYS2's libcurl (8.21.0, OpenSSL 3.6.3),
+whose CA bundle path is compiled in as `/mingw64/etc/ssl/certs/ca-bundle.crt`.
+That is a build-host path. On any machine that merely runs the distributed
+executable it does not resolve, so libcurl had no anchors at all and every
+verification failed. `curl_version_info()` reports the baked-in value directly,
+which is how it was pinned down.
+
+`CURLSSLOPT_NATIVE_CA` — which `std.httpc` and `std.https` already set, and
+which `docs/WINDOWS.md` described as the mechanism — does not cover it. The
+option is defined, and `curl_easy_setopt` returns `CURLE_OK`, but the OpenSSL
+backend acts on it only when curl was built with native-CA support; MSYS2's is
+not. It was silently ignored, which is exactly why the failure read like a code
+bug rather than a build one. The `CURL_CA_BUNDLE` escape hatch did work, but a
+runtime that needs an environment variable set before it can make an HTTPS
+request is not a standalone runtime.
+
+**Implementation.** New `src/std/fluxa_win_ca.h`, included by
+`std.httpc` and `std.https` and compiled to nothing off Windows.
+`fluxa_win_ca_apply()` resolves trust in a fixed order:
+
+1. `CURL_CA_BUNDLE`, when set — the documented operator override for private
+   CAs and corporate proxies. It wins outright, and an override that cannot be
+   read now fails the request instead of quietly falling back to a different
+   trust source.
+2. Schannel-backed libcurl — left to `CURLSSLOPT_NATIVE_CA`, which is genuinely
+   native there. The backend is detected from `curl_version_info()->ssl_version`
+   rather than assumed, because overriding Schannel with a static snapshot would
+   lose Windows' automatic root updates.
+3. Everything else — the Windows **ROOT** store, enumerated through
+   `CertOpenSystemStoreA`/`CertEnumCertificatesInStore`, each certificate
+   converted with `CryptBinaryToStringA(CRYPT_STRING_BASE64HEADER)`, and the
+   concatenation handed to curl as `CURLOPT_CAINFO_BLOB`. The bundle is built
+   once per process and lent to curl with `CURL_BLOB_NOCOPY`, so a ~40 KB copy
+   is not made per request.
+
+Nothing is shipped beside the executable and no vendored `cacert.pem` can go
+stale — the anchors are the ones the machine itself already trusts. Verification
+is never disabled; when no anchors can be found the handle is left untouched and
+the request fails closed. `crypt32` was already on the standalone gate's allowed
+system-DLL list, so linking it (`-lcrypt32`, added to both the shared and static
+Windows curl link flags) keeps `standalone/system-dlls-only` green.
+
+**Validation.** `FLUXA_WINDOWS_NETWORK_TESTS=1 make windows-test` is 5/5 with
+`stdlib/network` passing and no `CURL_CA_BUNDLE` set — previously it was the one
+failing case. Precedence was checked both ways: a valid `CURL_CA_BUNDLE` still
+succeeds, and a bogus one fails with `Problem with the SSL CA cert` rather than
+silently falling through to the store. `objdump -p` shows system DLLs only, now
+including `CRYPT32.dll`. Both `build-windows-essential` (shared) and
+`build-windows-essential-static` build with zero warnings from Fluxa sources.
+
+`std.mcpc` and `std.mcps` use libcurl the same way and have the same latent
+issue, but are not built in any Windows profile today; the header notes where to
+call `fluxa_win_ca_apply()` when they are, rather than shipping a path that
+cannot be tested here.
+
+
+## v0.27.1 — `std.fs` builds on Windows again; `read_base64` confinement made native
+
+`fs.read_base64` (added in v0.27) called `realpath()` and `getcwd()` directly.
+MinGW provides `getcwd()` but not `realpath()`, so every Windows profile that
+enables `std.fs` stopped compiling:
+
+```text
+src/std/fs/fluxa_std_fs.h:399:14: error: implicit declaration of
+function 'realpath' [-Wimplicit-function-declaration]
+```
+
+That is every Windows target except the minimal one — `build-windows-fs`,
+`build-windows-essential`, `build-windows-essential-static`,
+`build-windows-packaged`, and therefore `windows-test` as well. The Windows
+runtime had been green at v0.26; the regression arrived with the feature and
+was never Windows-only in intent, so the fix restores the platform rather than
+carving out an exception.
+
+**Why not `_fullpath`.** The obvious bridge — `#define realpath(a,b)
+_fullpath((b),(a),PATH_MAX)` — compiles but quietly weakens the guard it
+implements. `read_base64` is an exfiltration-sensitive primitive: its first
+check is that the path canonically resolves *inside* the working directory, and
+that is only meaningful if `..` is collapsed **and** links are followed.
+`_fullpath()` collapses `..` lexically, does not require the target to exist,
+and resolves neither symlinks nor NTFS junctions — so a junction planted in the
+working directory would still resolve "inside" and read whatever it points at.
+
+**Implementation.** `fluxa_std_fs.h` gains three `static inline` helpers used
+only by `read_base64`. `fs_real_path()` is `realpath()` on POSIX; on Win32 it
+opens the target with `CreateFileA` (`FILE_FLAG_BACKUP_SEMANTICS`, so
+directories work) and reads back `GetFinalPathNameByHandleA` with
+`FILE_NAME_NORMALIZED | VOLUME_NAME_DOS` — the kernel resolves links and the
+open fails when the target is missing, matching `realpath()`'s two guarantees.
+The returned `\\?\` extended prefix is stripped (`\\?\UNC\srv\shr` → `\\srv\shr`)
+so the existing `stat()`/`fopen()` calls take it unchanged. `fs_path_is_sep()`
+accepts `\` as well as `/` on Windows, and `fs_path_ncmp()` folds case there
+because the filesystem does — the fold is hand-rolled to match the existing
+`fs_has_ext()` rather than reach for `_strnicmp`, which `-std=c99` can hide.
+The working directory now goes through `fs_real_path(".")` instead of
+`getcwd()`, so both sides of the prefix comparison are produced by one function
+and always share separator style and casing; on POSIX the two are equivalent.
+Buffers move from `PATH_MAX` to `FS_PATH_CAP`, which is `PATH_MAX` on POSIX and
+4096 on Windows — MinGW's `PATH_MAX` is 260, too small once the `\\?\` prefix
+is added. A resolution that fails or does not fit returns 0, which callers
+treat as deny, never as allow. Trailing separators are trimmed off the working
+directory before comparing, which also fixes a latent POSIX bug: with the
+process at `/`, `cwd_len` was 1 and the old `real_path[cwd_len] != '/'` test
+rejected every path beneath it.
+
+Behavior on POSIX is otherwise unchanged: same `realpath()`, same `strncmp()`,
+same separator, same buffer size.
+
+**Validation.** New `platform/windows/tests/fs_secure.flx`, wired into
+`platform/windows/tests/run.ps1` as `stdlib/fs-confinement`, runs natively on
+Windows: a PNG in a subdirectory reads back as base64, a `..` that rejoins the
+working directory is still allowed (proving the path is collapsed rather than
+the characters rejected), while a `..` escape to a file that really exists
+outside, an absolute path outside, and a type mismatch inside the directory are
+all refused. `make windows-test` is 4/4 (`standalone/system-dlls-only`,
+`language/core`, `stdlib/essential`, `stdlib/fs-confinement`) on the
+`build-windows-essential-static` runtime, zero warnings from Fluxa sources.
+`runtime info` reports `Target: windows-x64`, `Packaged: false`.
+
+The POSIX branch was checked on the same Windows host through MSYS2's
+Cygwin-style environment, where `_WIN32` is undefined and the POSIX branch is
+what compiles: the full Unix target builds clean, and `tests/libs/fs.sh` was run
+against binaries built with and without this change, giving identical results
+(9 passed, 24 failed — the failures are pre-existing on that environment and
+present in the unmodified baseline too, so they are a property of the host, not
+of this change). A fully green POSIX run still belongs on a Linux host and was
+not performed here. Benchmarks are unaffected by
+construction: the entire diff sits inside `read_base64` and three helpers only
+it calls, and `src/bytecode.c` — the bytecode VM the benches measure — does not
+include the `std.fs` header at all.
+
+
 ## v0.27 — configurable AST pool caps (`ast_pool_cap`, `ast_str_pool_cap`) + overflow log fix
 
 The AST arena (`ASTPool` in `pool.h` — nodes + interned strings) was a
