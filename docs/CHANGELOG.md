@@ -1,5 +1,73 @@
 # Fluxa-lang Changelog
 
+## v0.27 — configurable AST pool caps (`ast_pool_cap`, `ast_str_pool_cap`) + overflow log fix
+
+The AST arena (`ASTPool` in `pool.h` — nodes + interned strings) was a
+hard-coded `nodes[4096]` / `str_buf[65536]` pair. Once exceeded, every
+individual overflow allocation printed an unconditional `fprintf(stderr,
+...)` line; a real game workload that overflowed by ~95x produced 384,345
+node-overflow + 208,144 string-overflow lines — 592,489 total — making the
+log unreadable. Overflow itself never crashed (silent per-item
+malloc/strdup fallback, tracked and freed by the pool) — only the logging
+was the bug.
+
+Both capacities are now configurable via `[runtime]` in `fluxa.toml`, and
+the overflow log is capped at one line per pool per overflow-kind per pool
+lifetime (once for the first node overflow, once for the first string
+overflow — each pool is re-init'd on every parse/hot-reload cycle):
+
+```toml
+[runtime]
+ast_pool_cap     = 4096   # AST node arena, default 4096 (range 4096..1048576)
+ast_str_pool_cap = 65536  # AST string arena bytes, default 65536 (range 65536..16777216)
+```
+
+**Implementation.** `pool.h`'s `ASTPool` now carries both a fixed
+`default_nodes[4096]`/`default_str_buf[65536]` pair *and* `nodes`/`str_buf`
+pointers. At `pool_init()`, if the configured cap equals the compiled-in
+default, `nodes`/`str_buf` point at the embedded arrays — no allocation, no
+behavior change from before this option existed. Only a *non-default*
+`ast_pool_cap`/`ast_str_pool_cap` triggers a `malloc()` sized to the
+configured cap (freed in `pool_free()`); a first pass that always
+heap-allocated measured ~5-8% slower on `bench_ast.flx` (the pure
+AST-walker path, pre-warm-path function calls) because it lost the
+static-array locality the interpreter's tight pointer-chasing depends on —
+the embedded-array fast path was added specifically to close that gap and
+was re-verified against the bytecode-VM benches too. `malloc()` failure
+(relevant on embedded targets with a large configured cap) degrades that
+cap to 0 rather than aborting, routing every allocation through the
+existing overflow fallback — never crashes; covered by the existing
+`sim/{RP2040,ESP32}/oom_no_crash` hardware-simulation tests. The single
+`overflowed` flag becomes two (`overflowed_nodes`/`overflowed_str`), each
+gating its `fprintf` to fire once per pool life. `toml_config.h` adds
+`ast_pool_cap` (floor 4096, ceiling 1,048,576) and `ast_str_pool_cap`
+(floor 65536, ceiling 16,777,216) — both 256x the default, mirroring
+`scope_cap`'s ceiling ratio — with a warn-on-clamp message (matches
+`gc_cap`/`str_concat_cap`'s style). `main.c` calls both setters at the same
+4 sites that already call `resolver_set_scope_cap`/`parser_set_module_cap`
+(`run_once`, `dev_exec_thread`, the `FLUXA_SECURE` block in `run_prod`, and
+`run_handover`). Behavior is identical to before when unset (4096
+nodes/65536 bytes, same overflow fallback, same performance).
+
+**Validation.** New `tests/sprint14_ast_pool.sh` (9 cases): a >4096-node
+program still runs correctly against the default cap and logs exactly one
+node-overflow line (not thousands); a >65536-byte-string program logs
+exactly one string-overflow line; raising either cap above the program's
+actual usage eliminates the overflow log entirely; values below the
+default floor are clamped back up and small programs still run. Full
+regression suite green: `make test-runner` 85/85 (was 84/84 before this
+sprint's test), `make test-suite2` 8/8, all 30 `tests/libs/*.sh` scripts
+individually, `make test-all` end-to-end including the real
+Docker+PostgreSQL integration suite (15/15) and Atomic Handover scenarios
+(3/3). Zero-warning build across the default, `HUGEPAGES_CFLAGS`,
+`build-secure`, `build-sim-rp2040`, and `build-sim-esp32` variants.
+Benchmarked against the pre-change binary: `bench.flx`/`bench_block.flx`/
+`bench_field.flx` (bytecode VM path — what real programs run) show no
+measurable difference; `bench_ast.flx` (AST-walker path), after the
+embedded-array fast path fix, is within run-to-run noise of baseline
+(~2.1-2.5s both, interleaved measurement).
+
+
 ## v0.26 — configurable str_concat_cap and module_cap
 
 Two more fixed limits are now configurable via `[runtime]` in `fluxa.toml`,

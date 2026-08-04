@@ -229,6 +229,8 @@ static int run_once(const char *path, int explain) {
     FluxaConfig cfg = fluxa_config_find_and_load();
     resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
     parser_set_module_cap(cfg.module_cap);   /* [runtime] module_cap */
+    pool_set_node_cap(cfg.ast_pool_cap);     /* [runtime] ast_pool_cap */
+    pool_set_str_cap(cfg.ast_str_pool_cap);  /* [runtime] ast_str_pool_cap */
     ASTNode *program = parse_file_ex(path, &pool,
         cfg.module_root[0] ? cfg.module_root : NULL, cfg.module_cap);
     if (!program) return 1;
@@ -256,6 +258,8 @@ static void *dev_exec_thread(void *arg) {
     FluxaConfig _cfg = fluxa_config_find_and_load();
     resolver_set_scope_cap(_cfg.scope_cap);   /* [runtime] scope_cap */
     parser_set_module_cap(_cfg.module_cap);   /* [runtime] module_cap */
+    pool_set_node_cap(_cfg.ast_pool_cap);     /* [runtime] ast_pool_cap */
+    pool_set_str_cap(_cfg.ast_str_pool_cap);  /* [runtime] ast_str_pool_cap */
     ASTNode *program = parse_file_ex(ctx->path, ctx->ast_pool,
         _cfg.module_root[0] ? _cfg.module_root : NULL, _cfg.module_cap);
     if (!program) {
@@ -378,6 +382,8 @@ static int run_prod(const char *path) {
         FluxaConfig cfg = fluxa_config_load(toml_path);
         resolver_set_scope_cap(cfg.scope_cap);   /* [runtime] scope_cap */
     parser_set_module_cap(cfg.module_cap);   /* [runtime] module_cap */
+        pool_set_node_cap(cfg.ast_pool_cap);     /* [runtime] ast_pool_cap */
+        pool_set_str_cap(cfg.ast_str_pool_cap);  /* [runtime] ast_str_pool_cap */
         if (fluxa_security_check(
                 cfg.security.signing_key_path[0] ? cfg.security.signing_key_path : NULL,
                 cfg.security.ipc_hmac_key_path[0] ? cfg.security.ipc_hmac_key_path : NULL,
@@ -1180,6 +1186,8 @@ static int run_handover(const char *old_path, const char *new_path) {
 
     FluxaConfig config = fluxa_config_find_and_load();
     resolver_set_scope_cap(config.scope_cap);   /* [runtime] scope_cap */
+    pool_set_node_cap(config.ast_pool_cap);     /* [runtime] ast_pool_cap */
+    pool_set_str_cap(config.ast_str_pool_cap);  /* [runtime] ast_str_pool_cap */
     rt_a->scope            = scope_new();
     rt_a->global_table     = NULL;
     rt_a->stack_size       = 0;

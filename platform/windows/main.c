@@ -210,6 +210,8 @@ int main(int argc, char **argv) {
     explain = strcmp(argv[1], "explain") == 0;
     config = fluxa_config_find_and_load();
     resolver_set_scope_cap(config.scope_cap);
+    pool_set_node_cap(config.ast_pool_cap);
+    pool_set_str_cap(config.ast_str_pool_cap);
     program = parse_file(argv[2], &pool,
                          config.module_root[0] ? config.module_root : NULL);
     if (!program) return 1;

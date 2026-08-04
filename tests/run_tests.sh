@@ -519,6 +519,18 @@ else
 $(echo "$_s12_out" | grep "FAIL" | sed 's/^/    /')"
 fi
 
+# ── sprint14: configurable ast_pool_cap / ast_str_pool_cap + overflow log fix ─
+printf "  %-56s" "sprint14/ast_pool (ast_pool_cap, ast_str_pool_cap)"
+_s14_out=$(bash "$SCRIPT_DIR/sprint14_ast_pool.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_s14_out" | grep -q "ast_pool: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  sprint14/ast_pool:
+$(echo "$_s14_out" | grep "FAIL" | sed 's/^/    /')"
+fi
+
 # ── sprint13: Runtime Update Protocol ───────────────────────────────────────
 printf "  %-56s" "sprint13/update_protocol (Runtime Update Protocol)"
 _s13_out=$(timeout 30s bash "$SCRIPT_DIR/sprint13/update_protocol.sh" --fluxa "$FLUXA" 2>&1 || true)

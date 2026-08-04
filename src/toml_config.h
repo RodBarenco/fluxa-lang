@@ -136,6 +136,19 @@ typedef struct {
                                    * exactly this many slots — no fixed waste.
                                    * Raise it only when a program genuinely
                                    * needs more modules. */
+    int          ast_pool_cap;    /* [runtime] ast_pool_cap — AST node arena
+                                   * size (ASTPool.nodes), in pool.h. Default
+                                   * 4096. Exceeding it never aborts — node
+                                   * allocation silently falls back to
+                                   * per-node malloc() (same as before this
+                                   * option existed); raise this to avoid
+                                   * that cost on programs with a large AST.
+                                   * Range 4096..1048576. */
+    int          ast_str_pool_cap;/* [runtime] ast_str_pool_cap — AST string
+                                   * arena size in bytes (ASTPool.str_buf).
+                                   * Default 65536. Exceeding it falls back
+                                   * to per-string strdup(). Range
+                                   * 65536..16777216. */
     /* [libs.pg] — PostgreSQL client limits */
     int          pg_max_conns;    /* max simultaneous PGconn*,   default 16  */
     int          pg_max_results;  /* max simultaneous PGresult*, default 64  */
@@ -179,6 +192,8 @@ static inline void fluxa_config_defaults_fill(FluxaConfig *c) {
     c->str_concat_cap    = 8 * 1024 * 1024;   /* 8 MiB */
     c->str_autogrow      = 0;                  /* refuse over-cap by default */
     c->module_cap        = 32;                 /* max imported modules */
+    c->ast_pool_cap      = 4096;                /* AST node arena; matches pool.h default */
+    c->ast_str_pool_cap  = 65536;               /* AST string arena bytes; matches pool.h default */
     c->ffi_str_buf_size  = 1024;
     c->ft_max_msg_args   = 2;
     strncpy(c->libdsp_backend, "native", sizeof(c->libdsp_backend)-1);
@@ -430,6 +445,32 @@ static inline FluxaConfig fluxa_config_load(const char *path) {
                 if (v < 1)    v = 1;
                 if (v > 4096) v = 4096;
                 cfg.module_cap = v;
+            } else if (strcmp(key, "ast_pool_cap") == 0) {
+                /* AST node arena size (ASTPool.nodes in pool.h). Floor at
+                 * the historical default (4096) so a misconfigured toml can
+                 * never make the pool smaller than before; ceiling
+                 * 1,048,576 (256x default, ~72 MB at 72 bytes/node,
+                 * mirroring scope_cap's 256x-default ceiling ratio) keeps
+                 * the malloc sane on constrained targets. */
+                int clamped = v;
+                if (clamped < 4096)    clamped = 4096;
+                if (clamped > 1048576) clamped = 1048576;
+                if (clamped != v)
+                    fprintf(stderr, "[fluxa] toml: ast_pool_cap %d out of "
+                            "range [4096..1048576], using %d\n", v, clamped);
+                cfg.ast_pool_cap = clamped;
+            } else if (strcmp(key, "ast_str_pool_cap") == 0) {
+                /* AST string arena size in bytes (ASTPool.str_buf). Floor
+                 * 65536 (historical default), ceiling 16,777,216 (256x
+                 * default, 16 MiB). */
+                int clamped = v;
+                if (clamped < 65536)    clamped = 65536;
+                if (clamped > 16777216) clamped = 16777216;
+                if (clamped != v)
+                    fprintf(stderr, "[fluxa] toml: ast_str_pool_cap %d out "
+                            "of range [65536..16777216], using %d\n",
+                            v, clamped);
+                cfg.ast_str_pool_cap = clamped;
             }
             continue;
         }
