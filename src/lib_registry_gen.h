@@ -13,6 +13,9 @@
 #include "toml_config.h"
 
 /* ── Conditional lib includes ─────────────────────────────────────── */
+#ifdef FLUXA_STD_CABI
+#  include "std/cabi/fluxa_std_cabi.h"
+#endif
 #ifdef FLUXA_STD_CACHE
 #  include "std/cache/fluxa_std_cache.h"
 #endif
@@ -143,6 +146,11 @@ typedef struct {
 
 /* ── Registry array ───────────────────────────────────────────────── */
 static const FluxaLibEntry fluxa_lib_registry[] = {
+#ifdef FLUXA_STD_CABI
+    { "cabi", "std.cabi", "cabi", fluxa_std_cabi_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "cabi", "std.cabi", "cabi", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_CACHE
     { "cache", "std.cache", "cache", fluxa_std_cache_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -274,9 +282,9 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
     { "sqlite", "std.sqlite", "sqlite", NULL, NULL, NULL, 0, 0, 0 },
 #endif
 #ifdef FLUXA_STD_STRINGS
-    { "strings", "std.strings", "strings", fluxa_std_strings_call, NULL, NULL, 0, 0, 1 },
+    { "strings", "std.strings", "strings", NULL, NULL, fluxa_std_strings_call, 0, 1, 1 },
 #else
-    { "strings", "std.strings", "strings", NULL, NULL, NULL, 0, 0, 0 },
+    { "strings", "std.strings", "strings", NULL, NULL, NULL, 0, 1, 0 },
 #endif
 #ifdef FLUXA_STD_TIME
     { "time", "std.time", "time", fluxa_std_time_call, NULL, NULL, 0, 0, 1 },
@@ -300,7 +308,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 31
+#define FLUXA_LIB_COUNT 32
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

@@ -1,7 +1,7 @@
 # Fluxa Standard Library
-**v0.19.2**
+**v0.28**
 
-Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.image`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
+Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.cabi`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.image`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
 
 ---
 
@@ -834,8 +834,240 @@ ft.resolve_all()
 print(contador)
 ```
 
+
 ---
 
+## std.cabi — Deterministic Typed Host Bridge
+
+`std.cabi` is the Fluxa-side endpoint of the stable Fluxa-lang C ABI. Its job is deliberately narrow: **exchange typed values between an external host and a Fluxa program**.
+
+It is a communication bridge, not a persistence or runtime-state API.
+
+### Contract
+
+Only these semantic values may cross the C ABI v1 boundary:
+
+- `int`
+- `float`
+- `bool`
+- `str`
+- homogeneous `int arr`
+- homogeneous `float arr`
+- homogeneous `bool arr`
+- homogeneous `str arr`
+
+The protocol does **not** transport `prst`, `dyn`, Blocks, pointers, native handles, GC state, VM state, AST nodes, handover state, snapshots, callbacks, or any other Fluxa runtime structure.
+
+### Enable
+
+Build-time (`fluxa.libs`):
+
+```toml
+[libs.build]
+std.cabi = true
+```
+
+Runtime permission (`fluxa.toml`):
+
+```toml
+[libs]
+std.cabi = "1.0"
+```
+
+Then:
+
+```fluxa
+import std cabi
+```
+
+There is no separate `build-cabi` workflow. When `std.cabi = true`, the normal build emits the host library together with the normal runtime.
+
+### Deterministic clear-wire format
+
+The clear frame is named `FXCB`, wire version 1. Multibyte numeric fields are explicitly little-endian; no C struct is copied to the wire.
+
+| Fluxa value | Wire representation |
+|---|---|
+| `int` | signed 32-bit little-endian |
+| `float` | IEEE-754 binary64, little-endian bit pattern |
+| `bool` | one byte: `0` or `1` |
+| `str` | byte length + UTF-8 bytes |
+| `int arr` | element count + i32 elements |
+| `float arr` | element count + binary64 elements |
+| `bool arr` | element count + 0/1 bytes |
+| `str arr` | element count + repeated byte-length + UTF-8 bytes |
+
+`int` is fixed to i32 on the wire because Fluxa's internal C `long` differs between LP64 and LLP64 targets. The bridge therefore has identical bytes on Linux x64 and Windows x64.
+
+The clear encoding is canonical: the same ordered value list produces the same `FXCB` bytes on every supported host architecture.
+
+### Fluxa API
+
+Request inspection:
+
+| Function | Returns | Meaning |
+|---|---|---|
+| `cabi.version()` | `str` | bridge version |
+| `cabi.count()` | `int` | number of input values |
+| `cabi.type(index)` | `str` | `int`, `float`, `bool`, `str`, `arr<int>`, `arr<float>`, `arr<bool>`, or `arr<str>` |
+| `cabi.read_int(index)` | `int` | read one integer |
+| `cabi.read_float(index)` | `float` | read one float |
+| `cabi.read_bool(index)` | `bool` | read one boolean |
+| `cabi.read_str(index)` | `str` | read one string |
+| `cabi.read_int_arr(index, destination)` | `int arr` | read one integer array |
+| `cabi.read_float_arr(index, destination)` | `float arr` | read one float array |
+| `cabi.read_bool_arr(index, destination)` | `bool arr` | read one boolean array |
+| `cabi.read_str_arr(index, destination)` | `str arr` | read one string array |
+
+Response construction:
+
+| Function | Meaning |
+|---|---|
+| `cabi.response_reset()` | clear the current response |
+| `cabi.write_int(value)` | append `int` |
+| `cabi.write_float(value)` | append `float` |
+| `cabi.write_bool(value)` | append `bool` |
+| `cabi.write_str(value)` | append `str` |
+| `cabi.write_int_arr(arr)` | append `int arr` |
+| `cabi.write_float_arr(arr)` | append `float arr` |
+| `cabi.write_bool_arr(arr)` | append `bool arr` |
+| `cabi.write_str_arr(arr)` | append `str arr` |
+
+Type mismatches fail with normal Fluxa error semantics. Because Fluxa-lang typed arrays have a fixed declared size, inbound array reads fill a caller-declared destination array in place. The destination size must exactly match the wire array size; otherwise the exchange fails cleanly.
+
+Arrays are homogeneous by contract; a writer rejects an array containing an element of another type.
+
+### Dispatcher example
+
+```fluxa
+import std cabi
+
+fn cabi_dispatch() int {
+    int id = cabi.read_int(0)
+    float value = cabi.read_float(1)
+    bool enabled = cabi.read_bool(2)
+    str label = cabi.read_str(3)
+    int arr points[3] = 0
+    cabi.read_int_arr(4, points)
+
+    cabi.response_reset()
+    cabi.write_int(id)
+    cabi.write_float(value)
+    cabi.write_bool(enabled)
+    cabi.write_str(label)
+    cabi.write_int_arr(points)
+    return 0
+}
+```
+
+The dispatcher has no implicit C ABI state beyond the values of the currently active exchange.
+
+### Host API
+
+The public header is `src/cabi/fluxa_cabi.h`. It exposes an opaque `fluxa_cabi_runtime` and the deterministic message builder/reader:
+
+```c
+fluxa_cabi_message req;
+fluxa_cabi_message_init(&req);
+
+fluxa_cabi_add_int(&req, 42);
+fluxa_cabi_add_float(&req, 3.5);
+fluxa_cabi_add_bool(&req, 1);
+fluxa_cabi_add_str(&req, "Fluxa", 5);
+
+fluxa_cabi_view in = { req.data, req.size };
+fluxa_cabi_view out;
+
+fluxa_cabi_exchange(rt, &in, &out, &err);
+```
+
+Reader functions (`fluxa_cabi_get_int`, `fluxa_cabi_get_float`, etc.) decode the returned borrowed view without exposing Fluxa internals.
+
+For end-to-end host integration examples in C, C++, Python, Java, JavaScript/Node.js, Go, C#, and Lua, see the dedicated **[C ABI Integration Guide](CABI_INTEGRATION.md)**.
+
+### Optional secure envelope
+
+Security is **outside** the typed value protocol. Enabling it never adds a new Fluxa value type and never changes the deterministic `FXCB` encoding.
+
+When `std.cabi` and `std.crypto` are both enabled at build time, the C ABI can use a 32-byte shared key to wrap an `FXCB` frame in an authenticated `FXCS` envelope using XChaCha20-Poly1305 (libsodium):
+
+```text
+int / float / bool / str / arr
+              │
+              ▼
+      deterministic FXCB
+              │
+      optional seal(key)
+              ▼
+       authenticated FXCS
+```
+
+`fluxa_cabi_seal()` and `fluxa_cabi_unseal()` are optional host helpers. `fluxa_cabi_security_available()` reports whether the current build contains the libsodium backend.
+
+A fresh nonce is generated for every seal, so encrypted `FXCS` packets are intentionally non-deterministic. After successful authentication/decryption, the recovered `FXCB` bytes are exactly the canonical deterministic frame that was originally sealed.
+
+Keys are host-side security material. They are not Fluxa values and do not enter `std.cabi`.
+
+### Correctness test and bridge benchmark
+
+The functional gate is intentionally separate from the performance benchmark:
+
+```bash
+make test-cabi
+make bench-cabi
+```
+
+`make test-cabi` validates the Fluxa-side API, canonical wire encoding, real host
+round-trip, and the optional secure envelope when available. `make bench-cabi`
+runs a 10-second clear-wire throughput benchmark using one persistent runtime and
+one host thread. Request frames are prebuilt outside the timed loop.
+
+The benchmark has two 5-second phases:
+
+- **READ:** host sends all eight supported wire tags; Fluxa decodes them and returns a boolean acknowledgement.
+- **RESPONSE:** host sends a small integer trigger; Fluxa constructs and returns all eight supported wire tags.
+
+First validated Linux x64 baseline:
+
+| Phase | Throughput | Mean exchange time | Wire throughput |
+|---|---:|---:|---:|
+| READ | 380,578 exch/s | 2,627.6 ns/exch | 72.59 MiB/s |
+| RESPONSE | 561,739 exch/s | 1,780.2 ns/exch | 102.32 MiB/s |
+| Combined average | 471,158 exch/s | — | — |
+
+Performance numbers are machine-specific and are recorded as a regression
+baseline, not as a portability or ABI guarantee.
+
+### Threading and ownership
+
+Calls to one `fluxa_cabi_runtime` are serialized internally. `std.cabi` itself does not depend on `std.flxthread`.
+
+A response view returned by `fluxa_cabi_exchange()` is borrowed and remains valid until the next exchange on that runtime or until the runtime is closed. `fluxa_cabi_message` buffers created by the host are owned by the host and released with `fluxa_cabi_message_free()`.
+
+### Architectural boundary
+
+```text
+external host
+ C / C++ / Go / Rust / Python / C#
+                │
+                │ int / float / bool / str / arr
+                ▼
+       deterministic C ABI
+                │
+                ▼
+          Fluxa runtime
+                │
+                ▼
+          Fluxa program
+                │
+                │ int / float / bool / str / arr
+                ▼
+          external host
+```
+
+The bridge transports values. **Fluxa runtime state stays inside Fluxa.**
+
+---
 ## std.crypto
 
 Cryptographic primitives via libsodium 1.0.18+. Dep: `apt install libsodium-dev`.

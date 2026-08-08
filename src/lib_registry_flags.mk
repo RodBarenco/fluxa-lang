@@ -3,6 +3,7 @@
 # Edit fluxa.libs then run: make build
 
 # Make variables — read by lib.mk files to gate FLUXA_STD_* flags
+FLUXA_BUILDTIME_CABI := 1
 FLUXA_BUILDTIME_CACHE := 1
 FLUXA_BUILDTIME_CRYPTO := 1
 FLUXA_BUILDTIME_CSV := 1

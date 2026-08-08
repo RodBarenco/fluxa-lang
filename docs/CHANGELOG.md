@@ -1,5 +1,36 @@
 # Fluxa-lang Changelog
 
+## v0.28.1 — C ABI benchmark target and fixed-array documentation
+
+The deterministic C ABI is now validated not only for correctness but also with a repeatable bridge throughput benchmark. `make bench-cabi` builds the normal C ABI artifact and runs `tests/cabi/bench.sh`, which measures exactly 10 seconds: a 5-second inbound-heavy READ phase followed by a 5-second outbound-heavy RESPONSE phase. The benchmark is deliberately separate from `make test-cabi` so the normal correctness gate remains fast and deterministic.
+
+**Benchmark shape.** One persistent embedded runtime and one host thread are used throughout. Host request frames are built before timing starts, keeping message-builder setup outside the measurement. READ sends all eight supported wire tags (`int`, `float`, `bool`, `str`, and the four homogeneous array forms) and receives a boolean acknowledgement. RESPONSE sends a small integer trigger and receives all eight tags. The benchmark therefore measures the actual `C → C ABI → Fluxa → C ABI → C` exchange path rather than a standalone serializer loop.
+
+**First validated Linux x64 baseline.** READ completed 1,902,889 exchanges in 5.000002 s — **380,578 exchanges/s**, **2,627.6 ns/exchange**, **72.59 MiB/s** for a 179-byte request and 21-byte response. RESPONSE completed 2,808,695 exchanges in 5.000001 s — **561,739 exchanges/s**, **1,780.2 ns/exchange**, **102.32 MiB/s** for a 24-byte request and 167-byte response. Combined, the bridge completed **4,711,584 exchanges in 10.000003 s**, or **471,158 exchanges/s** averaged across the two intentionally different workloads. These are machine-specific regression numbers, not ABI guarantees.
+
+**Documentation cleanup.** Dispatcher examples now use the real Fluxa fixed-array syntax (`int arr values[N] = ...` followed by `cabi.read_int_arr(index, values)`). This removes the last documentation residue from the earlier prototype API that attempted to return dynamically sized arrays.
+
+## v0.28 — `std.cabi`: deterministic typed host bridge
+
+Fluxa-lang now has a stable C ABI for direct communication with external hosts without exposing runtime internals. The design was deliberately reduced after integration testing: **the ABI is a typed communication bridge, not a persistence, handover, snapshot, or VM-state interface.**
+
+The v1 semantic protocol contains exactly five Fluxa families: `int`, `float`, `bool`, `str`, and homogeneous `arr` (`int arr`, `float arr`, `bool arr`, `str arr`). `dyn`, Blocks, pointers, native handles, AST/VM/GC state, `prst`, snapshots, request sequence metadata, simulation ticks, application status fields, and atomic rollback are not part of the protocol.
+
+**Deterministic wire.** Clear frames use the `FXCB` v1 format with explicit little-endian encoding and no raw C-struct copies. `int` is fixed to signed i32 on the wire (avoids the LP64 Linux / LLP64 Win64 `long` difference); `float` is IEEE-754 binary64; `bool` is one canonical byte (`0`/`1`); strings are length + UTF-8 bytes; arrays are length + homogeneous elements. The same ordered values therefore produce byte-identical clear frames across Linux and Windows.
+
+**Fluxa endpoint.** `std.cabi` now exposes indexed typed readers (`count`, `type`, `read_int`, `read_float`, `read_bool`, `read_str`, and the four typed array readers) plus typed response writers. The old raw-offset API (`read_u8`, `read_u16`, `read_i32`, `read_f64`, manual string offsets) is removed: callers communicate in Fluxa types, not byte offsets.
+
+**Host boundary.** `src/cabi/fluxa_cabi.h` exposes an opaque runtime, deterministic message builder/reader functions, and `fluxa_cabi_exchange(runtime, FXCB request, FXCB response)`. The earlier request metadata (`opcode`, `request_id`, `sequence`, `tick`, status/control flags) and snapshot/restore API are removed. Applications that need an opcode or identifier send it explicitly as an ordinary `int` or `str`, which keeps the protocol universal rather than embedding application semantics in the ABI.
+
+**Optional authenticated encryption.** Security is a separate envelope around the deterministic frame. When `std.crypto`/libsodium is enabled alongside `std.cabi`, host helpers can wrap an `FXCB` frame in `FXCS` using XChaCha20-Poly1305 with a 32-byte shared key. A fresh nonce is generated per seal, so encrypted packets are intentionally non-deterministic; successful unseal recovers the exact deterministic `FXCB` bytes. Key material is host-side and never becomes a Fluxa value. Builds without libsodium retain the full clear C ABI and report secure-envelope support as unavailable.
+
+**Build integration.** `std.cabi = true` in `fluxa.libs` participates in the ordinary `make build` / `make build-windows` flows; there are no separate public CABI build targets. The normal native artifact is `libfluxa_cabi.so`/`.dylib`; Windows emits `fluxa_cabi.dll` plus its import library. The host library follows the same enabled stdlib source/dependency graph as the normal runtime. Native builds keep the current `ipc_server.c` compatibility implementation solely because `runtime.c` still references three IPC bookkeeping helpers; no CLI IPC protocol is exposed by the C ABI.
+
+**Configuration fix found during integration.** Embedded `fluxa_cabi_open()` now performs both `fluxa_config_load()` and `fluxa_config_load_libs()` for an explicit `config_path`, matching the CLI loader. The first implementation loaded the TOML file but silently skipped `[libs]`, causing a valid `std.cabi = "1.0"` declaration to be rejected.
+
+**Tests.** `tests/libs/cabi.sh` covers permission gating, version/no-context errors, every typed reader, dispatcher parsing, and unknown calls. `tests/cabi/cabi_host.c` round-trips all eight wire tags through a real persistent runtime. `tests/cabi/wire_smoke.c` pins the little-endian deterministic encoding. When libsodium is present, the host test also seals/unseals an FXCB frame and verifies byte-identical recovery.
+
+
 ## v0.27.3 — `graph.init` fails cleanly instead of crashing with no GL driver
 
 On a Windows machine with no usable OpenGL driver — the exact case

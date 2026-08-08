@@ -26,6 +26,7 @@ std.time      = true    # sleep, now_ms, elapsed         POSIX
 std.fs        = true    # read, write, listdir, mkdir    POSIX
 std.zlib      = true    # deflate, gzip, crc32, adler32  zlib1g-dev
 std.flxthread = true    # native concurrency             pthreads
+std.cabi      = true    # deterministic typed host bridge     (crypto envelope optional via std.crypto)
 std.cache     = true    # thread-safe k/v cache         pthreads
 std.pid       = true    # PID controller (IoT/robotics)  (none)
 std.libv      = true    # vectors, matrices, tensors     (none) [OpenBLAS optional]

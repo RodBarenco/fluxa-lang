@@ -4,12 +4,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # QUICK START
-#   make                   Build native binary → ./fluxa
-#   make build-windows     Cross-build minimal Windows runtime → ./fluxa.exe
+#   make                   Build native binary → ./fluxa (+ C ABI if std.cabi=true)
+#   make build-windows     Cross-build Windows runtime (+ C ABI DLL if std.cabi=true)
 #   make test-runner       Run full test suite (PASS/FAIL report)
 #   make test-suite2       Run Suite 2 — edge cases & integration (70 cases)
 #   make test-all          Run everything: unit + suite2 + integration
-#   make bench             Performance benchmarks
+#   make bench             Language performance benchmarks
+#   make test-cabi         C ABI correctness/integration tests
+#   make bench-cabi        C ABI bridge benchmark (10 s: 5 s READ + 5 s RESPONSE)
 #   make examples          Run all example programs
 #   make clean             Remove all build artifacts
 #
@@ -351,10 +353,104 @@ all: build
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Fluxa C ABI v1 — stable host embedding boundary
+# CABI is NOT std.flxthread and never links the flxthread implementation.
+# Linux/macOS use the native runtime core; Windows uses the existing minimal
+# Windows runtime profile and Win32 synchronization inside fluxa_cabi.c.
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: test-cabi bench-cabi
+
+# C ABI host runtime
+#
+# The shared library is an embedded Fluxa runtime, so it must expose the same
+# stdlib profile selected by fluxa.libs as the native ./fluxa binary. Reuse the
+# normal runtime source lists instead of maintaining a second hand-written list.
+# Only CLI-only sources are removed: main, Unix IPC server, and disassembler.
+# IPC is explicitly disabled for the host library; communication happens through
+# the C ABI itself. FLUXA_EXTRA_SRCS carries enabled stdlib backends (mongoose,
+# cabi context, etc.), so newly-added libraries automatically follow this target.
+# Keep ipc_server.c in the native host library for runtime helper symbols.
+# FLUXA_IPC_NONE prevents the C ABI from exposing/starting the CLI IPC transport,
+# but current runtime.c still references ipc_rtview_update(),
+# ipc_apply_pending_set(), and ipc_rtview_clear_live().  Keeping the source here
+# resolves those helpers without changing the public C ABI.  Windows continues
+# to use platform/windows/runtime_stubs.c via SRCS_WINDOWS.
+CABI_RUNTIME_SRCS = $(filter-out src/main.c src/dis.c,$(SRCS))
+CABI_EXTRA_SRCS   = $(filter-out src/cabi/fluxa_cabi_context.c src/cabi/fluxa_cabi_wire.c,$(FLUXA_EXTRA_SRCS))
+CABI_CORE_SRCS    = src/cabi/fluxa_cabi.c         \
+                    src/cabi/fluxa_cabi_context.c \
+                    src/cabi/fluxa_cabi_wire.c    \
+                    $(CABI_RUNTIME_SRCS)           \
+                    $(CABI_EXTRA_SRCS)
+
+# Windows follows the existing Windows runtime allowlist and removes only its
+# executable entry point. platform/windows/runtime_stubs.c already supplies the
+# non-POSIX runtime services required by src/runtime.c.
+CABI_WINDOWS_SRCS = src/cabi/fluxa_cabi.c         \
+                    src/cabi/fluxa_cabi_context.c \
+                    src/cabi/fluxa_cabi_wire.c    \
+                    $(filter-out platform/windows/main.c,$(SRCS_WINDOWS))
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+CABI_SHARED_EXT         = dylib
+CABI_SHARED_FLAGS       = -dynamiclib
+CABI_SHARED_VERIFY_FLAGS = -Wl,-undefined,error
+else
+CABI_SHARED_EXT         = so
+CABI_SHARED_FLAGS       = -shared
+# Do not allow a host library with unresolved symbols to be published.
+CABI_SHARED_VERIFY_FLAGS = -Wl,-z,defs
+endif
+
+# std.cabi follows the exact same build-time switch as every other stdlib.
+# There is intentionally no public `build-cabi` target: enabling std.cabi in
+# fluxa.libs makes the normal native/Windows build emit the host ABI artifact.
+ifeq ($(FLUXA_BUILDTIME_CABI),1)
+CABI_NATIVE_ARTIFACT  = libfluxa_cabi.$(CABI_SHARED_EXT)
+CABI_WINDOWS_ARTIFACT = fluxa_cabi.dll
+WINDOWS_CABI_CFLAGS   = -DFLUXA_STD_CABI=1
+WINDOWS_CABI_SRCS     = src/cabi/fluxa_cabi_context.c src/cabi/fluxa_cabi_wire.c
+else
+CABI_NATIVE_ARTIFACT  =
+CABI_WINDOWS_ARTIFACT =
+WINDOWS_CABI_CFLAGS   =
+WINDOWS_CABI_SRCS     =
+endif
+
+ifeq ($(FLUXA_BUILDTIME_CABI),1)
+$(CABI_NATIVE_ARTIFACT): $(CABI_CORE_SRCS) src/lib_registry_flags.mk
+	$(CC) $(CFLAGS) -fPIC -DFLUXA_CABI_BUILD=1 -DFLUXA_IPC_NONE=1 \
+	    $(CABI_CORE_SRCS) -o $@ $(CABI_SHARED_FLAGS) $(CABI_SHARED_VERIFY_FLAGS) $(LDFLAGS)
+	@echo "✓ C ABI host library ok → ./$@"
+
+$(CABI_WINDOWS_ARTIFACT): $(CABI_WINDOWS_SRCS) src/lib_registry_flags.mk check-toolchain-windows
+	$(CC_WINDOWS) $(WINDOWS_CFLAGS) -DFLUXA_CABI_BUILD=1 -DFLUXA_STD_CABI=1 \
+	    $(CABI_WINDOWS_SRCS) -shared -o $@ \
+	    -Wl,--out-implib,libfluxa_cabi.dll.a $(WINDOWS_LDFLAGS)
+	@echo "✓ Windows C ABI host library ok → ./$@"
+	@echo "✓ Windows import library → ./libfluxa_cabi.dll.a"
+endif
+
+test-cabi: build
+	@test "$(FLUXA_BUILDTIME_CABI)" = "1" || \
+	  (echo "✗ std.cabi is disabled in fluxa.libs; set std.cabi = true and rebuild"; exit 1)
+	bash tests/libs/cabi.sh
+	bash tests/cabi/wire.sh
+	bash tests/cabi/run.sh
+
+# 10-second bridge throughput benchmark: 5 s inbound-heavy READ + 5 s outbound-heavy RESPONSE.
+# Kept separate from test-cabi so normal correctness tests remain fast and deterministic.
+bench-cabi: build
+	@test "$(FLUXA_BUILDTIME_CABI)" = "1" || \
+	  (echo "✗ std.cabi is disabled in fluxa.libs; set std.cabi = true and rebuild"; exit 1)
+	bash tests/cabi/bench.sh
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Native build
 # ─────────────────────────────────────────────────────────────────────────────
 
-build:
+build: $(CABI_NATIVE_ARTIFACT)
 	@python3 scripts/gen_lib_registry.py
 	$(CC) $(CFLAGS) $(SRCS) $(FLUXA_EXTRA_SRCS) -o $(TARGET) $(LDFLAGS)
 	@echo "✓ build ok → ./$(TARGET)"
@@ -380,9 +476,11 @@ check-toolchain-windows:
 	   echo "  Install MinGW-w64 (e.g. sudo apt install mingw-w64)" && \
 	   exit 1)
 
-build-windows: check-toolchain-windows
+build-windows: check-toolchain-windows $(CABI_WINDOWS_ARTIFACT)
 	@python3 scripts/gen_lib_registry.py
-	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(SRCS_WINDOWS) -o $(TARGET_WINDOWS) $(WINDOWS_LDFLAGS)
+	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(WINDOWS_CABI_CFLAGS) \
+	    $(SRCS_WINDOWS) $(WINDOWS_CABI_SRCS) \
+	    -o $(TARGET_WINDOWS) $(WINDOWS_LDFLAGS)
 	@echo "✓ Windows minimal build ok → $(TARGET_WINDOWS)"
 	@echo "  commands: run, explain"
 
@@ -390,8 +488,8 @@ build-windows: check-toolchain-windows
 # feature flags, sources and target-Windows libraries.
 build-windows-profile: check-toolchain-windows
 	@python3 scripts/gen_lib_registry.py
-	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(WINDOWS_PROFILE_CFLAGS) \
-	    $(SRCS_WINDOWS) $(WINDOWS_PROFILE_SRCS) \
+	$(CC_WINDOWS) $(WINDOWS_CFLAGS) $(WINDOWS_CABI_CFLAGS) $(WINDOWS_PROFILE_CFLAGS) \
+	    $(SRCS_WINDOWS) $(WINDOWS_CABI_SRCS) $(WINDOWS_PROFILE_SRCS) \
 	    -o $(WINDOWS_PROFILE_TARGET) \
 	    $(WINDOWS_LDFLAGS) $(WINDOWS_PROFILE_LDFLAGS)
 	@echo "✓ Windows profile build ok → $(WINDOWS_PROFILE_TARGET)"
@@ -1103,3 +1201,5 @@ clean:
 	rm -f fluxa-*.exe
 	rm -f $(TARGET)_asan $(TARGET)_debug
 	rm -f *.o
+	rm -f libfluxa_cabi.so libfluxa_cabi.dylib libfluxa_cabi.a fluxa_cabi.dll libfluxa_cabi.dll.a
+	rm -rf .cabi-obj
