@@ -1,5 +1,19 @@
 # Fluxa-lang Changelog
 
+## v0.28.2 — `image.get_text`: PNG iTXt metadata reader
+
+`std.image` now completes the PNG metadata round trip with `image.get_text(path, key) -> str`, the read-side counterpart to `image.set_text`.
+
+**PNG iTXt reader.** `get_text` scans the PNG chunk stream directly and returns the UTF-8 text from the first `iTXt` chunk whose keyword matches `key`. The keyword follows the same contract as `set_text`: Latin-1, 1–79 characters. If the PNG is valid but the keyword is not present, the function returns `""` rather than raising an error.
+
+**Compressed and uncompressed metadata.** Both legal forms written by `set_text` are supported. An uncompressed `iTXt` payload (`compressionFlag == 0`) is returned directly; a compressed payload (`compressionFlag == 1`) is transparently inflated with zlib before becoming a Fluxa `str`. Callers therefore use the same read API regardless of whether the optional compression argument was supplied when the metadata was written.
+
+**Chunk-only path.** Reading metadata does not decode image pixels and does not call the image decoder. The implementation only validates the PNG container and walks its chunks until the first matching `iTXt` entry is found, so duplicate keywords deterministically return the first occurrence.
+
+**Errors and portability.** `get_text` is file I/O and follows the same `danger {}` / `err` contract as `save`, `load`, and `set_text`. Missing files, non-PNG input, malformed metadata, and builds without the required codec/zlib path produce ordinary Fluxa errors. The implementation uses portable C file I/O plus the same zlib dependency already used by `set_text`, keeping the behavior available on both Linux and Windows builds of the Raylib-backed `std.image`.
+
+**Validation.** `tests/libs/image.sh` now covers key validation, the no-codec path, missing-key behavior, uncompressed iTXt, compressed iTXt, duplicate-key first-match semantics, and malformed/non-PNG error handling. The full updated image test suite passes.
+
 ## v0.28.1 — C ABI benchmark target and fixed-array documentation
 
 The deterministic C ABI is now validated not only for correctness but also with a repeatable bridge throughput benchmark. `make bench-cabi` builds the normal C ABI artifact and runs `tests/cabi/bench.sh`, which measures exactly 10 seconds: a 5-second inbound-heavy READ phase followed by a 5-second outbound-heavy RESPONSE phase. The benchmark is deliberately separate from `make test-cabi` so the normal correctness gate remains fast and deterministic.

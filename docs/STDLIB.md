@@ -1,5 +1,5 @@
 # Fluxa Standard Library
-**v0.28**
+**v0.28.2**
 
 Reference documentation for all stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.cache`, `std.time`, `std.flxthread`, `std.cabi`, `std.crypto`, `std.pid`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.image`, `std.infer`, `std.zlib`, `std.fs`, `std.libv`, `std.libdsp`, `std.wserver`, `std.pg`, `std.sound`.
 
@@ -1522,7 +1522,8 @@ Notes:
 
 ## std.image — Encode / Decode / Transform Images
 
-Two backends: stub (default, zero deps — buffer transforms work, `save`/`load`
+Two backends: stub (default, zero deps — buffer transforms work, while filesystem
+codec/PNG-metadata operations such as `save`, `load`, `set_text`, and `get_text`
 report a clear "no codec" error) or the Raylib codec
 (`make FLUXA_IMAGE_RAYLIB=1`), which bundles stb_image / stb_image_write and
 encodes/decodes **PNG, JPG, BMP, TGA, and QOI**.
@@ -1540,9 +1541,10 @@ ownership pattern as a window or font cursor: pass it as an argument, release it
 with `image.discard`. Because the release verb `free` is a reserved keyword, the
 lib uses **`image.discard`**.
 
-`image.save` and `image.load` touch the filesystem, so they **must** run inside a
-`danger {}` block, exactly like `sqlite`/`csv`/`fs`. The output format is chosen
-by the file **extension**.
+`image.save`, `image.load`, `image.sload`, `image.set_text`, and `image.get_text`
+touch the filesystem, so they **must** run inside a `danger {}` block, exactly
+like `sqlite`/`csv`/`fs`. The output format for encoded images is chosen by the
+file **extension**.
 
 **`load` vs `sload`.** Use `image.load` for files your program produced or fully
 controls. Use `image.sload` for any image whose bytes are **not** under your
@@ -1570,6 +1572,7 @@ validate/re-encode untrusted images server-side before redistributing them.
 | `image.width(img)` | `int` | Width in pixels |
 | `image.height(img)` | `int` | Height in pixels |
 | `image.set_text(path, key, text[, compress])` | `bool` | Embed a text field in an existing PNG as an `iTXt` chunk. `key` is a 1–79 char Latin-1 keyword, `text` is UTF-8. Without the 4th arg the text is stored uncompressed; pass a 4th arg to deflate it. **PNG only. Needs `danger`.** |
+| `image.get_text(path, key)` | `str` | Read the UTF-8 text from the **first** PNG `iTXt` chunk whose keyword equals `key`. Transparently reads both uncompressed and deflate-compressed iTXt. Returns `""` when the keyword does not exist. Does **not** decode pixels — only scans PNG chunks. `key` follows the same 1–79 char Latin-1 rule as `set_text`. **PNG only. Needs `danger`.** |
 | `image.discard(img)` | `nil` | Release the buffer (idempotent; also releases a `graph.capture` handle) |
 | `image.version()` | `str` | Backend version (reports whether the codec is present) |
 
@@ -1633,9 +1636,28 @@ if err != nil { print(err[0]) }
 ```
 
 The `iTXt` chunk travels inside the PNG, so the proof survives copying, sharing,
-and re-hosting the image — any PNG reader can read it back, and the card stays
-verifiable offline. Pass a 4th argument to `image.set_text` to deflate long
-proofs.
+and re-hosting the image. Fluxa can read it back directly with `image.get_text`,
+keeping the card verifiable offline without decoding its pixels.
+
+```fluxa
+danger {
+    str proof = image.get_text("elite_card.png", "starfight-proof")
+    if proof != "" {
+        print(proof)
+    }
+}
+if err != nil { print(err[0]) }
+```
+
+`image.get_text` returns `""` when no matching keyword exists. If duplicate
+keywords exist, the **first** matching `iTXt` chunk wins. Pass a 4th argument to
+`image.set_text` to deflate long proofs; `get_text` detects that form and inflates
+it transparently, so the read call does not change.
+
+The metadata path is PNG-container-only: `get_text` validates and scans chunks,
+but never invokes the pixel decoder. The same keyword restriction as `set_text`
+applies — Latin-1, 1–79 characters — and file/format/decompression failures use
+the ordinary `danger {}` / `err` model.
 
 ### The full round trip: graph ⇄ image
 

@@ -370,5 +370,105 @@ FLX
 )
 echo "$out" | grep -qi "max_bytes must be int" && pass "sload_bad_limit_type" || fail "sload_bad_limit_type" "max_bytes must be int" "$out"
 
+# Real-codec-only fixtures for iTXt readback. The default stub suite above still
+# verifies argument validation and the required no-codec error path.
+version_out=$(run << 'FLX'
+import std image
+print(image.version())
+FLX
+)
+if echo "$version_out" | grep -qi "raylib codec"; then
+    # A tiny valid PNG; metadata operations do not decode its pixels.
+    python3 - "$P/card.png" << 'PYPNG'
+import base64, sys
+png = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+open(sys.argv[1], "wb").write(png)
+PYPNG
+
+    # 32. uncompressed iTXt round-trip
+    out=$(run << FLX
+import std image
+danger {
+    image.set_text("$P/card.png", "proof", "Olá Fluxa ✓")
+    str t = image.get_text("$P/card.png", "proof")
+    print(t)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -q "Olá Fluxa ✓" && pass "get_text_uncompressed_itxt" || fail "get_text_uncompressed_itxt" "Olá Fluxa ✓" "$out"
+
+    # 33. compressed iTXt round-trip (set_text 4th arg → compressionFlag=1)
+    out=$(run << FLX
+import std image
+danger {
+    image.set_text("$P/card.png", "compressed", "B2:compressed-payload", 1)
+    str t = image.get_text("$P/card.png", "compressed")
+    print(t)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -q "B2:compressed-payload" && pass "get_text_deflated_itxt" || fail "get_text_deflated_itxt" "B2:compressed-payload" "$out"
+
+    # 34. missing keyword returns the empty string
+    out=$(run << FLX
+import std image
+danger {
+    str t = image.get_text("$P/card.png", "does-not-exist")
+    print("len", len(t))
+}
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -q "len 0" && pass "get_text_missing_returns_empty" || fail "get_text_missing_returns_empty" "len 0" "$out"
+
+    # 35. duplicate keyword returns the first chunk, not the most recent one
+    cp "$P/card.png" "$P/dupe.png"
+    out=$(run << FLX
+import std image
+danger {
+    image.set_text("$P/dupe.png", "duplicate", "first")
+    image.set_text("$P/dupe.png", "duplicate", "second")
+    str t = image.get_text("$P/dupe.png", "duplicate")
+    print(t)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -q "first" && ! echo "$out" | grep -q "second" \
+        && pass "get_text_duplicate_returns_first" || fail "get_text_duplicate_returns_first" "first" "$out"
+
+    # 36. non-PNG input is rejected cleanly
+    printf 'not a png' > "$P/not.png"
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/not.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "not a PNG\|too small" && pass "get_text_rejects_non_png" || fail "get_text_rejects_non_png" "PNG error" "$out"
+fi
+
+# 37. get_text key length is validated before codec
+out=$(run << 'FLX'
+import std image
+danger { str t = image.get_text("card.png", "") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qiE "1.79|key|character" && pass "get_text_key_validated" || fail "get_text_key_validated" "key length msg" "$out"
+
+# 38. get_text on the stub → clear "no codec" error
+out=$(run << 'FLX'
+import std image
+danger { str t = image.get_text("card.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "codec" && pass "get_text_reports_no_codec" || fail "get_text_reports_no_codec" "codec" "$out"
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1
