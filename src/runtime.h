@@ -92,6 +92,11 @@ typedef struct Runtime {
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 int  runtime_exec(ASTNode *program);
+/* Same as runtime_exec, but hands the final PrstPool to the caller instead of
+ * freeing it. Used by -dev so that state declared on the very first run reaches
+ * the first reload; pool_out == NULL is exactly runtime_exec. The caller owns
+ * the pool afterwards and must prst_pool_free it. */
+int  runtime_exec_persist(ASTNode *program, PrstPool *pool_out);
 int  runtime_exec_explain(ASTNode *program);
 void runtime_explain(Runtime *rt);
 
@@ -106,6 +111,11 @@ static inline int runtime_is_safe_point(const Runtime *rt) {
  * pool_in: existing PrstPool from the previous run (state to carry over).
  * Returns 0 on success, 1 on error. */
 int runtime_apply(ASTNode *program, PrstPool *pool_in);
+/* Reset every VAL_DYN entry in a pool to a headstone (VAL_NIL, declared_type
+ * kept) so the runtime that receives the pool rebuilds the external resource
+ * instead of restoring a handle that no longer exists. Used by the Dry Run,
+ * whose GC collect frees anything the rehearsal opened. */
+void runtime_prst_headstone_resources(PrstPool *pool);
 
 /* -dev mode: register a global cancel flag checked on every VM back-edge.
  * Set *flag = 1 from the watcher thread to break infinite loops.

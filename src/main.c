@@ -100,6 +100,49 @@ static void usage(void) {
     );
 }
 
+/* Collect the on-disk path of every `import live/static X` in a .flx file.
+ * Same textual scan parse_file_ex does — kept as its own function so -dev can
+ * watch the module files too. Without this the watcher only ever saw the entry
+ * file, and saving live/foo.flx changed nothing on screen.
+ * Returns the number of paths written, or -1 if the entry file is unreadable. */
+static int collect_module_paths(const char *path, const char *mod_root,
+                                 char (*out)[640], int max_out) {
+    char *src = load_file(path);
+    if (!src) return -1;
+    int n = 0;
+    const char *scan = src;
+    while (*scan && n < max_out) {
+        while (*scan == ' ' || *scan == '\t') scan++;
+        if (strncmp(scan, "import", 6) == 0) {
+            const char *s = scan + 6;
+            while (*s == ' ' || *s == '\t') s++;
+            int is_live   = (strncmp(s, "live",   4) == 0 && (s[4]==' '||s[4]=='\t'));
+            int is_static = (strncmp(s, "static", 6) == 0 && (s[6]==' '||s[6]=='\t'));
+            if (is_live || is_static) {
+                s += is_live ? 4 : 6;
+                while (*s == ' ' || *s == '\t') s++;
+                char ns[64] = {0};
+                int ni = 0;
+                while (*s && *s != ' ' && *s != '\t' &&
+                       *s != '\n' && *s != '\r' && ni < 63)
+                    ns[ni++] = *s++;
+                if (ni > 0) {
+                    const char *kind = is_live ? "live" : "static";
+                    if (mod_root)
+                        snprintf(out[n], 640, "%s/%s/%s.flx", mod_root, kind, ns);
+                    else
+                        snprintf(out[n], 640, "%s/%s.flx", kind, ns);
+                    n++;
+                }
+            }
+        }
+        while (*scan && *scan != '\n') scan++;
+        if (*scan == '\n') scan++;
+    }
+    free(src);
+    return n;
+}
+
 /* Parse a .flx file and return the program AST.
  * v0.15: pre-scans for `import live/static X`, loads and parses each module
  * first (with namespace mangling), then parses the main file. The result is
@@ -279,7 +322,12 @@ static void *dev_exec_thread(void *arg) {
 
     int r;
     if (ctx->first_run) {
-        r = runtime_exec(program);
+        /* runtime_exec_persist, not runtime_exec: the plain form frees its pool
+         * at teardown, so everything declared prst on the very first run was
+         * gone by the first save and the reload re-initialized from scratch.
+         * The observable symptom was a counter that read 1, then 1 again, and
+         * only started counting from the second reload onwards. */
+        r = runtime_exec_persist(program, ctx->pool);
         ctx->first_run = 0;
     } else {
         r = runtime_apply(program, ctx->pool);
@@ -295,12 +343,77 @@ static void *dev_exec_thread(void *arg) {
     return NULL;
 }
 
+/* -dev watches the entry file plus every module it imports. A DevWatch holds
+ * one FWatcher per file; the set is rebuilt on each cycle so that adding or
+ * removing an import takes effect on the next save. */
+#define DEV_WATCH_MAX 64
+typedef struct {
+    char      paths[DEV_WATCH_MAX][640];
+    FWatcher *fw[DEV_WATCH_MAX];
+    int       n;
+} DevWatch;
+
+static void devwatch_close(DevWatch *w) {
+    for (int i = 0; i < w->n; i++)
+        if (w->fw[i]) { fw_close(w->fw[i]); w->fw[i] = NULL; }
+    w->n = 0;
+}
+
+static int devwatch_open(DevWatch *w, const char *path, const char *mod_root) {
+    w->n = 0;
+    snprintf(w->paths[0], sizeof(w->paths[0]), "%s", path);
+    w->n = 1;
+
+    char (*mods)[640] = (char (*)[640])calloc(DEV_WATCH_MAX, 640);
+    if (mods) {
+        int m = collect_module_paths(path, mod_root, mods, DEV_WATCH_MAX - 1);
+        for (int i = 0; i < m && w->n < DEV_WATCH_MAX; i++)
+            snprintf(w->paths[w->n++], 640, "%s", mods[i]);
+        free(mods);
+    }
+
+    int live = 0;
+    for (int i = 0; i < w->n; i++) {
+        w->fw[i] = fw_open(w->paths[i]);   /* a module may not exist yet */
+        if (w->fw[i]) live++;
+    }
+    return live;   /* 0 means we cannot watch anything at all */
+}
+
+/* Poll every watcher once. Returns 1 if any file changed. Slices the budget so
+ * the total wait stays close to timeout_ms no matter how many files there are. */
+static int devwatch_wait(DevWatch *w, int timeout_ms) {
+    int active = 0;
+    for (int i = 0; i < w->n; i++) if (w->fw[i]) active++;
+    if (active == 0) return -1;
+
+    int slice = timeout_ms / active;
+    if (slice < 20) slice = 20;
+
+    int changed = 0;
+    for (int i = 0; i < w->n; i++) {
+        if (!w->fw[i]) continue;
+        int wr = fw_wait(w->fw[i], slice);
+        if (wr == 1) changed = 1;
+        else if (wr == -1) {                 /* file replaced — reattach */
+            fw_close(w->fw[i]);
+            w->fw[i] = fw_open(w->paths[i]);
+        }
+    }
+    return changed;
+}
+
 static int run_dev(const char *path) {
     fprintf(stderr, "[fluxa] -dev: watching %s (Ctrl-C to stop)\n", path);
 
     static ASTPool ast_pool;
     static PrstPool pool;
     pool.entries = NULL; pool.count = 0; pool.cap = 0;
+
+    /* Same module_root the parser uses, so the watcher looks for live/ and
+     * static/ in the place the imports actually resolve to. */
+    FluxaConfig _wcfg = fluxa_config_find_and_load();
+    const char *watch_root = _wcfg.module_root[0] ? _wcfg.module_root : NULL;
 
     /* Sprint 9: create stable IPC view — survives across reloads */
     IpcRtView *ipc_view = ipc_rtview_create();
@@ -328,36 +441,52 @@ static int run_dev(const char *path) {
             return 1;
         }
 
-        FWatcher *fw = fw_open(path);
-        if (!fw) {
+        DevWatch watch;
+        memset(&watch, 0, sizeof(watch));
+        if (devwatch_open(&watch, path, watch_root) == 0) {
             fprintf(stderr, "[fluxa] -dev: cannot open watcher for %s\n", path);
+            devwatch_close(&watch);
             ctx.cancel = 1;
             pthread_join(tid, NULL);
             if (ipc) ipc_server_stop(ipc);
             if (ipc_view) ipc_rtview_destroy(ipc_view);
             return 1;
         }
+        if (watch.n > 1)
+            fprintf(stderr, "[fluxa] -dev: watching %d file(s) (entry + %d module(s))\n",
+                    watch.n, watch.n - 1);
 
-        int reload = 0;
+        int reload   = 0;
+        int finished = 0;   /* script returned on its own and was already reaped */
         while (!reload) {
-            int wr = fw_wait(fw, 200);
-            if (wr == 1)  reload = 1;
-            else if (wr == -1) {
-                fw_close(fw);
-                fw = fw_open(path);
-                if (!fw) break;
+            int wr = devwatch_wait(&watch, 200);
+            if (wr == -1) break;   /* every watcher gone */
+            /* A script that returns on its own must be reaped, but NOT restarted:
+             * the previous code set reload=1 here, so a program without a main
+             * loop was re-executed as fast as the thread could be spawned. With
+             * std.graph that meant a new window every few milliseconds. Reap it
+             * and keep watching — the next run happens when the file changes. */
+            if (!finished && ctx.done) {
+                pthread_join(tid, NULL);
+                finished = 1;
+                fprintf(stderr,
+                    "[fluxa] -dev: script finished (exit=%d) — waiting for changes...\n",
+                    ctx.exit_code);
             }
-            if (ctx.done) reload = 1;
+            if (wr == 1) reload = 1;
         }
-        fw_close(fw);
+        devwatch_close(&watch);
 
-        if (!ctx.done) {
+        if (!finished) {
             ctx.cancel = 1;
             pthread_join(tid, NULL);
             fprintf(stderr, "[fluxa] -dev: reload triggered\n");
-        } else {
-            pthread_join(tid, NULL);
-            fprintf(stderr, "[fluxa] -dev: waiting for changes...\n");
+        }
+        if (!reload) {   /* watchers could not be reopened — do not spin */
+            fprintf(stderr, "[fluxa] -dev: watcher lost for %s — stopping\n", path);
+            if (ipc) ipc_server_stop(ipc);
+            if (ipc_view) ipc_rtview_destroy(ipc_view);
+            return 1;
         }
     }
     if (ipc) ipc_server_stop(ipc);

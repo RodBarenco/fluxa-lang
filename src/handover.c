@@ -24,11 +24,45 @@
 #include <time.h>
 
 /* ── clock helper ────────────────────────────────────────────────────────── */
+/* The protocol needs a monotonic millisecond clock in exactly two places: the
+ * safe-point deadline in step 4 and the grace period in step 5. Neither is on
+ * the data path — the safe point itself is call_depth == 0 && danger_depth == 0,
+ * pure counters. The clock only decides when to give up.
+ *
+ * POSIX hosts have clock_gettime. A bare-metal target linked against newlib
+ * does not, which is why handover.c could not cross-compile for Cortex-M even
+ * though SRCS_EMBEDDED lists it. There the two calls become weak hooks the SDK
+ * integration overrides (pico-sdk: to_ms_since_boot / sleep_us; esp-idf already
+ * provides POSIX time, so build it with -DFLUXA_HAS_POSIX_CLOCK=1 instead).
+ *
+ * The default hook returns -1 on purpose. A runtime with no clock must not
+ * guess a deadline and must not silently skip the wait: step 4 refuses the
+ * handover, Runtime A is never touched, and the service keeps running. Failing
+ * closed is the same invariant every other step already honours. */
+#if defined(FLUXA_EMBEDDED) && !defined(FLUXA_HAS_POSIX_CLOCK)
+
+__attribute__((weak)) long fluxa_platform_ms_now(void)      { return -1; }
+__attribute__((weak)) void fluxa_platform_sleep_us(long us) { (void)us; }
+
+static long ms_now(void) { return fluxa_platform_ms_now(); }
+static void ho_sleep_us(long us) { fluxa_platform_sleep_us(us); }
+
+#else
+
 static long ms_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (long)(ts.tv_sec * 1000L + ts.tv_nsec / 1000000L);
 }
+
+static void ho_sleep_us(long us) {
+    struct timespec ts;
+    ts.tv_sec  = us / 1000000L;
+    ts.tv_nsec = (us % 1000000L) * 1000L;
+    nanosleep(&ts, NULL);
+}
+
+#endif
 
 /* ── fail with full rollback ────────────────────────────────────────────── */
 static void ctx_fail(HandoverCtx *ctx, HandoverResult r, const char *detail) {
@@ -269,6 +303,12 @@ HandoverResult handover_step3_dry_run(HandoverCtx *ctx) {
     scope_free(&rt_b->scope);
     scope_table_free(&rt_b->global_table);
     block_registry_free();
+    /* The pool survives into step 4, but the GC below does not spare it. Any
+     * external resource the rehearsal opened is about to be freed, so mark
+     * those entries as headstones first — the runtime that takes over rebuilds
+     * them for real. Without this the surviving pool carries dangling handles
+     * straight into production. */
+    runtime_prst_headstone_resources(&rt_b->prst_pool);
     gc_collect_all(&rt_b->gc, gc_dyn_free_fn);
     ffi_registry_free(&rt_b->ffi);
     /* prst_pool and prst_graph SURVIVE — used by step 4 */
@@ -299,15 +339,28 @@ HandoverResult handover_step4_switchover(HandoverCtx *ctx) {
     Runtime *rt_a = ctx->rt_a;
 
     /* Wait for safe point in A with timeout */
-    long deadline = ms_now() + ctx->safe_point_timeout_ms;
+    long t_start = ms_now();
+    if (t_start < 0) {
+        /* No platform clock: the deadline below would be meaningless and
+         * looping without one could spin forever on a device that never
+         * reaches a safe point. Refuse the switchover instead. A is still
+         * untouched at this point, so the running service simply continues on
+         * the old runtime — the protocol declines the upgrade rather than
+         * risking the thing it exists to protect. */
+        ctx_fail(ctx, HANDOVER_ERR_SAFE_POINT,
+                 "no platform clock — provide fluxa_platform_ms_now() in the SDK "
+                 "integration, or build with -DFLUXA_HAS_POSIX_CLOCK=1; "
+                 "handover refused, Runtime A keeps serving");
+        return HANDOVER_ERR_SAFE_POINT;
+    }
+    long deadline = t_start + ctx->safe_point_timeout_ms;
     while (!runtime_is_safe_point(rt_a)) {
         if (ms_now() >= deadline) {
             ctx_fail(ctx, HANDOVER_ERR_SAFE_POINT,
                      "timeout waiting for safe point in Runtime A");
             return HANDOVER_ERR_SAFE_POINT;
         }
-        struct timespec ts_poll; ts_poll.tv_sec = 0; ts_poll.tv_nsec = 500000L;
-        nanosleep(&ts_poll, NULL);
+        ho_sleep_us(500L);
     }
 
     ctx->rt_a_cycle_at_swap = rt_a->cycle_count;
@@ -333,10 +386,7 @@ HandoverResult handover_step5_cleanup(HandoverCtx *ctx) {
             ctx->grace_period_ms);
 
     if (ctx->grace_period_ms > 0) {
-        struct timespec ts_grace;
-        ts_grace.tv_sec  = ctx->grace_period_ms / 1000;
-        ts_grace.tv_nsec = (long)(ctx->grace_period_ms % 1000) * 1000000L;
-        nanosleep(&ts_grace, NULL);
+        ho_sleep_us((long)ctx->grace_period_ms * 1000L);
     }
 
     /* Free snapshot */

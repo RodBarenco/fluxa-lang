@@ -212,6 +212,62 @@ prst int counter = 0    // survives reloads
 
 *prst contract: A removed prst variable atomically invalidates all state and execution that depended on it. Interruption is immediate and total.*
 
+#### Initializer replay on reload
+
+On a reload the restore path compares the declared initializer against the
+baseline recorded in the pool, so that editing a declaration wins over the value
+the previous run left behind:
+
+```fluxa
+prst int base = 12      // runtime mutated it to 41
+prst int base = 99      // after the edit and a save: 99 wins, not 41
+```
+
+Evaluating that initializer is only safe when doing so has no side effects and
+produces a value the comparison can read. The initializer is therefore replayed
+**only when it is a literal or a binary expression of literals** — `int`,
+`float`, `bool`, `str`. Anything else — a std lib call, an FFI call, a Block
+method, a `dyn` literal — is **not** re-evaluated, and the pooled value wins
+unconditionally.
+
+This is what makes a resource handle usable as persistent state. Replaying
+`graph.init(800, 600, "app")` would open a second window and then discard it,
+because the comparison has no branch for `dyn`; the same shape would reopen a
+database with `sqlite.open` or reallocate a cursor with `csv.open`.
+
+*Consequence: editing a non-literal initializer has no effect until the next
+process. `prst str label = strings.concat("v", n)` keeps its pooled value across
+reloads no matter how the source is edited.*
+
+#### The two boundaries: reload vs. runtime swap
+
+`prst` answers two different questions, and the answers differ:
+
+| | in-process reload (`-dev`, `apply`) | runtime swap (`handover`, `update`) |
+|---|---|---|
+| `int`, `float`, `bool`, `str`, `arr` | preserved | preserved — carried by the snapshot |
+| `dyn` holding an external resource | **same handle** — same window, same cursor | **rebuilt** — a new window is born |
+
+The dividing line is the snapshot, not the process. An in-process reload hands
+the pool over in memory, so a pointer stays valid and the window never blinks. A
+runtime swap serializes — and the wire format has no `VAL_DYN` case, because a
+pointer survives neither `execve` nor, in `HANDOVER_MODE_FLASH`, a reboot. Note
+that Stage 2 (§10.2) serializes even though it never leaves the process, so a
+resource is rebuilt there too.
+
+Deserialization leaves `VAL_NIL` while `declared_type` still reads `VAL_DYN`.
+That combination is a **headstone**, and it is the signal to rebuild the
+resource from its declaration rather than restore a handle that no longer
+exists. Measurements, counters, and every serializable value are restored either
+way — a sensor loop keeps its accumulated readings across a firmware upgrade
+while its display reopens.
+
+**External OS handles stay plain `int`.** A socket or PostgreSQL connection is
+not a `dyn` cursor and must not be marked `prst`: the persistence layer would
+restore a handle number the OS has already reclaimed, producing *"Address
+already in use"* on restart. The durable thing is the startup code that recreates
+them.
+
 ### 4.2 PrstPool, PrstGraph, and Resolver Caps
 
 The initial size of the prst variable pool and the dependency graph is configurable via `fluxa.toml`. Both structures are dynamic — grow via realloc without a fixed ceiling. The resolver scope pool is also configurable, but is a true capacity (see below).
@@ -708,6 +764,15 @@ fluxa apply new_main.flx -p   # preflight before applying
 | Wait for safe point | 0 to 1 cycle | Worst case: 1 full loop iteration |
 | **Total typical** | **~2–10ms** | Dominated by parse, not migration |
 
+> **Implementation note.** The in-memory migration described above is the design
+> intent, and it is what the `-dev` reload path does today. The `fluxa apply`
+> CLI, however, runs in a **new process**: it calls `runtime_apply(program, NULL)`
+> with an empty pool, and there is no `IPC_OP_APPLY` opcode for a running
+> runtime to receive a script swap. Programs that need state to survive a swap
+> should use `-dev` (in-process reload) or Stage 2 (`fluxa handover`), both of
+> which do migrate the pool. This gap is documented rather than silently
+> assumed.
+
 ---
 
 ### 10.2 Stage 2 — Atomic Handover (`fluxa handover`)
@@ -720,7 +785,7 @@ Replaces the script **and** the runtime configuration (`fluxa.toml`) in one atom
 - Changed `[runtime]` parameters (GC cap, prst cap, warm profile budget)
 - Any deployment where you want the Dry Run safety net before committing
 
-**What Stage 2 provides that Stage 1 does not:** The 5-step protocol includes a **Dry Run** (Step 3) — the new program executes completely with all output suppressed before the old program is touched. If the new version has a runtime error, the handover is aborted and the system stays on the old version. Stage 1 (`fluxa apply`) has no such rollback.
+**What Stage 2 provides that Stage 1 does not:** The 5-step protocol includes a **Dry Run** (Step 3) — the new program executes completely, with `print()` suppressed, before the old program is touched (see §10.7 for what the rehearsal does and does not suppress). If the new version has a runtime error, the handover is aborted and the system stays on the old version. Stage 1 (`fluxa apply`) has no such rollback.
 
 **Mechanism:** Five-step protocol. Steps 1–3 run with Runtime A fully active — the gap occurs only at Step 4 (Switchover). The pool swap itself is a pointer operation — submicrosecond.
 
@@ -735,8 +800,8 @@ fluxa handover old.flx new.flx --grace 0  # mission-critical: zero grace
 |---|---|---|
 | 1 | Standby | Runtime B allocated. New program parsed and resolved. Failure here → B discarded, A intact. |
 | 2 | Migration | PrstPool and PrstGraph from A serialized into flat binary snapshot. FNV-32 checksum calculated. Snapshot deserialized into B with validation. |
-| 3 | Dry Run | B executes complete program with `dry_run=1`. Output and FFI suppressed. Any error → handover aborted, A untouched. |
-| 4 | Switchover | Waits for safe point in A (`call_depth==0 && danger_depth==0`). Pool from B transferred atomically. |
+| 3 | Dry Run | B executes complete program with `dry_run=1`. `print()` suppressed; std lib calls really run (§10.7). Any error → handover aborted, A untouched. Resources opened by the rehearsal are marked as headstones so they never reach production. |
+| 4 | Switchover | Waits for safe point in A (`call_depth==0 && danger_depth==0`). Pool from B transferred atomically. Requires a monotonic clock for the deadline — a target without one refuses the switchover and keeps A serving (§10.9). |
 | 5 | Cleanup | Grace period (default 100ms). Temporary B destroyed. Execution resumes from B with transferred pool. |
 
 *Central invariant: Runtime A is never modified during a handover attempt. Any failure in B destroys B and keeps A active without corruption.*
@@ -872,7 +937,31 @@ On hardware with limited SRAM (264 KB), two runtimes in parallel don't fit. `HAN
 
 ### 10.7 Dry Run (`dry_run=1`)
 
-Used in Stage 2 (Atomic Handover) step 3. When `dry_run = 1`, all external output is suppressed — `print()`, FFI calls, scope writes. Internal logic executes normally: loops, calculations, `prst` reads/writes happen and are validated. If `rt_error()` is called during a dry run, `ERR_HANDOVER` is generated in A and the handover is aborted.
+Used in Stage 2 (Atomic Handover) step 3. When `dry_run = 1`, `print()` output is suppressed. Internal logic executes normally: loops, calculations, `prst` reads/writes happen and are validated. If `rt_error()` is called during a dry run, `ERR_HANDOVER` is generated in A and the handover is aborted.
+
+**The Dry Run is a rehearsal that really runs.** `dry_run` gates `print()` and prevents `prst` mutations from being committed to the pool — it does **not** gate std lib calls. `graph.init()` during a dry run genuinely opens a window, `sqlite.open()` genuinely opens a database, and an HTTP request is genuinely sent. This is deliberate: a validation pass that stubbed out every library call would not validate much. The consequence is that a program whose top level performs an externally visible action performs it twice during a handover — once in the rehearsal, once for real.
+
+**Nothing the rehearsal opens reaches production.** Step 3 collects Runtime B's GC while allowing the pool to survive into step 4, so any resource the rehearsal created is freed at the end of the rehearsal. Those pool entries are reset to headstones (`VAL_NIL` under the original `declared_type`, see §4.1) before the collect, which tells the runtime taking over to build the resource for real rather than inherit a freed handle. Serializable values pass through untouched, and the pool's checksum and serialized bytes are unchanged by the reset.
+
+
+### 10.9 Platform clock (embedded targets)
+
+The protocol reads a clock in exactly two places: the safe-point deadline in step 4 and the grace period in step 5. Neither is on the data path — the safe point itself is `call_depth == 0 && danger_depth == 0`, pure runtime counters. The clock only decides when to give up waiting.
+
+POSIX hosts use `clock_gettime(CLOCK_MONOTONIC)`. A bare-metal target linked against newlib has neither that nor `nanosleep`, so when `FLUXA_EMBEDDED` is set without `FLUXA_HAS_POSIX_CLOCK`, both calls become weak hooks the SDK integration overrides:
+
+```c
+long fluxa_platform_ms_now(void);       /* monotonic ms since boot */
+void fluxa_platform_sleep_us(long us);
+```
+
+| Target | Wiring |
+|---|---|
+| pico-sdk (RP2040) | `to_ms_since_boot(get_absolute_time())` and `sleep_us()` |
+| esp-idf (ESP32) | already provides POSIX time — build with `-DFLUXA_HAS_POSIX_CLOCK=1` |
+| POSIX host | unchanged, no hooks involved |
+
+**Fail closed.** The weak default returns `-1`. A runtime with no clock must not invent a deadline and must not silently skip the wait, so step 4 refuses the switchover with `HANDOVER_ERR_SAFE_POINT`. Runtime A has not been touched at that point, so the device keeps serving on the old runtime and the upgrade is simply declined. Forgetting to wire the hook costs an upgrade, never the running service — the same rule every other step of the protocol follows.
 
 
 ## 11. CLI — Commands
@@ -912,6 +1001,23 @@ fluxa keygen [--dir <path>]         Generate Ed25519 + HMAC keys for FLUXA_SECUR
 | Linux | inotify | IN_CLOSE_WRITE \| IN_MOVED_TO |
 | macOS / BSD | kqueue | EVFILT_VNODE NOTE_WRITE \| NOTE_ATTRIB |
 | Others | select() | stat() mtime, 500ms interval |
+
+**What is watched.** The entry file plus every module it imports — each
+`import live <name>` and `import static <name>` resolved against `module_root`.
+The set is rebuilt on every cycle, so adding or removing an import takes effect
+on the next save. Saving `live/turtle.flx` reloads exactly as saving
+`main.flx` does. A module that does not exist yet is skipped rather than
+treated as an error.
+
+**A script that returns is not restarted.** Normal termination is not a reload
+trigger: the runtime is reaped and the watcher keeps waiting for a file change.
+Only an actual save starts the next cycle. This matters for programs that hold
+an external resource — a re-execution loop would open a new window every few
+milliseconds.
+
+**First-run state.** The pool produced by the very first cycle is carried into
+the first reload, so a `prst` counter reads 1, 2, 3 across successive saves
+rather than restarting once before it begins to count.
 
 ### 11.2 IPC — Unix Socket
 

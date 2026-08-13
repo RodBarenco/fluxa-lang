@@ -1,5 +1,64 @@
 # Fluxa-lang Changelog
 
+## v0.29 — `prst` across reloads, runtime swaps, and every build target
+
+Hot reload with an external resource in `prst` did not work. `prst dyn win = graph.init(800, 600, "app")` opened a **new window on every save**, and the same shape reopened a database with `sqlite.open` or reallocated a cursor with `csv.open`. Five separate defects sat on that one path; fixing them exposed a sixth in the Atomic Handover and made three cross-compilation targets build again.
+
+**The reload path re-ran every initializer.** The `prst` restore branch evaluated the declared initializer unconditionally, in order to detect that the source had been edited. That comparison only has branches for `int`, `float`, `bool`, and `str` — so for a `dyn` the freshly built value was always discarded, and the only lasting effect was the constructor running a second time. Initializers are now replayed only when they are side-effect free and comparable: a literal, or a binary expression of literals. For a lib call, an FFI call, or a Block method, the pooled value wins, which is what `prst` promises. Editing `prst int n = 12` to `= 99` still takes precedence over the runtime value, unchanged.
+
+**The teardown collect swept the surviving pool.** `gc_collect_all` frees every registered wrapper regardless of `pin_count`, including the `VAL_DYN` the outgoing `PrstPool` still points at. The opaque `VAL_PTR` inside it — a window, a cursor — is invisible to the GC and survived, so the resource stayed alive while the only handle reaching it was freed underneath the pool. Dyn wrappers owned by a surviving pool are now detached from the GC table before the collect and re-registered when the declaration is restored.
+
+**`-dev` discarded the first run's state.** The first cycle went through `runtime_exec`, which frees its own pool; only later cycles used `runtime_apply`. A counter therefore read `1`, then `1` again after the first save, and only began counting from the second reload. `runtime_exec_persist(program, pool_out)` now hands the pool to the caller; `runtime_exec` is the `pool_out == NULL` case and is unchanged for every other caller.
+
+**A finished script was re-executed in a loop.** `-dev` treated normal termination as a reload trigger, respawning the program as fast as a thread could be created — 38 runs in six seconds with no file change, each one opening another window. A script that returns is now reaped and waited on.
+
+**The watcher never looked at modules.** Only the entry file was watched, so saving `live/turtle.flx` or `static/layout.flx` did nothing. `-dev` now watches the entry file plus every `import live` / `import static` target, rebuilding the set on each cycle so a new import takes effect on the next save. The pre-existing `dev_module_file_change_triggers_reload` test had been passing on the respawn loop rather than on a working watcher.
+
+### Two axes, not one
+
+A reload and a runtime swap are different questions, and `prst` answers them differently:
+
+| | in-process reload (`-dev`, `apply`) | runtime swap (`handover`, `update`) |
+|---|---|---|
+| `int`, `float`, `bool`, `str`, `arr` | preserved | preserved — carried by the snapshot |
+| `dyn` holding an external resource | **same handle** — same window | **rebuilt** — new window |
+
+The snapshot wire format has no `VAL_DYN` case, because a pointer cannot survive `execve` — or, in `HANDOVER_MODE_FLASH`, a reboot. Deserialization therefore leaves `VAL_NIL` while `declared_type` still reads `VAL_DYN`. That combination is now recognized as a **headstone**: the resource is rebuilt from its declaration instead of restored as nil. Measurements, counters, and every serializable value are restored either way.
+
+**The Dry Run is a rehearsal.** `dry_run` suppresses `print` but not lib calls, so step 3 really does open a window — and it collects Runtime B's GC while deliberately letting the pool survive into step 4. Any resource the rehearsal opened is therefore already freed when the pool crosses over. Those entries are now marked as headstones before the collect, so the runtime taking over builds the resource for real rather than inheriting a dangling handle.
+
+The 5-step protocol is unchanged: same steps, same order, same wire format, same `FLUXA_HANDOVER_VERSION`. The pool checksum, serialized size, and byte content are bit-identical before and after the headstone pass, and `declared_type` is preserved.
+
+### C ABI on Windows
+
+`fluxa_cabi.h` had two visibility states for three situations. Building the DLL gets `dllexport` and an external host consuming it gets `dllimport`, but `wire.c` and `context.c` compiled **into** `fluxa.exe` to provide `std.cabi` were also marked `dllimport` — so MinGW emitted the definitions under their plain names while every caller asked for the `__imp_` thunk of a DLL that was not being linked. `FLUXA_CABI_STATIC` is the third state, set by `WINDOWS_CABI_CFLAGS`. POSIX never showed the fault because `visibility("default")` does not rename symbols.
+
+This blocked every Windows target, since `build-windows-essential`, `build-windows-essential-static`, and `build-windows-packaged` all route through `build-windows-profile`. The runtime executable links no third-party DLL — its only imports are `KERNEL32.dll` and `msvcrt.dll` — and `fluxa_cabi.dll` still exports its 32 symbols unchanged.
+
+### Bare metal: the platform clock fails closed
+
+`handover.c` is listed in `SRCS_EMBEDDED` but could not cross-compile, because `ms_now()` uses `clock_gettime(CLOCK_MONOTONIC)` and newlib bare-metal provides neither that nor `nanosleep`. `make build-rp2040` and `make build-cortex-m` failed at the first object.
+
+The protocol needs a clock in exactly two places — the safe-point deadline in step 4 and the grace period in step 5. Neither is on the data path: the safe point itself is `call_depth == 0 && danger_depth == 0`, pure counters. With `FLUXA_EMBEDDED` set and no `FLUXA_HAS_POSIX_CLOCK`, those two calls become weak hooks the SDK integration overrides:
+
+```c
+long fluxa_platform_ms_now(void);       /* monotonic ms since boot */
+void fluxa_platform_sleep_us(long us);
+```
+
+pico-sdk supplies `to_ms_since_boot(get_absolute_time())` and `sleep_us()`. esp-idf already has POSIX time, so it builds with `-DFLUXA_HAS_POSIX_CLOCK=1` and uses the unchanged `clock_gettime` path.
+
+The weak default returns `-1` deliberately. A runtime with no clock must not invent a deadline and must not skip the wait: step 4 refuses the switchover with `HANDOVER_ERR_SAFE_POINT`, Runtime A has not been touched, and the device keeps serving on the old runtime. **Forgetting to wire the hook costs an upgrade, never the running service** — the same fail-closed rule every other step already follows.
+
+### Validation
+
+`tests/prst_reload_resources.sh` is new: 13 cases covering window identity across reloads, `prst` survival through the first reload, the respawn loop, initializer-edit precedence, `live/` and `static/` module watching, snapshot restore versus resource rebuild, handover with a resource in the pool, and the fail-closed clock. Against the previous binary, 7 of them fail. `tests/tools/mk_restart_snapshot.c` builds a restart snapshot by hand so the runtime-swap half can be tested without a second binary to swap to; `tests/tools/handover_no_clock.c` builds `handover.c` the way bare metal does and checks both that a missing clock refuses and that a wired clock proceeds.
+
+`make test-all` is unchanged at 82 passed / 4 failed (the four are missing system libraries). The handover suite passes 10/10 and the integration scenarios 3/3, including the fault-injection case that `SIGKILL`s the process ~20 ms in — the protocol's 5–20 ms end-to-end timing is untouched. AddressSanitizer reports no errors across reload, restart, and handover; the benchmark is unchanged; builds are warning-free.
+
+`make build-rp2040`, `make build-cortex-m`, and the Windows targets build again.
+
+
 ## v0.28.2 — `image.get_text`: PNG iTXt metadata reader
 
 `std.image` now completes the PNG metadata round trip with `image.get_text(path, key) -> str`, the read-side counterpart to `image.set_text`.

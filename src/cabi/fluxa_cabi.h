@@ -16,12 +16,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(_WIN32)
+/* Symbol visibility has three cases on Windows, not two.
+ *
+ *   FLUXA_CABI_BUILD   producing fluxa_cabi.dll          → dllexport
+ *   (neither)          a host language consuming the DLL → dllimport
+ *   FLUXA_CABI_STATIC  wire.c/context.c compiled straight
+ *                      into fluxa.exe to provide std.cabi → no decoration
+ *
+ * The third case is what the runtime executable does: `std.cabi = true` puts
+ * the wire sources in the same link as runtime.c, so nothing is imported from
+ * anywhere. Marking those definitions dllimport is what produced
+ * `undefined reference to __imp_fluxa_cabi_add_str_arr`: MinGW emits the
+ * definition under its plain name while every caller asks for the __imp_
+ * thunk of a DLL that is not being linked. POSIX never showed the fault
+ * because visibility("default") does not rename the symbol.
+ */
+#if defined(_WIN32) && !defined(FLUXA_CABI_STATIC)
 #  if defined(FLUXA_CABI_BUILD)
 #    define FLUXA_CABI_API __declspec(dllexport)
 #  else
 #    define FLUXA_CABI_API __declspec(dllimport)
 #  endif
+#elif defined(_WIN32)
+#  define FLUXA_CABI_API
 #else
 #  define FLUXA_CABI_API __attribute__((visibility("default")))
 #endif

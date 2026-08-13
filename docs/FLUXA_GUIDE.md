@@ -681,7 +681,29 @@ There are two kinds of "resource" values, and they take opposite decisions on `p
 prst dyn db      = sqlite.open("data.db")   // SQLite connection cursor
 prst dyn cursor  = csv.open("log.csv")      // CSV file cursor
 prst dyn model   = infer.load("model.gguf") // LLM model cursor
+prst dyn win     = graph.init(800, 600, "live")  // graphics window
 ```
+
+The initializer of a `prst` holding a lib cursor is **not re-run on reload** —
+the pooled handle wins. That is what keeps the window from being recreated on
+every save and the database from being reopened. The corollary: editing such an
+initializer has no effect until the next process. Only literal initializers
+(`prst int n = 12` edited to `= 99`) take precedence over the pooled value.
+
+**A runtime swap is the other case.** `fluxa handover` and `fluxa update` carry
+state through a snapshot, and no pointer survives a snapshot — not across
+`execve`, and not across a reboot in Flash mode. There the resource is **rebuilt
+from its declaration** while everything serializable is restored around it:
+
+| | reload (`-dev`) | swap (`handover`, `update`) |
+|---|---|---|
+| `int`, `float`, `bool`, `str`, `arr` | preserved | preserved |
+| `prst dyn` resource | same handle | rebuilt — a new window |
+
+So a sensor loop keeps its accumulated readings across a firmware upgrade while
+its display reopens. Write the program so a reborn resource is harmless: put
+window setup in the declaration, not in a one-shot branch guarded by a `prst`
+flag.
 
 **OS-level `int` handles** (PostgreSQL connections, wserver sockets): use **plain `int`, not `prst`**, and (re)open them at startup.
 

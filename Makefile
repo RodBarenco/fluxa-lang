@@ -232,6 +232,33 @@ EMBEDDED_CFLAGS = -std=c99 -Wall -Wextra -O2 \
                   -DFLUXA_HAS_FFI=0            \
                   -DFLUXA_EMBEDDED=1
 
+# FLUXA_EMBEDDED and the platform clock
+#
+# The Atomic Handover needs a monotonic millisecond clock in two places: the
+# safe-point deadline (step 4) and the grace period (step 5). Hosts get it from
+# clock_gettime(CLOCK_MONOTONIC). Bare metal linked against newlib has neither
+# clock_gettime nor nanosleep, which is why handover.c would not cross-compile
+# even though SRCS_EMBEDDED lists it.
+#
+# With FLUXA_EMBEDDED set and no FLUXA_HAS_POSIX_CLOCK, handover.c falls back to
+# two weak hooks the SDK integration is expected to override:
+#
+#     long fluxa_platform_ms_now(void);      /* ms since boot, monotonic */
+#     void fluxa_platform_sleep_us(long us);
+#
+#   pico-sdk:  to_ms_since_boot(get_absolute_time())  and  sleep_us()
+#   esp-idf:   already provides POSIX time — build with
+#              EMBEDDED_CFLAGS="... -DFLUXA_HAS_POSIX_CLOCK=1" and the normal
+#              clock_gettime path is used unchanged.
+#
+# The weak default returns -1, and that is deliberate. A runtime with no clock
+# must not invent a deadline and must not skip the wait: step 4 sees -1 and
+# REFUSES the switchover with HANDOVER_ERR_SAFE_POINT. Runtime A has not been
+# touched at that point, so the device keeps serving on the old runtime and the
+# upgrade is simply declined. Forgetting to wire the hook therefore costs an
+# upgrade, never the running service — the same fail-closed rule every other
+# step of the protocol follows.
+
 # Embedded source list: no ipc_server.c (unix socket), no ffi.c (libffi)
 SRCS_EMBEDDED = src/lexer.c    \
                 src/parser.c   \
@@ -409,7 +436,7 @@ endif
 ifeq ($(FLUXA_BUILDTIME_CABI),1)
 CABI_NATIVE_ARTIFACT  = libfluxa_cabi.$(CABI_SHARED_EXT)
 CABI_WINDOWS_ARTIFACT = fluxa_cabi.dll
-WINDOWS_CABI_CFLAGS   = -DFLUXA_STD_CABI=1
+WINDOWS_CABI_CFLAGS   = -DFLUXA_STD_CABI=1 -DFLUXA_CABI_STATIC=1
 WINDOWS_CABI_SRCS     = src/cabi/fluxa_cabi_context.c src/cabi/fluxa_cabi_wire.c
 else
 CABI_NATIVE_ARTIFACT  =
@@ -991,6 +1018,7 @@ test-torture: build
 test-all: build build-sim-rp2040 build-sim-esp32
 	@./tests/run_tests.sh ./$(TARGET) || true
 	@bash tests/suite2/run_suite2.sh --fluxa ./$(TARGET)
+	@bash tests/prst_reload_resources.sh --fluxa ./$(TARGET)
 	@bash tests/libs/math.sh --fluxa ./$(TARGET)
 	@bash tests/libs/csv.sh --fluxa ./$(TARGET)
 	@bash tests/libs/json.sh --fluxa ./$(TARGET)

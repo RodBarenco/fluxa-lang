@@ -49,6 +49,24 @@ std.https   = "1.0"
 It also retains the pure-C libraries from the Windows minimal profile:
 `std.math`, `std.csv`, `std.json`, `std.pid`, and `std.libdsp`.
 
+### std.cabi
+
+`std.cabi` is supported on Windows and is enabled by `fluxa.libs` like any
+other library. It produces two independent artifacts:
+
+- **`fluxa_cabi.dll`** — consumed by external hosts (Python `ctypes`, LuaJIT
+  `ffi`, C#, Java, Go). See [`CABI_INTEGRATION.md`](CABI_INTEGRATION.md).
+- **the bridge inside `fluxa.exe`** — the Fluxa-side API (`import std cabi`),
+  compiled straight into the runtime executable.
+
+The runtime executable does **not** link against `fluxa_cabi.dll`; its only
+imports remain `KERNEL32.dll` and `msvcrt.dll`. The two artifacts are built from
+the same sources under different visibility settings, selected by
+`FLUXA_CABI_BUILD` (producing the DLL), `FLUXA_CABI_STATIC` (compiled into the
+executable), or neither (an external host including the header). The Makefile
+sets these; they are only relevant when integrating the sources into another
+build system.
+
 ## Filesystem path resolution
 
 `fs.read_base64` confines reads to the working directory, and that decision is

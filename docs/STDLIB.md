@@ -1479,6 +1479,19 @@ after `graph.init`, pass to workers/functions as an argument, release with
 `graph.unload_font` before `graph.close`. Using a font after `unload_font` is an
 "invalid font cursor" error, captured by `danger`.
 
+**Window and font handles survive hot reload.** Declared `prst`, they keep the
+same underlying resource across a save in `-dev`:
+
+```fluxa
+prst dyn win = graph.init(800, 600, "live")
+```
+
+The initializer is not re-run on reload, so the window is not recreated and the
+drawing continues in place. A **runtime swap** (`fluxa handover`, `fluxa update`)
+is different: no pointer crosses a snapshot, so the window is rebuilt from its
+declaration while serializable `prst` state is restored around it. See §4.1 of
+the language specification for the full rule.
+
 ```fluxa
 import std graph
 
@@ -1575,6 +1588,18 @@ validate/re-encode untrusted images server-side before redistributing them.
 | `image.get_text(path, key)` | `str` | Read the UTF-8 text from the **first** PNG `iTXt` chunk whose keyword equals `key`. Transparently reads both uncompressed and deflate-compressed iTXt. Returns `""` when the keyword does not exist. Does **not** decode pixels — only scans PNG chunks. `key` follows the same 1–79 char Latin-1 rule as `set_text`. **PNG only. Needs `danger`.** |
 | `image.discard(img)` | `nil` | Release the buffer (idempotent; also releases a `graph.capture` handle) |
 | `image.version()` | `str` | Backend version (reports whether the codec is present) |
+
+**Reading metadata is bounded.** `get_text` streams the PNG chunk by chunk
+rather than loading the file into memory, and validates the container as it
+goes: the first chunk must be a well-formed `IHDR`, every chunk's CRC-32 must
+match, `IEND` must be present, and trailing bytes after `IEND` are rejected. A
+truncated or tampered PNG therefore fails with an error instead of returning
+whatever happened to parse. Three limits cap the work regardless of input:
+24 MiB scanned, 1 MiB per `iTXt` chunk, and 1 MiB of decompressed text — a
+compressed payload that would exceed the last one is rejected rather than
+inflated. The returned text is validated as UTF-8, rejecting overlong
+encodings, surrogates, and embedded NULs. All sizes are computed in `size_t`,
+so behaviour is identical on Windows (LLP64) and POSIX (LP64).
 
 ### Capturing and exporting a frame
 

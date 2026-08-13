@@ -470,5 +470,133 @@ FLX
 )
 echo "$out" | grep -qi "codec" && pass "get_text_reports_no_codec" || fail "get_text_reports_no_codec" "codec" "$out"
 
+# Security regression tests for get_text. These require the real codec/zlib path
+# because the stub intentionally stops at the no-codec gate.
+if echo "$version_out" | grep -qi "raylib codec"; then
+    # Helper: construct a minimal structurally valid PNG and insert one custom
+    # iTXt chunk immediately before IEND.
+
+    # 39. CRC mismatch is rejected; corrupted metadata is never returned.
+    python3 - "$P/bad_crc.png" << 'PYPNG'
+import base64, struct, sys
+png = bytearray(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+iend = png.rfind(b'IEND') - 4
+data = b'proof\0\0\0\0\0trusted-looking'
+chunk = struct.pack('>I', len(data)) + b'iTXt' + data + b'\x00\x00\x00\x00'  # deliberately wrong CRC
+png[iend:iend] = chunk
+open(sys.argv[1], 'wb').write(png)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/bad_crc.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "CRC" && pass "get_text_rejects_bad_crc" || fail "get_text_rejects_bad_crc" "CRC mismatch" "$out"
+
+    # 40. Invalid UTF-8 is rejected instead of entering a Fluxa str.
+    python3 - "$P/bad_utf8.png" << 'PYPNG'
+import base64, binascii, struct, sys
+png = bytearray(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+iend = png.rfind(b'IEND') - 4
+data = b'proof\0\0\0\0\0' + b'\xff\xfe'
+body = b'iTXt' + data
+chunk = struct.pack('>I', len(data)) + body + struct.pack('>I', binascii.crc32(body) & 0xffffffff)
+png[iend:iend] = chunk
+open(sys.argv[1], 'wb').write(png)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/bad_utf8.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "UTF-8" && pass "get_text_rejects_invalid_utf8" || fail "get_text_rejects_invalid_utf8" "UTF-8 error" "$out"
+
+    # 41. A tiny compressed payload that expands beyond 1 MiB is stopped.
+    python3 - "$P/zlib_bomb.png" << 'PYPNG'
+import base64, binascii, struct, sys, zlib
+png = bytearray(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+iend = png.rfind(b'IEND') - 4
+payload = zlib.compress(b'A' * (1024 * 1024 + 1), 9)
+data = b'proof\0\1\0\0\0' + payload
+body = b'iTXt' + data
+chunk = struct.pack('>I', len(data)) + body + struct.pack('>I', binascii.crc32(body) & 0xffffffff)
+png[iend:iend] = chunk
+open(sys.argv[1], 'wb').write(png)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/zlib_bomb.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "exceeds limit" && pass "get_text_blocks_zlib_bomb" || fail "get_text_blocks_zlib_bomb" "decompressed text exceeds limit" "$out"
+
+    # 42. Oversized iTXt is rejected before allocating its declared payload.
+    python3 - "$P/huge_itxt.png" << 'PYPNG'
+import base64, struct, sys
+png = bytearray(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+iend = png.rfind(b'IEND') - 4
+# 1 MiB + 1 byte data, valid enough to reach the explicit iTXt size gate.
+data = b'proof\0\0\0\0\0' + (b'A' * (1024 * 1024 - 8))
+import binascii
+body = b'iTXt' + data
+chunk = struct.pack('>I', len(data)) + body + struct.pack('>I', binascii.crc32(body) & 0xffffffff)
+png[iend:iend] = chunk
+open(sys.argv[1], 'wb').write(png)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/huge_itxt.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "iTXt chunk exceeds limit" && pass "get_text_rejects_oversized_itxt" || fail "get_text_rejects_oversized_itxt" "iTXt chunk exceeds limit" "$out"
+
+    # 43. A hostile 32-bit chunk length is rejected by size arithmetic before
+    # any allocation/read; this also guards the LLP64 Win64 long-width pitfall.
+    python3 - "$P/hostile_length.png" << 'PYPNG'
+import struct, sys
+sig = b'\x89PNG\r\n\x1a\n'
+# Valid IHDR first, then a chunk claiming 32 MiB but providing no payload.
+import binascii
+ihdr_data = struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0)
+ihdr_body = b'IHDR' + ihdr_data
+ihdr = struct.pack('>I', 13) + ihdr_body + struct.pack('>I', binascii.crc32(ihdr_body) & 0xffffffff)
+hostile = struct.pack('>I', 32 * 1024 * 1024) + b'iTXt'
+open(sys.argv[1], 'wb').write(sig + ihdr + hostile)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/hostile_length.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "scan limit\|iTXt chunk exceeds limit" && pass "get_text_rejects_hostile_chunk_length" || fail "get_text_rejects_hostile_chunk_length" "bounded chunk-length error" "$out"
+
+    # 44. Even after finding the first matching key, corruption later in the PNG
+    # still invalidates the file; the function does not bless a partial parse.
+    python3 - "$P/corrupt_after_match.png" << 'PYPNG'
+import base64, binascii, struct, sys
+png = bytearray(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+iend = png.rfind(b'IEND') - 4
+data = b'proof\0\0\0\0\0first'
+body = b'iTXt' + data
+good = struct.pack('>I', len(data)) + body + struct.pack('>I', binascii.crc32(body) & 0xffffffff)
+bad_data = b'other\0\0\0\0\0bad'
+bad = struct.pack('>I', len(bad_data)) + b'iTXt' + bad_data + b'\x00\x00\x00\x00'
+png[iend:iend] = good + bad
+open(sys.argv[1], 'wb').write(png)
+PYPNG
+    out=$(run << FLX
+import std image
+danger { str t = image.get_text("$P/corrupt_after_match.png", "proof") }
+if err != nil { print(err[0]) }
+FLX
+)
+    echo "$out" | grep -qi "CRC" && pass "get_text_validates_full_png" || fail "get_text_validates_full_png" "CRC mismatch after first match" "$out"
+fi
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1

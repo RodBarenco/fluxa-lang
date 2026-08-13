@@ -60,6 +60,78 @@ void runtime_set_restart_snapshot(const char *path) {
     if (path) strncpy(g_restart_snapshot_path, path, sizeof(g_restart_snapshot_path)-1);
 }
 
+/* ── Hot reload: replaying a prst initializer ─────────────────────────────── */
+/* On reload the prst restore path compares the declared initializer against the
+ * baseline in the pool, so that editing `prst int n = 12` to `= 99` wins over
+ * the runtime value. Detecting that edit means evaluating the initializer — and
+ * that is only safe for expressions which have no side effects AND produce a
+ * value the comparison can actually read (int/float/bool/str).
+ *
+ * Everything else — a std lib call, an FFI call, a Block method, a dyn literal
+ * — must NOT be replayed. Re-running the constructor a second time is what made
+ * `prst dyn win = graph.init(...)` open a fresh window on every save: the call
+ * ran, a new window appeared, and the resulting value was then discarded anyway
+ * because the comparison has no branch for VAL_DYN. The same shape reopens a
+ * database with sqlite.open and reallocates a cursor with csv.open.
+ *
+ * So: replay only the literal-shaped initializers. For the rest the pooled
+ * value simply wins, which is precisely what `prst` promises. */
+static int prst_init_is_replayable(const ASTNode *n) {
+    if (!n) return 0;
+    switch (n->type) {
+        case NODE_INT_LIT:
+        case NODE_FLOAT_LIT:
+        case NODE_BOOL_LIT:
+        case NODE_STRING_LIT:
+            return 1;
+        case NODE_BINARY_EXPR:
+            return prst_init_is_replayable(n->as.binary.left) &&
+                   prst_init_is_replayable(n->as.binary.right);
+        default:
+            return 0;
+    }
+}
+
+/* The prst pool outlives the runtime that produced it, so anything it still
+ * points at must survive the teardown collect. Detaching those dyn wrappers
+ * from the GC table hands them to the pool for the length of the reload; the
+ * next run re-registers them when the declaration is restored.
+ *
+ * Only the wrapper is at stake: the VAL_PTR a lib parks inside it (a window, a
+ * cursor, a connection) is opaque to the GC either way. That asymmetry is what
+ * made the old behavior so confusing — the window object stayed alive while the
+ * handle that reached it was freed underneath the pool. */
+static void prst_detach_dyns_from_gc(GCTable *gc, PrstPool *pool) {
+    if (!pool || !pool->entries) return;
+    for (int i = 0; i < pool->count; i++) {
+        Value *v  = &pool->entries[i].value;
+        Value *iv = &pool->entries[i].init_value;
+        if (v->type  == VAL_DYN && v->as.dyn)  gc_unregister(gc, v->as.dyn);
+        if (iv->type == VAL_DYN && iv->as.dyn) gc_unregister(gc, iv->as.dyn);
+    }
+}
+
+/* A Dry Run is a rehearsal, and a rehearsal must not hand a live external
+ * resource to production. dry_run suppresses print but not lib calls, so
+ * graph.init() during step 3 really does open a window; step 3 then collects
+ * B's GC while deliberately letting the pool survive into step 4. Anything the
+ * rehearsal built is therefore already freed by the time the pool is handed
+ * over — a live handle in that pool is a dangling one.
+ *
+ * Turning those entries back into headstones (VAL_NIL under the original
+ * declared_type) says exactly the right thing to the runtime that takes over:
+ * this resource was rehearsed, not created; build it for real. Serializable
+ * values are untouched — they are what the snapshot exists to carry. */
+void runtime_prst_headstone_resources(PrstPool *pool) {
+    if (!pool || !pool->entries) return;
+    for (int i = 0; i < pool->count; i++) {
+        Value *v  = &pool->entries[i].value;
+        Value *iv = &pool->entries[i].init_value;
+        if (v->type  == VAL_DYN) { v->type  = VAL_NIL; v->as.dyn  = NULL; }
+        if (iv->type == VAL_DYN) { iv->type = VAL_NIL; iv->as.dyn = NULL; }
+    }
+}
+
 /* ── Error helpers ────────────────────────────────────────────────────────── */
 /* Sprint 8: rt_error_line includes line number in message and ErrEntry.
  * rt_error kept for compatibility — calls rt_error_line with line=0. */
@@ -1487,8 +1559,50 @@ static Value eval(Runtime *rt, ASTNode *node) {
                          */
                         prst_pool_get(RT_POOL(rt), vname, &pooled);
 
-                        Value src_init = eval(rt, node->as.var_decl.initializer);
-                        if (rt->had_error) return val_nil();
+                        /* A resource handle that came back from a restart
+                         * snapshot is a headstone, not a handle: the wire format
+                         * carries no VAL_DYN (a pointer cannot survive execve),
+                         * so prst_deser_value leaves VAL_NIL behind while
+                         * declared_type still says VAL_DYN. Restoring that nil
+                         * would leave the program with a window that never
+                         * opened. Two different situations, two answers:
+                         *
+                         *   in-process reload  → the pointer is still valid,
+                         *                        the pool wins, same window
+                         *   runtime swap       → the pointer is gone, the
+                         *                        resource must be born again
+                         *
+                         * Measurements, counters and any serializable value
+                         * survive both. Only the external resource is rebuilt. */
+                        int entry_idx0 = prst_pool_find(RT_POOL(rt), vname);
+                        int pooled_is_headstone =
+                            (entry_idx0 >= 0 && pooled.type == VAL_NIL &&
+                             RT_POOL(rt)->entries[entry_idx0].declared_type != VAL_NIL);
+
+                        /* Replay the initializer only when doing so is free of
+                         * side effects — see prst_init_is_replayable — or when
+                         * the pool has nothing usable left to restore. */
+                        int replayable =
+                            prst_init_is_replayable(node->as.var_decl.initializer);
+                        Value src_init = val_nil();
+                        if (replayable || pooled_is_headstone) {
+                            src_init = eval(rt, node->as.var_decl.initializer);
+                            if (rt->had_error) return val_nil();
+                        }
+                        if (pooled_is_headstone) {
+                            /* Rebuilt from the declaration. Re-register the new
+                             * handle so the pool owns a live value again. */
+                            if (!rt_type_check(rt, node,
+                                    node->as.var_decl.type_name, src_init, vname))
+                                return val_nil();
+                            RT_POOL(rt)->entries[entry_idx0].declared_type = src_init.type;
+                            prst_pool_set(RT_POOL(rt), vname, src_init, &rt->err_stack);
+                            prst_pool_set_offset(RT_POOL(rt), vname,
+                                                 node->resolved_offset);
+                            rt_set(rt, node, vname, src_init);
+                            scope_table_set(&rt->global_table, vname, src_init);
+                            return val_nil();
+                        }
 
                         /* Compare new source initializer against init_value
                          * (the declared value at first run or at migration time).
@@ -1500,7 +1614,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
                             : pooled;
 
                         int src_changed = 0;
-                        if (src_init.type != ref.type) {
+                        if (!replayable) {
+                            src_changed = 0;   /* pooled value wins, always */
+                        } else if (src_init.type != ref.type) {
                             src_changed = 1;
                         } else if (src_init.type == VAL_INT &&
                                    src_init.as.integer != ref.as.integer) {
@@ -1528,6 +1644,17 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                 chosen.as.string = fxstr_new(chosen.as.string); /* pool is plain malloc */
                             else if (chosen.type == VAL_ARR)
                                 chosen.as.arr.owned = 0;
+                            else if (chosen.type == VAL_DYN && chosen.as.dyn &&
+                                     !gc_find_slot(&rt->gc, chosen.as.dyn)) {
+                                /* The wrapper crossed the reload boundary owned
+                                 * by the pool. Hand it back to this runtime's GC
+                                 * so telemetry sees it and rt_set can pin it;
+                                 * teardown detaches it again for the next run. */
+                                gc_register(&rt->gc, chosen.as.dyn,
+                                    sizeof(FluxaDyn) +
+                                    sizeof(Value) * (size_t)chosen.as.dyn->cap,
+                                    &rt->err_stack);
+                            }
                         }
 
                         /* Always refresh offset: resolver may assign a different
@@ -3160,6 +3287,10 @@ Value runtime_eval(Runtime *rt, ASTNode *node) {
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 int runtime_exec(ASTNode *program) {
+    return runtime_exec_persist(program, NULL);
+}
+
+int runtime_exec_persist(ASTNode *program, PrstPool *pool_out) {
     if (!program || program->type != NODE_PROGRAM) {
         fprintf(stderr, "[fluxa] runtime: invalid program node\n");
         return 1;
@@ -3289,12 +3420,20 @@ int runtime_exec(ASTNode *program) {
 
     if (g_ipc_view) ipc_rtview_clear_live(g_ipc_view);
 
+    /* Hand the pool over before the collect, and detach whatever it still
+     * points at so the sweep below cannot free a wrapper the next run will
+     * restore. Must precede gc_collect_all. */
+    if (mode == FLUXA_MODE_PROJECT && pool_out) {
+        *pool_out = rt.prst_pool;
+        prst_detach_dyns_from_gc(&rt.gc, pool_out);
+    }
+
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);
     block_registry_free();
     gc_collect_all(&rt.gc, gc_dyn_free_fn);
     if (mode == FLUXA_MODE_PROJECT) {
-        prst_pool_free(&rt.prst_pool);
+        if (!pool_out) prst_pool_free(&rt.prst_pool);
         prst_graph_free(&rt.prst_graph);
     }
     ffi_registry_free(&rt.ffi);
@@ -3540,6 +3679,10 @@ int runtime_apply(ASTNode *program, PrstPool *pool_in) {
      * This allows chained applies (next reload gets current values). */
     if (pool_in) *pool_in = rt.prst_pool;
     else prst_pool_free(&rt.prst_pool);
+
+    /* The pool survives this runtime, so its dyn wrappers must not be swept
+     * below. Must run before gc_collect_all. */
+    if (pool_in) prst_detach_dyns_from_gc(&rt.gc, pool_in);
 
     scope_free(&rt.scope);
     scope_table_free(&rt.global_table);

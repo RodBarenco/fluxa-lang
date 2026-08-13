@@ -92,15 +92,72 @@ static inline long fluxa_deflate(const unsigned char *src, size_t src_len,
     *out = buf; return n;
 }
 
-/* inflate a zlib stream into a freshly malloc'd NUL-terminated buffer.
- * Returns the text length (without NUL) or -1 on malformed data/OOM. */
-static inline long fluxa_inflate_text(const unsigned char *src, size_t src_len,
-                                      unsigned char **out) {
+/* Defensive limits for PNG metadata parsing. Metadata is external input: keep
+ * memory and CPU bounded even when the PNG was crafted maliciously. */
+#define FLUXA_IMAGE_GET_TEXT_MAX_FILE_BYTES  (24u * 1024u * 1024u)
+#define FLUXA_IMAGE_GET_TEXT_MAX_ITXT_BYTES  (1024u * 1024u)
+#define FLUXA_IMAGE_GET_TEXT_MAX_TEXT_BYTES  (1024u * 1024u)
+
+/* Validate UTF-8 without accepting overlong encodings, surrogate code points,
+ * or values beyond U+10FFFF. NUL is rejected because Fluxa str is NUL-terminated. */
+static inline int fluxa_utf8_valid_text(const unsigned char *s, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = s[i++];
+        if (c == 0) return 0;
+        if (c <= 0x7F) continue;
+        if (c >= 0xC2 && c <= 0xDF) {
+            if (i >= n || (s[i] & 0xC0) != 0x80) return 0;
+            i += 1; continue;
+        }
+        if (c == 0xE0) {
+            if (i + 1 >= n || s[i] < 0xA0 || s[i] > 0xBF || (s[i+1] & 0xC0) != 0x80) return 0;
+            i += 2; continue;
+        }
+        if ((c >= 0xE1 && c <= 0xEC) || (c >= 0xEE && c <= 0xEF)) {
+            if (i + 1 >= n || (s[i] & 0xC0) != 0x80 || (s[i+1] & 0xC0) != 0x80) return 0;
+            i += 2; continue;
+        }
+        if (c == 0xED) {
+            if (i + 1 >= n || s[i] < 0x80 || s[i] > 0x9F || (s[i+1] & 0xC0) != 0x80) return 0;
+            i += 2; continue;
+        }
+        if (c == 0xF0) {
+            if (i + 2 >= n || s[i] < 0x90 || s[i] > 0xBF ||
+                (s[i+1] & 0xC0) != 0x80 || (s[i+2] & 0xC0) != 0x80) return 0;
+            i += 3; continue;
+        }
+        if (c >= 0xF1 && c <= 0xF3) {
+            if (i + 2 >= n || (s[i] & 0xC0) != 0x80 ||
+                (s[i+1] & 0xC0) != 0x80 || (s[i+2] & 0xC0) != 0x80) return 0;
+            i += 3; continue;
+        }
+        if (c == 0xF4) {
+            if (i + 2 >= n || s[i] < 0x80 || s[i] > 0x8F ||
+                (s[i+1] & 0xC0) != 0x80 || (s[i+2] & 0xC0) != 0x80) return 0;
+            i += 3; continue;
+        }
+        return 0;
+    }
+    return 1;
+}
+
+/* Inflate into a bounded NUL-terminated buffer. Returns 0 on success, -1 for
+ * malformed zlib data/OOM, and -2 when expansion exceeds max_out. */
+static inline int fluxa_inflate_text_bounded(const unsigned char *src, size_t src_len,
+                                             size_t max_out,
+                                             unsigned char **out, size_t *out_len) {
+    if (!out || !out_len || src_len > (size_t)UINT_MAX) return -1;
+    *out = NULL; *out_len = 0;
+
     z_stream zs; memset(&zs, 0, sizeof(zs));
     if (inflateInit(&zs) != Z_OK) return -1;
 
-    size_t cap = src_len ? (src_len * 3u + 256u) : 256u;
+    size_t cap = src_len ? src_len * 3u + 256u : 256u;
     if (cap < 256u) cap = 256u;
+    if (cap > max_out) cap = max_out;
+    if (cap == 0) cap = 1;
+
     unsigned char *buf = (unsigned char *)malloc(cap + 1u);
     if (!buf) { inflateEnd(&zs); return -1; }
 
@@ -110,29 +167,30 @@ static inline long fluxa_inflate_text(const unsigned char *src, size_t src_len,
 
     for (;;) {
         if (used == cap) {
-            if (cap > (SIZE_MAX - 1u) / 2u) { free(buf); inflateEnd(&zs); return -1; }
-            size_t ncap = cap * 2u;
+            if (cap >= max_out) { free(buf); inflateEnd(&zs); return -2; }
+            size_t ncap = cap > max_out / 2u ? max_out : cap * 2u;
             unsigned char *nb = (unsigned char *)realloc(buf, ncap + 1u);
             if (!nb) { free(buf); inflateEnd(&zs); return -1; }
             buf = nb; cap = ncap;
         }
 
-        size_t room = cap - used;
-        uInt step = room > (size_t)UINT_MAX ? UINT_MAX : (uInt)room;
+        uInt step = (uInt)(cap - used);
         zs.next_out = buf + used;
         zs.avail_out = step;
-
         int rc = inflate(&zs, Z_NO_FLUSH);
         used += (size_t)(step - zs.avail_out);
+
         if (rc == Z_STREAM_END) break;
         if (rc != Z_OK) { free(buf); inflateEnd(&zs); return -1; }
         if (zs.avail_in == 0 && zs.avail_out != 0) { free(buf); inflateEnd(&zs); return -1; }
     }
 
+    /* A valid stream must consume the complete compressed payload. */
+    if (zs.avail_in != 0) { free(buf); inflateEnd(&zs); return -1; }
     inflateEnd(&zs);
     buf[used] = 0;
-    *out = buf;
-    return used > (size_t)LONG_MAX ? -1 : (long)used;
+    *out = buf; *out_len = used;
+    return 0;
 }
 #endif
 
@@ -467,10 +525,11 @@ static inline Value fluxa_std_image_call(const char *fn_name,
     }
 
     /* image.get_text(path, key) → str
-     * Read the first PNG iTXt chunk whose keyword exactly matches `key`. Both
-     * uncompressed (compression flag 0) and zlib-deflated (flag 1) iTXt are
-     * supported. Returns "" when the keyword is absent. Does not decode pixels.
-     * PNG only. IO: needs a danger block. */
+     * Defensive PNG iTXt reader. The file is treated as hostile input: chunk
+     * boundaries and CRCs are validated, iTXt/text sizes are bounded, compressed
+     * text is inflated with a hard output cap, and returned text must be valid
+     * UTF-8. Returns "" only when a structurally valid PNG has no matching key.
+     * Does not decode pixels. PNG only. IO: needs a danger block. */
     if (strcmp(fn_name,"get_text")==0) {
         NEED(2); GET_STR(0,path); GET_STR(1,key);
         {
@@ -481,80 +540,177 @@ static inline Value fluxa_std_image_call(const char *fn_name,
         {
             FILE *fp = fopen(path, "rb");
             if (!fp) IMG_ERR("get_text: cannot open PNG file");
-            if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); IMG_ERR("get_text: read failed"); }
-            long fsz = ftell(fp);
-            if (fsz < 8) { fclose(fp); IMG_ERR("get_text: file too small to be a PNG"); }
-            if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); IMG_ERR("get_text: read failed"); }
 
-            unsigned char *png = (unsigned char *)malloc((size_t)fsz);
-            if (!png) { fclose(fp); IMG_ERR("get_text: out of memory"); }
-            if (fread(png, 1, (size_t)fsz, fp) != (size_t)fsz) {
-                free(png); fclose(fp); IMG_ERR("get_text: read failed");
+            static const unsigned char sig[8] = {137,80,78,71,13,10,26,10};
+            unsigned char got_sig[8];
+            if (fread(got_sig, 1, sizeof(got_sig), fp) != sizeof(got_sig)) {
+                fclose(fp); IMG_ERR("get_text: file too small to be a PNG");
+            }
+            if (memcmp(got_sig, sig, 8) != 0) {
+                fclose(fp); IMG_ERR("get_text: not a PNG file");
+            }
+
+            size_t scanned = 8;
+            size_t want_klen = strlen(key);
+            char *found = NULL;
+            int saw_ihdr = 0, saw_iend = 0;
+            unsigned int chunk_index = 0;
+
+            while (!saw_iend) {
+                unsigned char head[8];
+                if (fread(head, 1, sizeof(head), fp) != sizeof(head)) {
+                    free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (truncated chunk header)");
+                }
+                scanned += sizeof(head);
+                if (scanned > FLUXA_IMAGE_GET_TEXT_MAX_FILE_BYTES) {
+                    free(found); fclose(fp); IMG_ERR("get_text: PNG exceeds metadata scan limit");
+                }
+
+                unsigned int clen = ((unsigned int)head[0] << 24) |
+                                    ((unsigned int)head[1] << 16) |
+                                    ((unsigned int)head[2] << 8)  |
+                                    (unsigned int)head[3];
+                const unsigned char *ctype = head + 4;
+
+                if (chunk_index == 0) {
+                    if (memcmp(ctype, "IHDR", 4) != 0 || clen != 13u) {
+                        free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (invalid IHDR)");
+                    }
+                    saw_ihdr = 1;
+                } else if (memcmp(ctype, "IHDR", 4) == 0) {
+                    free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (duplicate IHDR)");
+                }
+
+                if (scanned > FLUXA_IMAGE_GET_TEXT_MAX_FILE_BYTES - 4u ||
+                    (size_t)clen > FLUXA_IMAGE_GET_TEXT_MAX_FILE_BYTES - scanned - 4u) {
+                    free(found); fclose(fp); IMG_ERR("get_text: PNG exceeds metadata scan limit");
+                }
+                if (memcmp(ctype, "iTXt", 4) == 0 &&
+                    (size_t)clen > FLUXA_IMAGE_GET_TEXT_MAX_ITXT_BYTES) {
+                    free(found); fclose(fp); IMG_ERR("get_text: iTXt chunk exceeds limit");
+                }
+
+                unsigned char *idata = NULL;
+                if (memcmp(ctype, "iTXt", 4) == 0) {
+                    idata = (unsigned char *)malloc((size_t)clen ? (size_t)clen : 1u);
+                    if (!idata) { free(found); fclose(fp); IMG_ERR("get_text: out of memory"); }
+                }
+
+                unsigned int crc = 0xFFFFFFFFu;
+                for (int j=0; j<4; j++) {
+                    crc ^= ctype[j];
+                    for (int k=0; k<8; k++) crc = (crc & 1u) ? (FLUXA_CRC_POLY ^ (crc >> 1)) : (crc >> 1);
+                }
+
+                size_t done = 0;
+                unsigned char scratch[4096];
+                while (done < (size_t)clen) {
+                    size_t need = (size_t)clen - done;
+                    if (need > sizeof(scratch)) need = sizeof(scratch);
+                    if (fread(scratch, 1, need, fp) != need) {
+                        free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (truncated chunk)");
+                    }
+                    if (idata) memcpy(idata + done, scratch, need);
+                    for (size_t j=0; j<need; j++) {
+                        crc ^= scratch[j];
+                        for (int k=0; k<8; k++) crc = (crc & 1u) ? (FLUXA_CRC_POLY ^ (crc >> 1)) : (crc >> 1);
+                    }
+                    done += need;
+                }
+                crc ^= 0xFFFFFFFFu;
+                scanned += (size_t)clen;
+
+                unsigned char crcbuf[4];
+                if (fread(crcbuf, 1, sizeof(crcbuf), fp) != sizeof(crcbuf)) {
+                    free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (missing CRC)");
+                }
+                scanned += sizeof(crcbuf);
+                unsigned int stored_crc = ((unsigned int)crcbuf[0] << 24) |
+                                          ((unsigned int)crcbuf[1] << 16) |
+                                          ((unsigned int)crcbuf[2] << 8)  |
+                                          (unsigned int)crcbuf[3];
+                if (crc != stored_crc) {
+                    free(idata); free(found); fclose(fp); IMG_ERR("get_text: PNG chunk CRC mismatch");
+                }
+
+                if (idata) {
+                    size_t dlen = (size_t)clen;
+                    size_t ko = 0;
+                    while (ko < dlen && idata[ko] != 0) ko++;
+                    if (ko == dlen || ko < 1 || ko > 79) {
+                        free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed iTXt keyword");
+                    }
+
+                    size_t o = ko + 1u;
+                    if (o + 2u > dlen) {
+                        free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed iTXt chunk");
+                    }
+                    unsigned int comp_flag = idata[o++];
+                    unsigned int comp_method = idata[o++];
+                    if (comp_flag > 1u || comp_method != 0u) {
+                        free(idata); free(found); fclose(fp); IMG_ERR("get_text: unsupported iTXt compression");
+                    }
+
+                    while (o < dlen && idata[o] != 0) o++; /* language tag */
+                    if (o >= dlen) { free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed iTXt chunk"); }
+                    o++;
+                    while (o < dlen && idata[o] != 0) o++; /* translated keyword */
+                    if (o >= dlen) { free(idata); free(found); fclose(fp); IMG_ERR("get_text: malformed iTXt chunk"); }
+                    o++;
+
+                    if (!found && ko == want_klen && memcmp(idata, key, want_klen) == 0) {
+                        size_t text_len = dlen - o;
+                        unsigned char *txt = NULL;
+                        size_t out_len = 0;
+
+                        if (comp_flag == 0u) {
+                            if (text_len > FLUXA_IMAGE_GET_TEXT_MAX_TEXT_BYTES) {
+                                free(idata); free(found); fclose(fp); IMG_ERR("get_text: iTXt text exceeds limit");
+                            }
+                            txt = (unsigned char *)malloc(text_len + 1u);
+                            if (!txt) { free(idata); free(found); fclose(fp); IMG_ERR("get_text: out of memory"); }
+                            memcpy(txt, idata + o, text_len);
+                            txt[text_len] = 0;
+                            out_len = text_len;
+                        } else {
+                            int irc = fluxa_inflate_text_bounded(idata + o, text_len,
+                                                                FLUXA_IMAGE_GET_TEXT_MAX_TEXT_BYTES,
+                                                                &txt, &out_len);
+                            if (irc == -2) {
+                                free(idata); free(found); fclose(fp); IMG_ERR("get_text: decompressed iTXt text exceeds limit");
+                            }
+                            if (irc != 0 || !txt) {
+                                free(txt); free(idata); free(found); fclose(fp); IMG_ERR("get_text: text decompression failed");
+                            }
+                        }
+
+                        if (!fluxa_utf8_valid_text(txt, out_len)) {
+                            free(txt); free(idata); free(found); fclose(fp); IMG_ERR("get_text: iTXt text is not valid UTF-8");
+                        }
+                        found = (char *)txt;
+                    }
+                    free(idata);
+                }
+
+                if (memcmp(ctype, "IEND", 4) == 0) {
+                    if (clen != 0u) { free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (invalid IEND)"); }
+                    saw_iend = 1;
+                }
+                chunk_index++;
+            }
+
+            if (!saw_ihdr || !saw_iend) {
+                free(found); fclose(fp); IMG_ERR("get_text: malformed PNG");
+            }
+            if (fgetc(fp) != EOF) {
+                free(found); fclose(fp); IMG_ERR("get_text: malformed PNG (data after IEND)");
             }
             fclose(fp);
 
-            static const unsigned char sig[8] = {137,80,78,71,13,10,26,10};
-            if (memcmp(png, sig, 8) != 0) { free(png); IMG_ERR("get_text: not a PNG file"); }
-
-            size_t want_klen = strlen(key);
-            long pos = 8;
-            int saw_iend = 0;
-            while (pos + 12 <= fsz) {
-                unsigned int clen = ((unsigned)png[pos]<<24)|((unsigned)png[pos+1]<<16)|
-                                    ((unsigned)png[pos+2]<<8)|((unsigned)png[pos+3]);
-                unsigned long long chunk_end = (unsigned long long)pos + 12ull + (unsigned long long)clen;
-                if (chunk_end > (unsigned long long)fsz) { free(png); IMG_ERR("get_text: malformed PNG chunk"); }
-
-                const unsigned char *ctype = png + pos + 4;
-                const unsigned char *data = png + pos + 8;
-
-                if (memcmp(ctype, "iTXt", 4) == 0) {
-                    size_t dlen = (size_t)clen;
-                    size_t ko = 0;
-                    while (ko < dlen && data[ko] != 0) ko++;
-                    if (ko < dlen && ko == want_klen && memcmp(data, key, want_klen) == 0) {
-                        size_t o = ko + 1;
-                        if (o + 2 > dlen) { free(png); IMG_ERR("get_text: malformed iTXt chunk"); }
-                        unsigned int comp_flag = data[o++];
-                        unsigned int comp_method = data[o++];
-                        if (comp_flag > 1 || (comp_flag == 1 && comp_method != 0)) {
-                            free(png); IMG_ERR("get_text: unsupported iTXt compression");
-                        }
-
-                        while (o < dlen && data[o] != 0) o++; /* language tag */
-                        if (o >= dlen) { free(png); IMG_ERR("get_text: malformed iTXt chunk"); }
-                        o++;
-                        while (o < dlen && data[o] != 0) o++; /* translated keyword */
-                        if (o >= dlen) { free(png); IMG_ERR("get_text: malformed iTXt chunk"); }
-                        o++;
-
-                        size_t text_len = dlen - o;
-                        if (comp_flag == 0) {
-                            char *txt = (char *)malloc(text_len + 1u);
-                            if (!txt) { free(png); IMG_ERR("get_text: out of memory"); }
-                            memcpy(txt, data + o, text_len);
-                            txt[text_len] = 0;
-                            Value ret = image_str(txt);
-                            free(txt); free(png);
-                            return ret;
-                        } else {
-                            unsigned char *txt = NULL;
-                            long n = fluxa_inflate_text(data + o, text_len, &txt);
-                            if (n < 0 || !txt) { free(txt); free(png); IMG_ERR("get_text: text decompression failed"); }
-                            Value ret = image_str((const char *)txt);
-                            free(txt); free(png);
-                            return ret;
-                        }
-                    }
-                }
-
-                if (memcmp(ctype, "IEND", 4) == 0) { saw_iend = 1; break; }
-                pos += 12 + (long)clen;
-            }
-
-            if (!saw_iend) { free(png); IMG_ERR("get_text: malformed PNG (no IEND)"); }
-            free(png);
-            return image_str("");
+            if (!found) return image_str("");
+            Value ret = image_str(found);
+            free(found);
+            return ret;
         }
 #else
         (void)path; (void)key;
