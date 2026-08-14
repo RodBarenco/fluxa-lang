@@ -513,6 +513,357 @@ FLX
 )
 echo "$out" | grep -q "ARITY_ERR" && pass "open_url_arity_error" || fail "open_url_arity_error" "ARITY_ERR" "$out"
 
+# run_img is run() with std.image also declared, for the cases that need an
+# image handle. The original toml()/run() are left exactly as they were so the
+# pre-existing cases keep producing identical output.
+run_img() {
+    printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"
+    cat > "$P/main.flx"
+    timeout 10s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true
+}
+
+# ══════════════════════════════════════════════════════════════════
+# v0.30 additions. Everything above this line is the pre-existing suite
+# and its output must stay byte-identical — these are all NEW dispatch
+# names, and no existing function changed shape.
+# ══════════════════════════════════════════════════════════════════
+
+# draw_image_rot: the rotating form of draw_image, pivot at the image centre
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "rot")
+    dyn img = image.new(16, 16)
+    graph.begin_frame(win)
+    graph.draw_image_rot(win, img, 10, 10, 45.0)
+    graph.draw_image_rot(win, img, 10, 10, 90.0, 2.0)
+    graph.draw_image_rot(win, img, 10, 10, 30)
+    graph.end_frame(win)
+    graph.close(win)
+    print("ROT_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "ROT_OK" && pass "draw_image_rot_accepts_int_and_float" \
+    || fail "draw_image_rot_accepts_int_and_float" "ROT_OK" "$out"
+
+# draw_image_rot rejects a non-positive scale
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "rot")
+    dyn img = image.new(16, 16)
+    graph.draw_image_rot(win, img, 0, 0, 0.0, 0.0)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "scale must be positive" && pass "draw_image_rot_scale_validated" \
+    || fail "draw_image_rot_scale_validated" "scale must be positive" "$out"
+
+# draw_sprite: full control form, and its source rectangle is bounds-checked
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "spr")
+    dyn img = image.new(64, 64)
+    graph.begin_frame(win)
+    graph.draw_sprite(win, img, 0, 0, 32, 32, 10, 10, 45.0, 255, 128, 0, 200)
+    graph.end_frame(win)
+    print("SPRITE_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "SPRITE_OK" && pass "draw_sprite_draws" \
+    || fail "draw_sprite_draws" "SPRITE_OK" "$out"
+
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "spr")
+    dyn img = image.new(32, 32)
+    graph.draw_sprite(win, img, 0, 0, 64, 64, 0, 0, 0.0, 255, 255, 255, 255)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "outside the image" && pass "draw_sprite_source_bounds_checked" \
+    || fail "draw_sprite_source_bounds_checked" "outside the image" "$out"
+
+# outline shapes and triangle
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "shapes")
+    graph.begin_frame(win)
+    graph.draw_rect_lines(win, 5, 5, 40, 20, 255, 0, 0)
+    graph.draw_circle_lines(win, 60, 60, 12.5, 0, 255, 0)
+    graph.draw_ring(win, 80, 80, 5.0, 12.0, 0, 0, 255)
+    graph.draw_triangle(win, 0, 0, 10, 0, 5, 10, 255, 255, 0)
+    graph.end_frame(win)
+    print("SHAPES_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "SHAPES_OK" && pass "outline_shapes_draw" \
+    || fail "outline_shapes_draw" "SHAPES_OK" "$out"
+
+# draw_ring validates its radii
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "ring")
+    graph.draw_ring(win, 10, 10, 20.0, 5.0, 255, 255, 255)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "inner_radius" && pass "draw_ring_radii_validated" \
+    || fail "draw_ring_radii_validated" "radii error" "$out"
+
+# render target: create, use, draw, release
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "rt")
+    dyn rt  = graph.render_target(win, 64, 64)
+    graph.begin_frame(win)
+    graph.begin_render_target(win, rt)
+    graph.clear(win, 0, 0, 0)
+    graph.end_render_target(win)
+    graph.draw_render_target(win, rt, 0, 0)
+    graph.end_frame(win)
+    graph.release_render_target(win, rt)
+    print("RT_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "RT_OK" && pass "render_target_lifecycle" \
+    || fail "render_target_lifecycle" "RT_OK" "$out"
+
+# a released render target cursor is refused, not a double free
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "rt")
+    dyn rt  = graph.render_target(win, 64, 64)
+    graph.release_render_target(win, rt)
+    graph.release_render_target(win, rt)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "invalid render target cursor" && pass "render_target_use_after_release" \
+    || fail "render_target_use_after_release" "invalid render target cursor" "$out"
+
+# blend mode validates its name
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "bm")
+    graph.set_blend_mode(win, "ALPHA")
+    graph.set_blend_mode(win, "NONE")
+    graph.set_blend_mode(win, "NOPE")
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "ALPHA, ADD, MULTIPLY" && pass "blend_mode_validated" \
+    || fail "blend_mode_validated" "blend mode error" "$out"
+
+# scissor on/off
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "sc")
+    graph.begin_frame(win)
+    graph.scissor(win, 0, 0, 100, 100)
+    graph.scissor_off(win)
+    graph.end_frame(win)
+    print("SCISSOR_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "SCISSOR_OK" && pass "scissor_on_off" \
+    || fail "scissor_on_off" "SCISSOR_OK" "$out"
+
+# mouse buttons, wheel and char input
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "in")
+    print("W", graph.mouse_wheel(win))
+    print("C", graph.char_pressed(win))
+    print("B", graph.mouse_btn_down(win, "MIDDLE"))
+    print("P", graph.mouse_btn_pressed(win, "RIGHT"))
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "W 0" && echo "$out" | grep -q "C 0" \
+    && pass "mouse_and_char_input" \
+    || fail "mouse_and_char_input" "W 0 / C 0" "$out"
+
+# an unknown mouse button is reported instead of acting on button 0
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "in")
+    bool b = graph.mouse_btn_down(win, "SIDEWAYS")
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "LEFT, RIGHT or MIDDLE" && pass "mouse_button_name_validated" \
+    || fail "mouse_button_name_validated" "button name error" "$out"
+
+# gamepad queries answer without a pad attached
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "pad")
+    print("CONN", graph.pad_connected(win, 0))
+    print("DOWN", graph.pad_down(win, 0, "A"))
+    print("AXIS", graph.pad_axis(win, 0, "LEFT_X"))
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "CONN false" && pass "gamepad_queries_answer" \
+    || fail "gamepad_queries_answer" "CONN false" "$out"
+
+# gamepad id and button names are validated
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "pad")
+    bool b = graph.pad_down(win, 9, "A")
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "gamepad id must be" && pass "gamepad_id_validated" \
+    || fail "gamepad_id_validated" "gamepad id error" "$out"
+
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "pad")
+    float a = graph.pad_axis(win, 0, "DIAGONAL")
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "LEFT_X" && pass "gamepad_axis_name_validated" \
+    || fail "gamepad_axis_name_validated" "axis name error" "$out"
+
+# camera 2D: identity with no camera, target maps to screen centre, and the
+# screen→world→screen round trip returns the original point. The maths lives in
+# the lib rather than the backend, so this holds headless too.
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(400, 300, "cam")
+    dyn a = graph.screen_to_world(win, 100.0, 50.0)
+    print("IDENT", a[0], a[1])
+    graph.begin_cam2d(win, 1000.0, 500.0, 0.0, 2.0)
+    dyn w1 = graph.screen_to_world(win, 200.0, 150.0)
+    print("CENTER", w1[0], w1[1])
+    dyn s1 = graph.world_to_screen(win, 1000.0, 500.0)
+    print("TARGET", s1[0], s1[1])
+    dyn w2 = graph.screen_to_world(win, 320.0, 90.0)
+    dyn s2 = graph.world_to_screen(win, w2[0], w2[1])
+    print("TRIP", s2[0], s2[1])
+    graph.end_cam2d(win)
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "IDENT 100 50" \
+    && echo "$out" | grep -q "CENTER 1000 500" \
+    && echo "$out" | grep -q "TARGET 200 150" \
+    && echo "$out" | grep -q "TRIP 320 90" \
+    && pass "camera2d_transform_round_trip" \
+    || fail "camera2d_transform_round_trip" "identity, centre, target and round trip" "$out"
+
+# zoom must be positive — a zero would divide by zero in the inverse
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(400, 300, "cam")
+    graph.begin_cam2d(win, 0.0, 0.0, 0.0, 0.0)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "zoom must be positive" && pass "camera2d_zoom_validated" \
+    || fail "camera2d_zoom_validated" "zoom must be positive" "$out"
+
+# window control and cursor visibility
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "wc")
+    graph.set_window_title(win, "renamed")
+    graph.set_window_size(win, 320, 240)
+    graph.hide_cursor(win)
+    graph.show_cursor(win)
+    print("WIN_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "WIN_OK" && pass "window_control" \
+    || fail "window_control" "WIN_OK" "$out"
+
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "wc")
+    graph.set_window_size(win, 0, 240)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "must be positive" && pass "window_size_validated" \
+    || fail "window_size_validated" "size error" "$out"
+
+# text_height reports a line height for a loaded font
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win  = graph.init(200, 150, "th")
+    dyn font = graph.load_font(win, "nonexistent.ttf", 20)
+}
+if err != nil { print("FONT_ERR") }
+FLX
+)
+echo "$out" | grep -q "FONT_ERR" && pass "text_height_needs_valid_font" \
+    || fail "text_height_needs_valid_font" "FONT_ERR" "$out"
+
+# the pre-existing GET_INT contract is unchanged: draw_circle still wants an
+# int radius, and widening it was deliberately NOT done.
+out=$(run << 'FLX'
+import std graph
+danger {
+    dyn win = graph.init(200, 150, "int")
+    graph.draw_circle(win, 10, 10, 5.5, 255, 255, 255)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "expected int" && pass "draw_circle_still_requires_int_radius" \
+    || fail "draw_circle_still_requires_int_radius" "expected int" "$out"
+
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.graph: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.graph: PASS" && exit 0 || exit 1

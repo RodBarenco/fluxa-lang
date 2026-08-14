@@ -249,5 +249,53 @@ if [ -f "$SRC_ROOT/tests/tools/handover_no_clock.c" ]; then
     fi
 fi
 
+# ── 14: the script thread is the SAME across reloads ──────────────────────
+# -dev used to spawn a thread per execution. That broke anything holding
+# thread-local state: a GLFW context is current per thread, so the one
+# graph.init made current on the first run stopped being current when that
+# thread exited, and every GL call from the second run onward was a silent
+# no-op — the window froze on the last frame of run 1, graph.capture returned a
+# zeroed buffer, and texture uploads failed. Checking thread identity is the
+# cheap, headless way to catch a regression back to per-execution threads.
+if [ -r /proc/self/task ]; then
+    P="$W/c14"; mkdir -p "$P"
+    printf '[project]\nname="t"\nentry="main.flx"\n' > "$P/fluxa.toml"
+    cat > "$P/main.flx" << 'FLX'
+prst int run = 0
+run = run + 1
+print("RUN", run)
+int i = 0
+while i < 2000000 { i = i + 1 }
+FLX
+    LOG14="$P/dev.log"
+    ( cd "$P" && setsid stdbuf -o0 "$FLUXA" run main.flx -proj . -dev > "$LOG14" 2>&1 ) &
+    sleep 2
+    DPID=$(grep -o "fluxa-[0-9]*\.sock" "$LOG14" 2>/dev/null | head -1 | grep -o "[0-9]*")
+    if [ -n "$DPID" ] && [ -d "/proc/$DPID/task" ]; then
+        tids_before=$(ls "/proc/$DPID/task" 2>/dev/null | sort | tr '\n' ' ')
+        seen_extra=0
+        for _ in 1 2 3; do
+            touch "$P/main.flx"
+            sleep 2
+            now=$(ls "/proc/$DPID/task" 2>/dev/null | sort | tr '\n' ' ')
+            [ "$now" != "$tids_before" ] && seen_extra=1
+        done
+        kill "$DPID" 2>/dev/null
+        runs=$(grep -c "^RUN" "$LOG14" 2>/dev/null || echo 0)
+        if [ "$seen_extra" -eq 0 ] && [ "$runs" -ge 3 ]; then
+            pass "script_thread_is_stable_across_reloads"
+        else
+            fail "script_thread_is_stable_across_reloads" \
+                 "the same thread ids across every reload" \
+                 "before='$tids_before' changed=$seen_extra runs=$runs"
+        fi
+    else
+        kill "$DPID" 2>/dev/null
+        printf "  SKIP  prst_reload/script_thread_is_stable_across_reloads  (no pid)\n"
+    fi
+else
+    printf "  SKIP  prst_reload/script_thread_is_stable_across_reloads  (no /proc)\n"
+fi
+
 echo "  → prst_reload: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → prst_reload: PASS" && exit 0 || exit 1

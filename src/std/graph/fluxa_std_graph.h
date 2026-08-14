@@ -51,6 +51,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "../../scope.h"
 #include "../../err.h"
 #include "../fluxa_image_buffer.h"   /* neutral RGBA buffer shared with std.image */
@@ -145,7 +146,49 @@ typedef struct {
     int fps_target;
     RenderTexture2D target;  /* fixed-size offscreen buffer for scaled output */
     int has_target;          /* 1 once the render texture is created */
+    /* Active 2D camera, mirrored here so screen_to_world / world_to_screen can
+     * do the maths themselves rather than asking the backend. Keeping one
+     * implementation means the headless build computes the same answer as the
+     * rendered one, and the round trip is testable without a display. */
+    int    cam_on;
+    double cam_x, cam_y, cam_rot, cam_zoom;
 } GraphWin;
+
+/* An extra off-screen surface. Wrapped in a dyn as an opaque cursor, same
+ * ownership shape as GraphFont: create, pass as an argument, release. */
+typedef struct {
+    int             width, height;
+    RenderTexture2D target;
+    int             has_target;
+} GraphRT;
+
+static GraphRT *graph_new_rt(int w, int h) {
+    GraphRT *rt = (GraphRT *)calloc(1, sizeof(GraphRT));
+    if (!rt) return NULL;
+    rt->width = w; rt->height = h;
+    rt->target = LoadRenderTexture(w, h);
+    rt->has_target = 1;
+    return rt;
+}
+
+/* Upload (or refresh) the GPU texture cached on an image buffer. Shared by
+ * draw_image_rot and draw_sprite; draw_image keeps its own inline copy so its
+ * behaviour cannot shift. Returns NULL only on allocation failure. */
+static Texture2D *graph_img_texture(FluxaImageBuf *b) {
+    Texture2D *tex = (Texture2D *)b->gpu_cache;
+    if (tex == NULL || b->gpu_version != b->version) {
+        if (tex != NULL) { UnloadTexture(*tex); free(tex); b->gpu_cache = NULL; }
+        Image img;
+        img.data = b->rgba; img.width = b->width; img.height = b->height;
+        img.mipmaps = 1; img.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+        tex = (Texture2D *)malloc(sizeof(Texture2D));
+        if (!tex) return NULL;
+        *tex = LoadTextureFromImage(img);
+        b->gpu_cache = tex;
+        b->gpu_version = b->version;
+    }
+    return tex;
+}
 
 /* Returns NULL when no usable OpenGL driver was found. InitWindow() fails
  * silently by design (it logs a WARNING and returns) rather than aborting, so
@@ -260,7 +303,26 @@ typedef struct {
     int frame_count;
     int should_close;
     int fullscreen;
+    /* Mirrors the raylib backend — the camera transform is computed from these
+     * fields on both, so screen_to_world behaves identically headless. */
+    int    cam_on;
+    double cam_x, cam_y, cam_rot, cam_zoom;
 } GraphWin;
+
+/* Off-screen surface. The stub keeps the dimensions so the cursor discipline
+ * (create / use / release, and the invalid-cursor error) is exercised without
+ * a display; nothing is drawn. */
+typedef struct {
+    int width, height;
+    int has_target;
+} GraphRT;
+
+static GraphRT *graph_new_rt(int w, int h) {
+    GraphRT *rt = (GraphRT *)calloc(1, sizeof(GraphRT));
+    if (!rt) return NULL;
+    rt->width = w; rt->height = h; rt->has_target = 0;
+    return rt;
+}
 
 static GraphWin *graph_new_win(int w, int h, const char *title) {
     GraphWin *win = (GraphWin *)calloc(1, sizeof(GraphWin));
@@ -339,6 +401,93 @@ static inline GraphFont *graph_unwrap_font(const Value *v, ErrStack *err,
     return (GraphFont *)v->as.dyn->items[0].as.ptr;
 }
 
+static inline Value graph_wrap_rt(GraphRT *rt) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=rt;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+}
+static inline GraphRT *graph_unwrap_rt(const Value *v, ErrStack *err,
+                                        int *had_error, int line, const char *fn) {
+    char eb[280];
+    if (v->type!=VAL_DYN||!v->as.dyn||v->as.dyn->count<1||
+        v->as.dyn->items[0].type!=VAL_PTR||!v->as.dyn->items[0].as.ptr) {
+        snprintf(eb,sizeof(eb),
+            "graph.%s: invalid render target cursor — use graph.render_target() "
+            "to create one",fn);
+        errstack_push(err,ERR_FLUXA,eb,"graph",line); *had_error=1; return NULL; }
+    return (GraphRT *)v->as.dyn->items[0].as.ptr;
+}
+
+/* ── 2D camera maths (backend-neutral) ───────────────────────────────
+ * Kept here rather than delegated to the backend so both builds answer the
+ * same thing. The convention matches raylib's Camera2D with offset at the
+ * window centre: world = (screen - offset) / zoom, rotated, then + target. */
+static inline void graph_cam_set(GraphWin *w, double x, double y,
+                                  double rot, double zoom) {
+    w->cam_on=1; w->cam_x=x; w->cam_y=y; w->cam_rot=rot; w->cam_zoom=zoom;
+}
+static inline void graph_cam_clear(GraphWin *w) { w->cam_on=0; }
+
+/* to_world = 1 converts screen→world, 0 converts world→screen. With no camera
+ * active both are the identity, which is the sane answer for a program that
+ * asks before starting one. */
+static inline void graph_cam_transform(const GraphWin *w, double px, double py,
+                                        int to_world, double *ox, double *oy) {
+    if (!w->cam_on) { *ox=px; *oy=py; return; }
+    const double PI_ = 3.14159265358979323846;
+    double rad = w->cam_rot * PI_ / 180.0;
+    double cs = cos(rad), sn = sin(rad);
+    double offx = (double)w->width * 0.5, offy = (double)w->height * 0.5;
+    if (to_world) {
+        double dx = (px - offx) / w->cam_zoom;
+        double dy = (py - offy) / w->cam_zoom;
+        *ox = w->cam_x + ( dx*cs + dy*sn);
+        *oy = w->cam_y + (-dx*sn + dy*cs);
+    } else {
+        double dx = px - w->cam_x, dy = py - w->cam_y;
+        double rx = dx*cs - dy*sn, ry = dx*sn + dy*cs;
+        *ox = rx * w->cam_zoom + offx;
+        *oy = ry * w->cam_zoom + offy;
+    }
+}
+
+/* Name → backend code for mouse and gamepad. Returns -1 for an unknown name so
+ * the caller reports it instead of silently acting on button 0. The numeric
+ * values are raylib's; the stub never uses them but shares the validation, so
+ * a typo is caught the same way in a headless test. */
+static inline int graph_mouse_btn_code(const char *b) {
+    if (!strcmp(b,"LEFT"))   return 0;
+    if (!strcmp(b,"RIGHT"))  return 1;
+    if (!strcmp(b,"MIDDLE")) return 2;
+    return -1;
+}
+static inline int graph_pad_btn_code(const char *b) {
+    if (!strcmp(b,"UP"))     return 1;
+    if (!strcmp(b,"RIGHT"))  return 2;
+    if (!strcmp(b,"DOWN"))   return 3;
+    if (!strcmp(b,"LEFT"))   return 4;
+    if (!strcmp(b,"Y"))      return 5;
+    if (!strcmp(b,"X"))      return 6;
+    if (!strcmp(b,"A"))      return 7;
+    if (!strcmp(b,"B"))      return 8;
+    if (!strcmp(b,"LB"))     return 9;
+    if (!strcmp(b,"RB"))     return 11;
+    if (!strcmp(b,"SELECT")) return 13;
+    if (!strcmp(b,"START"))  return 15;
+    return -1;
+}
+static inline int graph_pad_axis_code(const char *a) {
+    if (!strcmp(a,"LEFT_X"))  return 0;
+    if (!strcmp(a,"LEFT_Y"))  return 1;
+    if (!strcmp(a,"RIGHT_X")) return 2;
+    if (!strcmp(a,"RIGHT_Y")) return 3;
+    if (!strcmp(a,"LT"))      return 4;
+    if (!strcmp(a,"RT"))      return 5;
+    return -1;
+}
+
 /* Wrap a captured RGBA buffer as an opaque dyn the script hands to std.image. */
 static inline Value graph_wrap_img(FluxaImageBuf *b) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
@@ -374,9 +523,24 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     GraphFont *(var)=graph_unwrap_font(&args[(idx)],err,had_error,line,fn_name); \
     if(!(var)) return graph_nil();
 
+#define GRAPH_RT(idx,var) \
+    GraphRT *(var)=graph_unwrap_rt(&args[(idx)],err,had_error,line,fn_name); \
+    if(!(var)) return graph_nil();
+
 #define GET_INT(idx,var) \
     if(args[(idx)].type!=VAL_INT) GRAPH_ERR("expected int"); \
     long (var)=args[(idx)].as.integer;
+
+/* GRAPH_NUM accepts int or float and yields a double. It exists only for the
+ * functions added after v0.29 — every pre-existing function keeps GET_INT and
+ * therefore keeps rejecting a float exactly as it always did. Widening an
+ * existing parameter would change the contract of code that already works, so
+ * the two macros coexist on purpose. */
+#define GRAPH_NUM(idx,var) \
+    if(args[(idx)].type!=VAL_INT && args[(idx)].type!=VAL_FLOAT) \
+        GRAPH_ERR("expected int or float"); \
+    double (var)=(args[(idx)].type==VAL_INT) ? (double)args[(idx)].as.integer \
+                                             : args[(idx)].as.real;
 
 #define GET_STR(idx,var) \
     if(args[(idx)].type!=VAL_STRING||!args[(idx)].as.string) GRAPH_ERR("expected str"); \
@@ -560,6 +724,426 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         }
 #else
         (void)win; (void)b; (void)dx; (void)dy; (void)scale;
+#endif
+        return graph_nil();
+    }
+
+    /* ═════════════════════════════════════════════════════════════════
+     * Added in v0.30. Everything below is NEW dispatch names — no
+     * pre-existing function changed shape, so a program written against
+     * the older graph behaves identically. New parameters use GRAPH_NUM
+     * (int or float); the old ones keep GET_INT.
+     * ═════════════════════════════════════════════════════════════════ */
+
+    /* graph.draw_image_rot(win, img, x, y, rot [, scale]) → nil
+     *
+     * draw_image with a rotation, and nothing else to think about. The pivot is
+     * the image's own centre — that is what makes a sprite point where it moves
+     * instead of orbiting its top-left corner — while (x, y) stays the top-left
+     * position, exactly as in draw_image. So rot = 0 draws the identical pixels
+     * draw_image would, which is worth relying on and is covered by a test.
+     *
+     * For a spritesheet region, a custom pivot, tint or alpha, use draw_sprite. */
+    if (!strcmp(fn_name,"draw_image_rot")) {
+        NEED(5); GET_WIN(0,win);
+        FluxaImageBuf *b = (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>0
+                            && args[1].as.dyn->items[0].type==VAL_PTR)
+                           ? (FluxaImageBuf *)args[1].as.dyn->items[0].as.ptr : NULL;
+        if (!fluxa_imgbuf_valid(b)) GRAPH_ERR("draw_image_rot: expected a live image handle");
+        GRAPH_NUM(2,dx); GRAPH_NUM(3,dy); GRAPH_NUM(4,rot);
+        double scale = 1.0;
+        if (argc >= 6) {
+            GRAPH_NUM(5,s);
+            if (s <= 0.0) GRAPH_ERR("draw_image_rot: scale must be positive");
+            scale = s;
+        }
+#ifdef FLUXA_GRAPH_RAYLIB
+        Texture2D *tex = graph_img_texture(b);
+        if (!tex) GRAPH_ERR("draw_image_rot: out of memory");
+        float w = (float)b->width * (float)scale;
+        float h = (float)b->height * (float)scale;
+        Rectangle src = {0.0f, 0.0f, (float)b->width, (float)b->height};
+        /* Destination is centred on the image's middle, and the pivot is that
+         * same centre, so (x, y) keeps meaning top-left at any angle. */
+        Rectangle dst = {(float)dx + w*0.5f, (float)dy + h*0.5f, w, h};
+        Vector2   piv = {w*0.5f, h*0.5f};
+        DrawTexturePro(*tex, src, dst, piv, (float)rot, WHITE);
+#else
+        (void)win; (void)b; (void)dx; (void)dy; (void)rot; (void)scale;
+#endif
+        return graph_nil();
+    }
+
+    /* graph.draw_sprite(win, img, sx, sy, sw, sh, dx, dy, rot, r, g, b, a) → nil
+     *
+     * The full-control form: take the (sx, sy, sw, sh) region of a spritesheet,
+     * draw it at (dx, dy) rotated about its own centre, tinted with r/g/b and
+     * blended with alpha a (0-255). 13 arguments, which is inside the runtime's
+     * 16-argument dispatch limit with margin to spare. */
+    if (!strcmp(fn_name,"draw_sprite")) {
+        NEED(13); GET_WIN(0,win);
+        FluxaImageBuf *b = (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>0
+                            && args[1].as.dyn->items[0].type==VAL_PTR)
+                           ? (FluxaImageBuf *)args[1].as.dyn->items[0].as.ptr : NULL;
+        if (!fluxa_imgbuf_valid(b)) GRAPH_ERR("draw_sprite: expected a live image handle");
+        GRAPH_NUM(2,sx); GRAPH_NUM(3,sy); GRAPH_NUM(4,sw); GRAPH_NUM(5,sh);
+        GRAPH_NUM(6,dx); GRAPH_NUM(7,dy); GRAPH_NUM(8,rot);
+        GET_INT(9,cr); GET_INT(10,cg); GET_INT(11,cb); GET_INT(12,ca);
+        if (sw <= 0.0 || sh <= 0.0)
+            GRAPH_ERR("draw_sprite: source width and height must be positive");
+        /* A region reaching past the sheet would sample undefined texels. */
+        if (sx < 0.0 || sy < 0.0 ||
+            sx + sw > (double)b->width || sy + sh > (double)b->height)
+            GRAPH_ERR("draw_sprite: source rectangle falls outside the image");
+#ifdef FLUXA_GRAPH_RAYLIB
+        Texture2D *tex = graph_img_texture(b);
+        if (!tex) GRAPH_ERR("draw_sprite: out of memory");
+        Rectangle src = {(float)sx,(float)sy,(float)sw,(float)sh};
+        Rectangle dst = {(float)dx + (float)sw*0.5f, (float)dy + (float)sh*0.5f,
+                         (float)sw,(float)sh};
+        Vector2   piv = {(float)sw*0.5f,(float)sh*0.5f};
+        DrawTexturePro(*tex, src, dst, piv, (float)rot,
+            (Color){(unsigned char)cr,(unsigned char)cg,
+                    (unsigned char)cb,(unsigned char)ca});
+#else
+        (void)win; (void)b; (void)sx; (void)sy; (void)sw; (void)sh;
+        (void)dx; (void)dy; (void)rot; (void)cr; (void)cg; (void)cb; (void)ca;
+#endif
+        return graph_nil();
+    }
+
+    /* ── Outline and ring shapes ─────────────────────────────────────
+     * The filled forms (draw_rect, draw_circle) already exist and are
+     * untouched; these are the outline counterparts, plus a ring. */
+
+    if (!strcmp(fn_name,"draw_rect_lines")) {
+        NEED(7); GET_WIN(0,win);
+        GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,w); GRAPH_NUM(4,h);
+        GET_INT(5,r); GET_INT(6,g); NEED(8); GET_INT(7,bl);
+        (void)win;(void)x;(void)y;(void)w;(void)h;(void)r;(void)g;(void)bl;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawRectangleLines((int)x,(int)y,(int)w,(int)h,
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"draw_circle_lines")) {
+        NEED(6); GET_WIN(0,win);
+        GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,rad);
+        GET_INT(4,r); GET_INT(5,g); GET_INT(6,bl);
+        if (rad < 0.0) GRAPH_ERR("draw_circle_lines: radius must not be negative");
+        (void)win;(void)x;(void)y;(void)rad;(void)r;(void)g;(void)bl;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawCircleLines((int)x,(int)y,(float)rad,
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"draw_ring")) {
+        NEED(7); GET_WIN(0,win);
+        GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,inner); GRAPH_NUM(4,outer);
+        GET_INT(5,r); GET_INT(6,g); NEED(8); GET_INT(7,bl);
+        if (inner < 0.0 || outer < inner)
+            GRAPH_ERR("draw_ring: need 0 <= inner_radius <= outer_radius");
+        (void)win;(void)x;(void)y;(void)inner;(void)outer;(void)r;(void)g;(void)bl;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawRing((Vector2){(float)x,(float)y},(float)inner,(float)outer,
+                 0.0f,360.0f,64,
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"draw_triangle")) {
+        NEED(9); GET_WIN(0,win);
+        GRAPH_NUM(1,x1); GRAPH_NUM(2,y1); GRAPH_NUM(3,x2); GRAPH_NUM(4,y2);
+        GRAPH_NUM(5,x3); GRAPH_NUM(6,y3);
+        GET_INT(7,r); GET_INT(8,g); NEED(10); GET_INT(9,bl);
+        (void)win;(void)x1;(void)y1;(void)x2;(void)y2;(void)x3;(void)y3;
+        (void)r;(void)g;(void)bl;
+#ifdef FLUXA_GRAPH_RAYLIB
+        /* Raylib fills only counter-clockwise triangles; order the vertices by
+         * the sign of the cross product so either winding draws. */
+        Vector2 a={(float)x1,(float)y1},bb={(float)x2,(float)y2},c={(float)x3,(float)y3};
+        float cross=(bb.x-a.x)*(c.y-a.y)-(bb.y-a.y)*(c.x-a.x);
+        Color col={(unsigned char)r,(unsigned char)g,(unsigned char)bl,255};
+        if (cross < 0.0f) DrawTriangle(a,bb,c,col);
+        else              DrawTriangle(a,c,bb,col);
+#endif
+        return graph_nil();
+    }
+
+    /* ── Off-screen render targets ───────────────────────────────────
+     * An extra draw surface for post-processing or for composing a layer
+     * once and blitting it many times. Same cursor discipline as fonts:
+     * create it, pass it around as an argument, release it before close. */
+
+    if (!strcmp(fn_name,"render_target")) {
+        NEED(3); GET_WIN(0,win);
+        GET_INT(1,w); GET_INT(2,h);
+        if (w <= 0 || h <= 0) GRAPH_ERR("render_target: width and height must be positive");
+        if (w > 16384 || h > 16384) GRAPH_ERR("render_target: size exceeds 16384 px");
+        GraphRT *rt = graph_new_rt((int)w,(int)h);
+        if (!rt) GRAPH_ERR("render_target: could not create the render target");
+        (void)win;
+        return graph_wrap_rt(rt);
+    }
+
+    if (!strcmp(fn_name,"begin_render_target")) {
+        NEED(2); GET_WIN(0,win); GRAPH_RT(1,rt);
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        EndTextureMode();                    /* leave the frame's target */
+        BeginTextureMode(rt->target);
+#else
+        (void)rt;
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"end_render_target")) {
+        NEED(1); GET_WIN(0,win);
+#ifdef FLUXA_GRAPH_RAYLIB
+        EndTextureMode();
+        if (win->has_target) BeginTextureMode(win->target);   /* back to the frame */
+#else
+        (void)win;
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"draw_render_target")) {
+        NEED(4); GET_WIN(0,win); GRAPH_RT(1,rt);
+        GRAPH_NUM(2,x); GRAPH_NUM(3,y);
+        (void)win;(void)rt;(void)x;(void)y;
+#ifdef FLUXA_GRAPH_RAYLIB
+        /* A render texture is stored bottom-up, so the source height is
+         * negated to present it the right way round. */
+        Rectangle src={0.0f,0.0f,(float)rt->target.texture.width,
+                       -(float)rt->target.texture.height};
+        DrawTextureRec(rt->target.texture,src,(Vector2){(float)x,(float)y},WHITE);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"release_render_target")) {
+        NEED(2); GET_WIN(0,win); GRAPH_RT(1,rt);
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (rt->has_target) { UnloadRenderTexture(rt->target); rt->has_target=0; }
+#endif
+        free(rt);
+        /* Null the cursor so a second release is a no-op rather than a
+         * double free — same close discipline the font cursor uses. */
+        if (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>=1)
+            args[1].as.dyn->items[0].as.ptr = NULL;
+        return graph_nil();
+    }
+
+    /* ── Render states ───────────────────────────────────────────────── */
+
+    if (!strcmp(fn_name,"set_blend_mode")) {
+        NEED(2); GET_WIN(0,win); GET_STR(1,mode);
+        (void)win;
+        int known = (!strcmp(mode,"ALPHA") || !strcmp(mode,"ADD") ||
+                     !strcmp(mode,"MULTIPLY") || !strcmp(mode,"NONE"));
+        if (!known) GRAPH_ERR("set_blend_mode: expected ALPHA, ADD, MULTIPLY or NONE");
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (!strcmp(mode,"NONE")) EndBlendMode();
+        else BeginBlendMode(!strcmp(mode,"ADD")      ? BLEND_ADDITIVE :
+                            !strcmp(mode,"MULTIPLY") ? BLEND_MULTIPLIED :
+                                                       BLEND_ALPHA);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"scissor")) {
+        NEED(5); GET_WIN(0,win);
+        GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,w); GRAPH_NUM(4,h);
+        if (w < 0.0 || h < 0.0) GRAPH_ERR("scissor: width and height must not be negative");
+        (void)win;(void)x;(void)y;(void)w;(void)h;
+#ifdef FLUXA_GRAPH_RAYLIB
+        BeginScissorMode((int)x,(int)y,(int)w,(int)h);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"scissor_off")) {
+        NEED(1); GET_WIN(0,win); (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        EndScissorMode();
+#endif
+        return graph_nil();
+    }
+
+    /* ── Text metrics and character input ────────────────────────────── */
+
+    if (!strcmp(fn_name,"text_height")) {
+        NEED(3); GET_WIN(0,win); GET_FONT(1,font); GET_INT(2,size);
+        (void)win;
+        if (size <= 0) GRAPH_ERR("text_height: size must be positive");
+#ifdef FLUXA_GRAPH_RAYLIB
+        Vector2 m = MeasureTextEx(font->font,"Ay",(float)size,1.0f);
+        return graph_int((long)m.y);
+#else
+        (void)font;
+        return graph_int(size);
+#endif
+    }
+
+    /* Returns the Unicode code point typed this frame, or 0 when nothing was.
+     * Call it in a loop to drain the queue: a fast typist can enter more than
+     * one character between frames. */
+    if (!strcmp(fn_name,"char_pressed")) {
+        NEED(1); GET_WIN(0,win); (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        return graph_int(GetCharPressed());
+#else
+        return graph_int(0);
+#endif
+    }
+
+    /* ── Mouse buttons and wheel ─────────────────────────────────────
+     * mouse_pressed (left button only) still exists and is unchanged; these
+     * are the general forms. */
+
+    if (!strcmp(fn_name,"mouse_btn_pressed") || !strcmp(fn_name,"mouse_btn_down")) {
+        NEED(2); GET_WIN(0,win); GET_STR(1,btn); (void)win;
+        int code = graph_mouse_btn_code(btn);
+        if (code < 0) GRAPH_ERR("expected button LEFT, RIGHT or MIDDLE");
+#ifdef FLUXA_GRAPH_RAYLIB
+        return graph_bool(!strcmp(fn_name,"mouse_btn_pressed")
+                          ? IsMouseButtonPressed(code) : IsMouseButtonDown(code));
+#else
+        return graph_bool(0);
+#endif
+    }
+
+    if (!strcmp(fn_name,"mouse_wheel")) {
+        NEED(1); GET_WIN(0,win); (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        float m = GetMouseWheelMove();
+        return graph_int(m > 0.0f ? 1 : (m < 0.0f ? -1 : 0));
+#else
+        return graph_int(0);
+#endif
+    }
+
+    /* ── Gamepad ─────────────────────────────────────────────────────── */
+
+    if (!strcmp(fn_name,"pad_connected")) {
+        NEED(2); GET_WIN(0,win); GET_INT(1,id); (void)win;
+        if (id < 0 || id > 3) GRAPH_ERR("pad_connected: gamepad id must be 0..3");
+#ifdef FLUXA_GRAPH_RAYLIB
+        return graph_bool(IsGamepadAvailable((int)id));
+#else
+        return graph_bool(0);
+#endif
+    }
+
+    if (!strcmp(fn_name,"pad_pressed") || !strcmp(fn_name,"pad_down")) {
+        NEED(3); GET_WIN(0,win); GET_INT(1,id); GET_STR(2,btn); (void)win;
+        if (id < 0 || id > 3) GRAPH_ERR("gamepad id must be 0..3");
+        int code = graph_pad_btn_code(btn);
+        if (code < 0) GRAPH_ERR("unknown gamepad button "
+            "(A, B, X, Y, LB, RB, START, SELECT, UP, DOWN, LEFT, RIGHT)");
+#ifdef FLUXA_GRAPH_RAYLIB
+        return graph_bool(!strcmp(fn_name,"pad_pressed")
+                          ? IsGamepadButtonPressed((int)id,code)
+                          : IsGamepadButtonDown((int)id,code));
+#else
+        return graph_bool(0);
+#endif
+    }
+
+    if (!strcmp(fn_name,"pad_axis")) {
+        NEED(3); GET_WIN(0,win); GET_INT(1,id); GET_STR(2,axis); (void)win;
+        if (id < 0 || id > 3) GRAPH_ERR("pad_axis: gamepad id must be 0..3");
+        int code = graph_pad_axis_code(axis);
+        if (code < 0) GRAPH_ERR("pad_axis: expected LEFT_X, LEFT_Y, RIGHT_X, "
+                                "RIGHT_Y, LT or RT");
+#ifdef FLUXA_GRAPH_RAYLIB
+        return graph_float((double)GetGamepadAxisMovement((int)id,code));
+#else
+        return graph_float(0.0);
+#endif
+    }
+
+    /* ── 2D camera ───────────────────────────────────────────────────
+     * Between begin_cam2d and end_cam2d, drawing happens in world
+     * coordinates. screen_to_world / world_to_screen convert either way and
+     * are what a mouse click needs to become a position in the world. */
+
+    if (!strcmp(fn_name,"begin_cam2d")) {
+        NEED(5); GET_WIN(0,win);
+        GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,rot); GRAPH_NUM(4,zoom);
+        if (zoom <= 0.0) GRAPH_ERR("begin_cam2d: zoom must be positive");
+        graph_cam_set(win,x,y,rot,zoom);
+#ifdef FLUXA_GRAPH_RAYLIB
+        Camera2D cam;
+        cam.target   = (Vector2){(float)x,(float)y};
+        cam.offset   = (Vector2){(float)win->width*0.5f,(float)win->height*0.5f};
+        cam.rotation = (float)rot;
+        cam.zoom     = (float)zoom;
+        BeginMode2D(cam);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"end_cam2d")) {
+        NEED(1); GET_WIN(0,win);
+        graph_cam_clear(win);
+#ifdef FLUXA_GRAPH_RAYLIB
+        EndMode2D();
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"screen_to_world") || !strcmp(fn_name,"world_to_screen")) {
+        NEED(3); GET_WIN(0,win); GRAPH_NUM(1,px); GRAPH_NUM(2,py);
+        double ox, oy;
+        /* Computed from the stored camera on both backends so the maths is
+         * identical with or without a display — a headless test can check the
+         * round trip, and the stub is not a second implementation that could
+         * drift from the real one. */
+        graph_cam_transform(win,px,py,!strcmp(fn_name,"screen_to_world"),&ox,&oy);
+        FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn));
+        if (!d) GRAPH_ERR("out of memory");
+        memset(d,0,sizeof(*d));
+        d->items=(Value *)malloc(sizeof(Value)*2);
+        if (!d->items) { free(d); GRAPH_ERR("out of memory"); }
+        d->items[0]=graph_float(ox); d->items[1]=graph_float(oy);
+        d->count=2; d->cap=2;
+        Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+    }
+
+    /* ── Window control and cursor ───────────────────────────────────── */
+
+    if (!strcmp(fn_name,"set_window_title")) {
+        NEED(2); GET_WIN(0,win); GET_STR(1,title); (void)win;(void)title;
+#ifdef FLUXA_GRAPH_RAYLIB
+        SetWindowTitle(title);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"set_window_size")) {
+        NEED(3); GET_WIN(0,win); GET_INT(1,w); GET_INT(2,h);
+        if (w <= 0 || h <= 0) GRAPH_ERR("set_window_size: width and height must be positive");
+        if (w > 16384 || h > 16384) GRAPH_ERR("set_window_size: size exceeds 16384 px");
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        SetWindowSize((int)w,(int)h);
+#endif
+        return graph_nil();
+    }
+
+    if (!strcmp(fn_name,"hide_cursor") || !strcmp(fn_name,"show_cursor")) {
+        NEED(1); GET_WIN(0,win); (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (!strcmp(fn_name,"hide_cursor")) HideCursor(); else ShowCursor();
 #endif
         return graph_nil();
     }

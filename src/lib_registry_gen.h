@@ -100,6 +100,9 @@
 #ifdef FLUXA_STD_TIME
 #  include "std/time/fluxa_std_time.h"
 #endif
+#ifdef FLUXA_STD_VIDEO
+#  include "std/video/fluxa_std_video.h"
+#endif
 #ifdef FLUXA_STD_WEBSOCKET
 #  include "std/websocket/fluxa_std_websocket.h"
 #endif
@@ -291,6 +294,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #else
     { "time", "std.time", "time", NULL, NULL, NULL, 0, 0, 0 },
 #endif
+#ifdef FLUXA_STD_VIDEO
+    { "video", "std.video", "video", fluxa_std_video_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "video", "std.video", "video", NULL, NULL, NULL, 0, 0, 0 },
+#endif
 #ifdef FLUXA_STD_WEBSOCKET
     { "websocket", "std.websocket", "websocket", fluxa_std_websocket_call, NULL, NULL, 0, 0, 1 },
 #else
@@ -308,7 +316,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 32
+#define FLUXA_LIB_COUNT 33
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

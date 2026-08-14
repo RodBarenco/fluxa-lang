@@ -1,5 +1,124 @@
 # Fluxa-lang Changelog
 
+## v0.30 — `std.graph` completed, and `std.video`
+
+Two additions driven by what Fluxa Turtle needed and could not express: rotating
+a sprite, and producing a video file.
+
+### `std.graph` — nothing existing changed
+
+Everything here is a **new** dispatch name. No pre-existing function changed
+shape, argument count, or the types it accepts, so a program written against the
+earlier `std.graph` behaves identically. The 35 cases of the previous test suite
+were frozen before any edit and their output is byte-identical afterwards; the
+suite now runs 56.
+
+That constraint decided two designs. Widening `draw_circle` to accept a float
+radius was **not** done — a program relying on the `expected int` error would
+have changed behaviour — so the documentation states the type instead, and a new
+test pins it. And `draw_image` was left untouched rather than rewritten to route
+through a rotation-capable path, where sub-pixel sampling could shift under
+existing code.
+
+**Rotation.** `graph.draw_image_rot(win, img, x, y, rot[, scale])` is the simple
+form: a rotation in degrees, pivoting on the image's own centre — which is what
+makes a sprite point where it moves instead of orbiting its corner — while
+`(x, y)` keeps meaning top-left exactly as in `draw_image`. `rot = 0` therefore
+draws the same pixels `draw_image` would. `graph.draw_sprite` is the full form:
+spritesheet region, rotation, tint and alpha in one call, with the source
+rectangle bounds-checked rather than sampling undefined texels.
+
+**Also added:** `draw_rect_lines`, `draw_circle_lines`, `draw_ring`,
+`draw_triangle`; off-screen render targets (`render_target`,
+`begin`/`end`/`draw`/`release_render_target`); `set_blend_mode`, `scissor`,
+`scissor_off`; `text_height`, `char_pressed`, `mouse_btn_pressed`,
+`mouse_btn_down`, `mouse_wheel`; gamepad support (`pad_connected`,
+`pad_pressed`, `pad_down`, `pad_axis`); a 2D camera (`begin_cam2d`, `end_cam2d`,
+`screen_to_world`, `world_to_screen`); and `set_window_title`,
+`set_window_size`, `hide_cursor`, `show_cursor`.
+
+The 2D camera transform is computed in the library rather than delegated to the
+backend. Both builds then answer identically, the round trip is testable without
+a display, and the stub does not become a second implementation free to drift
+from the real one.
+
+Unknown button and axis names are errors rather than a silent fallback to
+button 0, so a typo surfaces immediately instead of acting on the wrong control.
+
+### `std.video` — MP4/H.264, no external dependency
+
+`video.open` / `frame` / `close` writes an MP4; `play_open` / `play_eof` /
+`play_frame` reads one back. Frames are the same image handle `graph.capture`
+produces and `std.image` consumes, so a render loop reaches disk with no
+conversion in the script.
+
+The codec is vendored under `vendor/video`: **minimp4** (mux and demux, CC0),
+**minih264e** (encode, CC0) and **h264bsd** (decode, Apache-2.0, from AOSP). All
+plain C99 with no external dependency, and all three compile for MinGW and
+bare-metal ARM as well as POSIX — which is what made them the right choice over
+pulling in ffmpeg.
+
+**Audio is remuxed, never re-encoded.** `video.audio(v, path)` copies an ADTS
+`.aac` or an `.mp3` into the container verbatim: no quality loss, no extra
+dependency, and no licence question — every lightweight AAC encoder available
+carries either patent-encumbered terms or an LGPL obligation, and the real use
+does not need one. The format is identified by signature, not by extension.
+
+**Subtitles are a sidecar.** `video.subtitle(v, start, end, text)` queues cues
+that `video.close` writes as a SubRip `.srt` beside the video. The muxer has no
+timed-text track, and a sidecar is what every player already reads and what a
+person can edit by hand afterwards. Burned-in text still works with
+`graph.draw_text` before `graph.capture`; the difference is that a sidecar can
+be switched off.
+
+Three things only surfaced by running the code, and each is now commented where
+it matters and covered by a test:
+
+- **h264bsd has a two-phase start.** On the first IDR it returns `HDRS_RDY`
+  having consumed nothing; the same NAL must be fed again to actually decode.
+  Miss it and every frame silently decodes to nothing, with no error to explain
+  why.
+- **H.264 codes whole 16×16 macroblocks**, so a 160×120 video decodes onto a
+  160×128 surface. Without cropping back to the declared size, every frame comes
+  out eight rows taller than the video is.
+- **`dyn x = f()` does not create the slot when `f` returns nil**, leaving `x`
+  undeclared. So playback loops on `video.play_eof(v)` rather than testing the
+  frame against nil — deciding from a return value, the same rule the language
+  uses elsewhere.
+
+Decoding untrusted video is a classic attack surface, so nothing sizes an
+allocation from an unvalidated field: dimensions, frame counts and NAL sizes are
+checked against caps before any allocation, and a NAL length that would read past
+the buffer ends the frame rather than being trusted.
+
+**Release is the caller's job, as everywhere else in the standard library.**
+`play_frame` allocates a full RGBA frame per call and `image.discard` releases
+it. That is not a nicety: the collector runs at a safe point, and a playback
+loop never reaches one, so an undiscarded frame stays resident for the length of
+the loop. Measured on a 96×64 clip, fifteen undiscarded frames held an extra
+536 KB — exactly fifteen times the 24.5 KB each occupies; at 1920×1080 it is
+8 MB per iteration. `video.close` and `video.play_close` are silent on an
+already-released cursor, matching `pg.free_result`, `json2.discard` and
+`image.discard`: a second release is a no-op, never an error and never a double
+free.
+
+The vendored sources are built as three translation units — minimp4 and
+minih264e both define `bs_t` and `nal_put_esc` and cannot share one, and the 26
+h264bsd files are pulled into a single unit so a local pragma can silence
+third-party warnings there and nowhere else. The zero-warning gate therefore
+keeps meaning what it says for code we own.
+
+### Validation
+
+`make test-all` passes: `std.graph` 56/56, `std.video` 17/17, and the previously
+failing suites unchanged. Builds are warning-free under `-Wall -Wextra
+-pedantic`, including `build-secure`, both SRAM simulators, `build-rp2040`,
+`build-cortex-m` and `build-windows`. The video vendor also compiles clean under
+MinGW with `-pedantic`, ready for the day the Windows profile enables it.
+AddressSanitizer reports no errors across the write/read cycle; benchmarks are
+unchanged.
+
+
 ## v0.29 — `prst` across reloads, runtime swaps, and every build target
 
 Hot reload with an external resource in `prst` did not work. `prst dyn win = graph.init(800, 600, "app")` opened a **new window on every save**, and the same shape reopened a database with `sqlite.open` or reallocated a cursor with `csv.open`. Five separate defects sat on that one path; fixing them exposed a sixth in the Atomic Handover and made three cross-compilation targets build again.
@@ -54,7 +173,7 @@ The weak default returns `-1` deliberately. A runtime with no clock must not inv
 
 `tests/prst_reload_resources.sh` is new: 13 cases covering window identity across reloads, `prst` survival through the first reload, the respawn loop, initializer-edit precedence, `live/` and `static/` module watching, snapshot restore versus resource rebuild, handover with a resource in the pool, and the fail-closed clock. Against the previous binary, 7 of them fail. `tests/tools/mk_restart_snapshot.c` builds a restart snapshot by hand so the runtime-swap half can be tested without a second binary to swap to; `tests/tools/handover_no_clock.c` builds `handover.c` the way bare metal does and checks both that a missing clock refuses and that a wired clock proceeds.
 
-`make test-all` is unchanged at 82 passed / 4 failed (the four are missing system libraries). The handover suite passes 10/10 and the integration scenarios 3/3, including the fault-injection case that `SIGKILL`s the process ~20 ms in — the protocol's 5–20 ms end-to-end timing is untouched. AddressSanitizer reports no errors across reload, restart, and handover; the benchmark is unchanged; builds are warning-free.
+`make test-all` passes completely on a host with all system libraries present: 86 unit tests, Suite 2 at 8/8 sections, `prst_reload` at 13/13, the std lib suites, the hardware simulation at 10/10 across the RP2040 (264 KB) and ESP32 (520 KB) SRAM caps, and the integration scenarios at 3/3 — including the fault-injection case that `SIGKILL`s the process ~20 ms in, which depends on the protocol's 5–20 ms end-to-end timing, and the 15 real PostgreSQL tests. AddressSanitizer reports no errors across reload, restart, and handover; the benchmark is unchanged; builds are warning-free.
 
 `make build-rp2040`, `make build-cortex-m`, and the Windows targets build again.
 

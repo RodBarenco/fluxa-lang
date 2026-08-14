@@ -15,8 +15,7 @@ fluxa_debug
 fluxa-rp2040
 fluxa-esp32
 fluxa-cortex-m
-fluxa_sim_esp32
-fluxa_sim_rp2040
+libfluxa_cabi.so
 *.o
 *.elf
 *.uf2

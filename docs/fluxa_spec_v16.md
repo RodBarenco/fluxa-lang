@@ -1019,6 +1019,23 @@ milliseconds.
 the first reload, so a `prst` counter reads 1, 2, 3 across successive saves
 rather than restarting once before it begins to count.
 
+**One thread for the whole session.** Every execution runs on the same worker
+thread, created once when `-dev` starts and reused for each reload. This is
+required for correctness, not tidiness: anything holding thread-local state
+would otherwise lose it when the previous run's thread exited. An OpenGL
+context is the clearest case — it is current *per thread*, so a context made
+current inside `graph.init` on the first run stopped being current anywhere
+once that thread finished, and every subsequent GL call became a silent no-op:
+the window froze on the last frame drawn, `graph.capture` returned a zeroed
+buffer, and texture uploads failed. A reload therefore preserves both the
+`prst` values and the thread-local state the libraries built on top of them.
+
+Cancellation is cooperative. On a save the watcher raises the cancel flag and
+waits for the current execution to unwind before starting the next one — the
+two share the same `prst` pool, so they must not overlap. The flag stops loops
+at the next check; execution continues from the statement after the loop, which
+leaves room for a script to clean up.
+
 ### 11.2 IPC — Unix Socket
 
 In `-prod` and `-dev` modes the runtime opens a Unix socket at `/tmp/fluxa-<pid>.sock` (mode `0600` — owner only). The protocol is a fixed-size binary struct — see `src/fluxa_ipc.h`.

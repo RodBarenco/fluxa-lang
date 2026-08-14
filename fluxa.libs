@@ -23,6 +23,7 @@ std.json      = true    # JSON streaming, no DOM         (none)
 std.json2     = true    # JSON full DOM, path nav, typed (none)
 std.strings   = true    # split, join, trim, find, regex (none)
 std.time      = true    # sleep, now_ms, elapsed         POSIX
+std.video     = true    # MP4/H.264 write + read           (none) [vendored: minimp4 + minih264e + h264bsd]
 std.fs        = true    # read, write, listdir, mkdir    POSIX
 std.zlib      = true    # deflate, gzip, crc32, adler32  zlib1g-dev
 std.flxthread = true    # native concurrency             pthreads

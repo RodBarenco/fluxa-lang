@@ -283,21 +283,54 @@ static int run_once(const char *path, int explain) {
 }
 
 /* Dev mode: watch file and reload on every save, preserving prst state */
-/* ── -dev mode: execution context passed to worker thread ───────────────── */
+/* ── -dev mode: execution context shared with the script worker ──────────
+ *
+ * The script runs on ONE thread for the whole session, not one thread per
+ * execution. That is not a tidiness preference — it is required for
+ * correctness with anything holding thread-local state, and OpenGL is the
+ * case that exposed it.
+ *
+ * A GLFW context is current *per thread*. graph.init made it current on the
+ * first run's thread; when that thread exited at the end of the run, the
+ * context stopped being current anywhere, and the next run's fresh thread
+ * never received it. From the second run onward every GL call was a silent
+ * no-op: begin_frame/draw/end_frame drew nothing (the window stayed frozen on
+ * the last frame of run 1, still alive because another thread pumps events),
+ * graph.capture returned a fully zeroed buffer, and glGenTextures returned 0
+ * so texture uploads failed with "Failed to load texture". The warning was the
+ * symptom; the disease was that nothing rendered at all after the first
+ * reload.
+ *
+ * Rebinding the context on each new thread would fix OpenGL specifically, and
+ * would need glfwMakeContextCurrent(NULL) on the dying thread first, since GLX
+ * refuses to make current a context still current elsewhere. Keeping one
+ * thread fixes the whole class instead — the err ring and any thread-local a
+ * library introduces later included — so that is the route taken.
+ *
+ * Handshake: the watcher sets `run_pending` and signals; the worker runs one
+ * execution and sets `done`. Neither side spins. */
 typedef struct {
     const char    *path;
     ASTPool       *ast_pool;
     PrstPool      *pool;          /* prst state preserved across reloads   */
     int            first_run;
     volatile int   cancel;        /* watcher sets 1 → VM stops at next check */
-    volatile int   done;          /* worker sets 1 when finished           */
+    volatile int   done;          /* worker sets 1 when an execution ends   */
     int            exit_code;
     IpcRtView     *ipc_view;      /* Sprint 9: stable view for IPC server  */
+
+    /* Worker handshake. `mu` guards run_pending, done and shutting_down;
+     * the two condvars carry the two directions. */
+    pthread_mutex_t mu;
+    pthread_cond_t  cv_run;       /* watcher → worker: start an execution   */
+    pthread_cond_t  cv_done;      /* worker → watcher: that execution ended */
+    int             run_pending;
+    int             shutting_down;
 } DevCtx;
 
-static void *dev_exec_thread(void *arg) {
-    DevCtx *ctx = (DevCtx *)arg;
-
+/* One execution of the script. Called by the worker loop below, never
+ * directly, so that every run happens on the same thread. */
+static void dev_run_once(DevCtx *ctx) {
     FluxaConfig _cfg = fluxa_config_find_and_load();
     resolver_set_scope_cap(_cfg.scope_cap);   /* [runtime] scope_cap */
     parser_set_module_cap(_cfg.module_cap);   /* [runtime] module_cap */
@@ -308,8 +341,7 @@ static void *dev_exec_thread(void *arg) {
     if (!program) {
         fprintf(stderr, "[fluxa] -dev: parse error — waiting for fix...\n");
         ctx->exit_code = 1;
-        ctx->done = 1;
-        return NULL;
+        return;
     }
 
     fprintf(stderr, "[fluxa] -dev: running %s\n", ctx->path);
@@ -339,8 +371,71 @@ static void *dev_exec_thread(void *arg) {
 
     pool_free(ctx->ast_pool);
     ctx->exit_code = r;
-    ctx->done = 1;   /* signal watcher that script finished on its own */
+}
+
+/* The worker thread. Created once, lives for the whole -dev session, and runs
+ * every execution. Whatever thread-local state a library sets up on the first
+ * run — an OpenGL context above all — stays valid for every reload after it. */
+static void *dev_exec_thread(void *arg) {
+    DevCtx *ctx = (DevCtx *)arg;
+
+    for (;;) {
+        pthread_mutex_lock(&ctx->mu);
+        while (!ctx->run_pending && !ctx->shutting_down)
+            pthread_cond_wait(&ctx->cv_run, &ctx->mu);
+        if (ctx->shutting_down) { pthread_mutex_unlock(&ctx->mu); break; }
+        ctx->run_pending = 0;
+        pthread_mutex_unlock(&ctx->mu);
+
+        dev_run_once(ctx);
+
+        pthread_mutex_lock(&ctx->mu);
+        ctx->done = 1;            /* an execution ended — on its own or cancelled */
+        pthread_cond_signal(&ctx->cv_done);
+        pthread_mutex_unlock(&ctx->mu);
+    }
     return NULL;
+}
+
+/* Ask the worker for one execution. */
+static void dev_request_run(DevCtx *ctx) {
+    pthread_mutex_lock(&ctx->mu);
+    ctx->done        = 0;
+    ctx->cancel      = 0;
+    ctx->run_pending = 1;
+    pthread_cond_signal(&ctx->cv_run);
+    pthread_mutex_unlock(&ctx->mu);
+}
+
+/* Non-blocking check for "the current execution has ended". The watcher polls
+ * this between watcher waits, so it must take the mutex like every other
+ * reader — a plain read of ctx->done races with the worker's write, which
+ * ThreadSanitizer flags and which a compiler is free to hoist out of the poll
+ * loop. */
+static int dev_is_done(DevCtx *ctx) {
+    pthread_mutex_lock(&ctx->mu);
+    int d = ctx->done;
+    pthread_mutex_unlock(&ctx->mu);
+    return d;
+}
+
+/* Wait until the current execution has finished. Replaces the pthread_join
+ * that used to double as this barrier — the worker no longer exits, so the
+ * two things had to be separated. */
+static void dev_wait_done(DevCtx *ctx) {
+    pthread_mutex_lock(&ctx->mu);
+    while (!ctx->done)
+        pthread_cond_wait(&ctx->cv_done, &ctx->mu);
+    pthread_mutex_unlock(&ctx->mu);
+}
+
+/* Stop the worker for good and reap it. */
+static void dev_shutdown(DevCtx *ctx, pthread_t tid) {
+    pthread_mutex_lock(&ctx->mu);
+    ctx->shutting_down = 1;
+    pthread_cond_signal(&ctx->cv_run);
+    pthread_mutex_unlock(&ctx->mu);
+    pthread_join(tid, NULL);
 }
 
 /* -dev watches the entry file plus every module it imports. A DevWatch holds
@@ -420,26 +515,30 @@ static int run_dev(const char *path) {
     IpcServer *ipc = ipc_view ? ipc_server_start(ipc_view) : NULL;
 
     DevCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
     ctx.path      = path;
     ctx.ast_pool  = &ast_pool;
     ctx.pool      = &pool;
     ctx.first_run = 1;
-    ctx.cancel    = 0;
-    ctx.done      = 0;
-    ctx.exit_code = 0;
     ctx.ipc_view  = ipc_view;  /* passed to runtime so it can update the view */
+    pthread_mutex_init(&ctx.mu, NULL);
+    pthread_cond_init(&ctx.cv_run, NULL);
+    pthread_cond_init(&ctx.cv_done, NULL);
+
+    /* ONE worker for the whole session. Created here and never recreated: the
+     * first run's OpenGL context (and any other thread-local a library sets up)
+     * has to still be current when the reload runs, which only holds if the
+     * same thread runs both. */
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, dev_exec_thread, &ctx) != 0) {
+        fprintf(stderr, "[fluxa] -dev: pthread_create failed\n");
+        if (ipc) ipc_server_stop(ipc);
+        if (ipc_view) ipc_rtview_destroy(ipc_view);
+        return 1;
+    }
 
     while (1) {
-        ctx.cancel = 0;
-        ctx.done   = 0;
-
-        pthread_t tid;
-        if (pthread_create(&tid, NULL, dev_exec_thread, &ctx) != 0) {
-            fprintf(stderr, "[fluxa] -dev: pthread_create failed\n");
-            if (ipc) ipc_server_stop(ipc);
-            if (ipc_view) ipc_rtview_destroy(ipc_view);
-            return 1;
-        }
+        dev_request_run(&ctx);
 
         DevWatch watch;
         memset(&watch, 0, sizeof(watch));
@@ -447,7 +546,8 @@ static int run_dev(const char *path) {
             fprintf(stderr, "[fluxa] -dev: cannot open watcher for %s\n", path);
             devwatch_close(&watch);
             ctx.cancel = 1;
-            pthread_join(tid, NULL);
+            dev_wait_done(&ctx);
+            dev_shutdown(&ctx, tid);
             if (ipc) ipc_server_stop(ipc);
             if (ipc_view) ipc_rtview_destroy(ipc_view);
             return 1;
@@ -457,17 +557,16 @@ static int run_dev(const char *path) {
                     watch.n, watch.n - 1);
 
         int reload   = 0;
-        int finished = 0;   /* script returned on its own and was already reaped */
+        int finished = 0;   /* the execution ended on its own                */
         while (!reload) {
             int wr = devwatch_wait(&watch, 200);
             if (wr == -1) break;   /* every watcher gone */
-            /* A script that returns on its own must be reaped, but NOT restarted:
-             * the previous code set reload=1 here, so a program without a main
-             * loop was re-executed as fast as the thread could be spawned. With
-             * std.graph that meant a new window every few milliseconds. Reap it
+            /* A script that returns on its own must NOT be restarted: the
+             * original code set reload=1 here, so a program without a main loop
+             * was re-executed as fast as a thread could be spawned. With
+             * std.graph that meant a new window every few milliseconds. Note it
              * and keep watching — the next run happens when the file changes. */
-            if (!finished && ctx.done) {
-                pthread_join(tid, NULL);
+            if (!finished && dev_is_done(&ctx)) {
                 finished = 1;
                 fprintf(stderr,
                     "[fluxa] -dev: script finished (exit=%d) — waiting for changes...\n",
@@ -478,17 +577,23 @@ static int run_dev(const char *path) {
         devwatch_close(&watch);
 
         if (!finished) {
+            /* Ask the running script to stop and wait for it to unwind. The
+             * worker itself stays alive; only this execution ends. Waiting is
+             * not optional — the next run reuses the same prst pool, so it must
+             * not start while the previous one is still tearing down. */
             ctx.cancel = 1;
-            pthread_join(tid, NULL);
+            dev_wait_done(&ctx);
             fprintf(stderr, "[fluxa] -dev: reload triggered\n");
         }
         if (!reload) {   /* watchers could not be reopened — do not spin */
             fprintf(stderr, "[fluxa] -dev: watcher lost for %s — stopping\n", path);
+            dev_shutdown(&ctx, tid);
             if (ipc) ipc_server_stop(ipc);
             if (ipc_view) ipc_rtview_destroy(ipc_view);
             return 1;
         }
     }
+    dev_shutdown(&ctx, tid);
     if (ipc) ipc_server_stop(ipc);
     if (ipc_view) ipc_rtview_destroy(ipc_view);
     return 0;

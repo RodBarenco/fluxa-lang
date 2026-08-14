@@ -1467,6 +1467,110 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.open_url(url)` | `bool` | Open a URL in the system's default browser. Only `http://`, `https://` and `mailto:` are accepted. The URL is passed to `exec` as a single argument with no shell, so it cannot carry a command. Works on both backends (no display needed). **Needs `danger`.** |
 | `graph.version()` | `str` | Backend version |
 
+### Added in v0.30
+
+Every entry below is a **new** function name. No pre-existing function changed
+shape, so a program written against the earlier `std.graph` behaves exactly as
+it did — including `draw_circle`, whose `radius` remains an `int`. The new
+parameters marked *num* accept either `int` or `float`.
+
+**Sprites and rotation**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.draw_image_rot(win, img, x, y, rot[, scale])` | `nil` | `draw_image` with a rotation in degrees. The pivot is the image's own centre — what makes a sprite point where it moves instead of orbiting its corner — while `(x, y)` stays the top-left position, as in `draw_image`. So `rot = 0` draws the same pixels `draw_image` would. `x`, `y`, `rot`, `scale` are *num*. |
+| `graph.draw_sprite(win, img, sx, sy, sw, sh, dx, dy, rot, r, g, b, a)` | `nil` | The full-control form: draw the `(sx, sy, sw, sh)` region of a spritesheet at `(dx, dy)`, rotated about its centre, tinted `r`/`g`/`b` and blended with alpha `a` (0–255). A source rectangle reaching past the image is an error, not undefined sampling. |
+
+**Shapes**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.draw_rect_lines(win, x, y, w, h, r, g, b)` | `nil` | Rectangle outline |
+| `graph.draw_circle_lines(win, x, y, radius, r, g, b)` | `nil` | Circle outline. `radius` is *num* here, unlike the filled `draw_circle`. |
+| `graph.draw_ring(win, x, y, inner, outer, r, g, b)` | `nil` | Filled ring. Requires `0 <= inner <= outer`. |
+| `graph.draw_triangle(win, x1, y1, x2, y2, x3, y3, r, g, b)` | `nil` | Filled triangle. Either winding order draws — the vertices are reordered when needed. |
+
+**Off-screen render targets**
+
+An extra draw surface, for post-processing or for composing a layer once and
+blitting it many times. Same cursor discipline as fonts: create it, pass it to
+functions as an argument, release it before `graph.close`.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.render_target(win, w, h)` | `dyn` | Create an off-screen surface (max 16384 px per side) |
+| `graph.begin_render_target(win, rt)` | `nil` | Redirect drawing to it |
+| `graph.end_render_target(win)` | `nil` | Back to the frame |
+| `graph.draw_render_target(win, rt, x, y)` | `nil` | Draw the surface into the frame |
+| `graph.release_render_target(win, rt)` | `nil` | Free it. A second release is refused with "invalid render target cursor" rather than double-freeing. |
+
+**Render states**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.set_blend_mode(win, mode)` | `nil` | `"ALPHA"`, `"ADD"`, `"MULTIPLY"` or `"NONE"` |
+| `graph.scissor(win, x, y, w, h)` | `nil` | Clip drawing to a rectangle (scrolling lists, modal panels) |
+| `graph.scissor_off(win)` | `nil` | Stop clipping |
+
+**Text and input**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.text_height(win, font, size)` | `int` | Height of one line in pixels |
+| `graph.char_pressed(win)` | `int` | Unicode code point typed this frame, or 0. Call it in a loop to drain the queue — a fast typist enters more than one character between frames. |
+| `graph.mouse_btn_pressed(win, btn)` | `bool` | `"LEFT"`, `"RIGHT"` or `"MIDDLE"`, just pressed |
+| `graph.mouse_btn_down(win, btn)` | `bool` | Held |
+| `graph.mouse_wheel(win)` | `int` | −1, 0 or 1 |
+
+`graph.mouse_pressed` (left button only) still exists and is unchanged.
+
+**Gamepad**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.pad_connected(win, id)` | `bool` | Gamepad 0–3 present |
+| `graph.pad_pressed(win, id, btn)` | `bool` | `"A"`, `"B"`, `"X"`, `"Y"`, `"LB"`, `"RB"`, `"START"`, `"SELECT"`, `"UP"`, `"DOWN"`, `"LEFT"`, `"RIGHT"` |
+| `graph.pad_down(win, id, btn)` | `bool` | Held |
+| `graph.pad_axis(win, id, axis)` | `float` | `"LEFT_X"`, `"LEFT_Y"`, `"RIGHT_X"`, `"RIGHT_Y"`, `"LT"`, `"RT"` |
+
+An unknown button or axis name is an error rather than a silent fallback to
+button 0 — a typo shows up immediately instead of acting on the wrong control.
+
+**2D camera**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.begin_cam2d(win, x, y, rot, zoom)` | `nil` | Draw in world coordinates. `zoom` must be positive. |
+| `graph.end_cam2d(win)` | `nil` | Back to screen coordinates |
+| `graph.screen_to_world(win, sx, sy)` | `dyn` | `[wx, wy]` — what a mouse click means in the world |
+| `graph.world_to_screen(win, wx, wy)` | `dyn` | `[sx, sy]` — where to put a health bar or tooltip |
+
+The camera transform is computed in the library rather than delegated to the
+backend, so both builds answer identically and the round trip can be checked
+without a display. The convention matches a camera whose offset is the window
+centre: with no camera active both conversions are the identity.
+
+`screen_to_world` and `world_to_screen` each allocate the `dyn` pair they
+return. In a frame path — converting the mouse position every frame — release it
+with `free(p)` once the two values have been read. The collector runs at a safe
+point, and a render loop never reaches one, so anything allocated per iteration
+has to be released per iteration:
+
+```fluxa
+dyn p = graph.screen_to_world(win, mx, my)
+float wx = p[0]
+float wy = p[1]
+free(p)
+```
+
+**Window and cursor**
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.set_window_title(win, title)` | `nil` | Change the title |
+| `graph.set_window_size(win, w, h)` | `nil` | Resize (max 16384 px per side) |
+| `graph.hide_cursor(win)` / `graph.show_cursor(win)` | `nil` | Mouse cursor visibility |
+
 ### Custom fonts (TTF/OTF)
 
 `graph.load_font` opens a TTF/OTF file and rasterizes a glyph atlas at the given
@@ -1700,6 +1804,141 @@ dyn card = image.load("elite_card.png")   // decode once
 graph.draw_image(win, card, 220, 80)       // texture uploaded once, then reused
 graph.draw_image(win, card, 40, 400, 0.4)  // same buffer, drawn small as a thumbnail
 ```
+
+## std.video — MP4 / H.264 Write and Read
+
+Writes and reads MP4 video with an H.264 track. Frames are the **same image
+handle** `graph.capture` produces and `std.image` consumes, so a render loop
+goes straight to disk with no conversion in the script — RGBA↔I420 happens
+inside the library.
+
+All functions touch the filesystem and must run inside `danger {}`.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `video.open(path, w, h, fps)` | `dyn` | Start writing. Width and height must be **even** (H.264 subsamples chroma 2×2) and at most 7680; `fps` is 1–240. |
+| `video.frame(v, img)` | `nil` | Append one frame. The image must match the video's size. |
+| `video.audio(v, path)` | `nil` | Attach an audio track by **remuxing** an ADTS `.aac` or an `.mp3`. |
+| `video.subtitle(v, start, end, text)` | `nil` | Queue a subtitle cue, in seconds. |
+| `video.close(v)` | `nil` | Finalise the file (and write the `.srt`, when there are cues). |
+| `video.play_open(path)` | `dyn` | Start reading. |
+| `video.play_eof(v)` | `bool` | True once every frame has been read. |
+| `video.play_frame(v)` | `dyn` | Decode the next frame as an image handle. |
+| `video.info(v)` | `dyn` | `[width, height, fps, frames]` |
+| `video.play_close(v)` | `nil` | Release the reader. |
+| `video.version()` | `str` | Backend names |
+
+### Writing a video from a render loop
+
+```fluxa
+import std video
+import std graph
+import std image
+
+danger {
+    dyn win = graph.init(640, 480, "export")
+    dyn v   = video.open("out.mp4", 640, 480, 30)
+
+    int frame = 0
+    while frame < 300 {
+        graph.begin_frame(win)
+        // ... draw the scene for this frame ...
+        graph.end_frame(win)
+
+        dyn shot = graph.capture(win)
+        video.frame(v, shot)
+        image.discard(shot)
+        frame = frame + 1
+    }
+
+    video.subtitle(v, 0.0, 3.0, "opening titles")
+    video.audio(v, "soundtrack.mp3")
+    video.close(v)
+}
+if err != nil { print(err[0]) }
+```
+
+Rendering by frame index rather than by wall-clock time makes the output
+deterministic: the same program produces the same frames regardless of how fast
+the machine ran.
+
+### Reading a video back
+
+```fluxa
+danger {
+    dyn p = video.play_open("out.mp4")
+    dyn n = video.info(p)
+    print("size ", n[0], "x", n[1], " at ", n[2], " fps, ", n[3], " frames")
+
+    while !video.play_eof(p) {
+        dyn fr = video.play_frame(p)
+        graph.draw_image(win, fr, 0, 0)
+        image.discard(fr)
+    }
+    video.play_close(p)
+}
+if err != nil { print(err[0]) }
+```
+
+Loop on `video.play_eof`, not on the frame being `nil`. Writing
+`dyn fr = video.play_frame(p)` when that call returns nil leaves `fr`
+undeclared, and the next line fails with *"undefined variable"* — deciding from
+a return value is the same rule the language uses elsewhere.
+
+### `image.discard` in the playback loop is not optional
+
+Every `video.play_frame` allocates a full RGBA frame, and the collector only
+runs at a safe point — which a `while` loop never reaches. Dropping the
+`image.discard(fr)` therefore accumulates one decoded frame per iteration for
+as long as the loop runs. Measured on a 96×64 clip, fifteen frames without the
+discard held an extra 536 KB, exactly fifteen times the 24.5 KB each frame
+occupies; at 1920×1080 that is 8 MB per frame.
+
+The same rule governs `graph.capture` on the writing side, and it is the same
+contract every stateful library in the standard library follows: the payload has
+an explicit release (`image.discard`, `json2.discard`, `pg.free_result`,
+`sqlite.close`) that must be called by the code that requested it. `video.info`
+also returns an allocated `dyn`; call it once outside the loop, or `free()` the
+result.
+
+### Audio is remuxed, never re-encoded
+
+`video.audio` copies the audio frames into the container verbatim. There is no
+encoder involved, which means no quality loss, no extra dependency, and no
+licence question — every lightweight AAC encoder available carries either
+patent-encumbered terms or an LGPL obligation. The real use, *"I have a
+soundtrack, put it in the video"*, needs a remux and not an encoder.
+
+The file is identified by its **signature**, not its extension: an ADTS `.aac`
+or an `.mp3` (with or without an ID3 header). Anything else is refused.
+
+### Subtitles are a sidecar
+
+Cues are written as a SubRip `.srt` file beside the video — `out.mp4` produces
+`out.srt`. The MP4 muxer has no timed-text track, and a sidecar is what every
+player, browser and editor already reads, and what a person can edit afterwards
+by hand.
+
+Burned-in subtitles need nothing new: draw the text with `graph.draw_text`
+before `graph.capture`. The difference is that a sidecar can be turned off.
+
+### Backends and safety
+
+The default backend is vendored and has **no external dependency**: minimp4
+(muxing and demuxing, CC0), minih264e (encoding, CC0) and h264bsd (decoding,
+Apache-2.0, from AOSP). All plain C99, and all three compile for MinGW and
+bare-metal ARM as well as POSIX.
+
+Decoding untrusted video is a classic attack surface, so nothing sizes an
+allocation from an unvalidated field. Dimensions, frame counts and NAL sizes are
+checked against caps before any allocation; a NAL length that would read past
+the buffer ends the frame instead of being trusted; and h264bsd is baseline-only,
+a far smaller surface than a full decoder. A malformed file raises an ordinary
+Fluxa error inside `danger {}`.
+
+Note that H.264 codes whole 16×16 macroblocks, so a 160×120 video decodes onto a
+160×128 surface internally. Decoded frames are cropped back to the size the
+container declares, so `video.play_frame` always returns the real dimensions.
 
 ## std.infer — Local LLM Inference
 
