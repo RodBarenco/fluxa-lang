@@ -1,5 +1,150 @@
 # Fluxa-lang Changelog
 
+## v0.31 — `std.compute`
+
+General-purpose GPU computation. No window, no swapchain, no input, no notion
+of a frame: buffers, kernels, dispatch, and a way to ask whether the work is
+done.
+
+```fluxa
+danger {
+    dyn g = compute.init()
+    int b = compute.create_buffer(g, 32, "storage")
+    compute.upload(g, b, values, 0)
+
+    int k = compute.load_kernel(g, "double.spv")
+    compute.begin(g)
+    compute.bind_kernel(g, k)
+    compute.bind_buffer(g, 0, b)
+    compute.dispatch(g, 8, 1, 1)
+    int t = compute.end(g)
+    compute.wait(g, t)
+
+    dyn out = compute.download(g, b, 0, 32)
+    free(out)
+    compute.close(g)
+}
+if err != nil { print(err[0]) }
+```
+
+### Handles carry the generation of the context that issued them
+
+The context is a `dyn` cursor meant to be held in `prst dyn`, so it survives a
+hot reload and the GPU work of the previous run is not thrown away on every
+save. Buffers and kernels are plain `int`, which is what lets a Block method
+receive them.
+
+That combination has a trap, and it is the same one that produces *"Address
+already in use"* for sockets. An in-process reload keeps the context alive, so
+an int handle stays valid. But a **runtime swap** cannot carry a pointer across
+the snapshot: the context is rebuilt from its declaration while a `prst int`
+handle is restored intact, leaving a number that refers to a resource table
+which no longer exists.
+
+So a handle is not a bare index:
+
+```
+handle = (generation << 20) | (slot + 1)
+```
+
+Every `compute.init()` takes the next generation. A handle from a previous
+context fails a check with a message that names the cause, instead of silently
+addressing whatever now occupies that slot — which would be a *wrong answer*
+rather than an error, and far harder to find. Slot 0 is never used, so `0` is
+always invalid, matching the convention the language already uses for socket
+and request handles.
+
+### The stub runs the whole lifecycle
+
+Buffers are real allocations and `upload`, `download`, `copy_buffer` and
+`fill_buffer` move real bytes, so the library is testable on a machine with no
+GPU — a CI runner, a container, a laptop with no driver installed. Every
+argument check and every handle rule behaves identically on both backends.
+
+The one thing the stub does not do is run a kernel: executing SPIR-V without a
+device is not something a stub can honestly pretend at, so `dispatch` is a
+no-op. `compute.version()` states which backend is present, so a program is
+never fooled into thinking a kernel ran.
+
+### Vulkan backend
+
+Compute only — no surface, no swapchain, no presentation — which is what lets
+the same code run headless on a server and on a desktop. Device selection
+prefers a discrete GPU but accepts anything with a compute queue, a software
+rasteriser included.
+
+Buffers are `HOST_VISIBLE | HOST_COHERENT`, which makes upload and download a
+`memcpy` with no staging buffer and no transfer command to synchronise. For
+data that comes from the program, gets computed on, and goes back, that is the
+right trade; a device-local path with staging can be added later without
+changing a line of the Fluxa-facing API.
+
+A batch is recorded lazily, at `compute.end()` rather than as each `dispatch`
+is called. The descriptor set has to name the buffers bound at the moment of
+the dispatch, and Fluxa binds them one call at a time, so recording at the end
+is the point where the bindings are known and settled. One command buffer, one
+submit, one fence per batch. Bindings the script never set point at a one-word
+dummy buffer, since every binding in the layout must be written or validation
+rejects the set.
+
+Opt in with `make FLUXA_COMPUTE_VULKAN=1 build`. It is not automatic: linking
+libvulkan on a machine with no driver produces a binary that fails at
+`compute.init()` rather than falling back, so the default stays the stub.
+
+### Validation of untrusted input
+
+A shader module goes straight into the GPU driver, so SPIR-V is checked before
+the driver ever sees it: magic number `0x07230203`, size a multiple of 4, and
+within a 64 MiB cap. A truncated or unrelated file is rejected with a message
+that suggests `glslangValidator -V` or `glslc`, instead of becoming the
+driver's problem.
+
+Buffer sizes, offsets, copy regions, workgroup counts, descriptor slots and
+push-constant sizes are all bounded before anything is allocated or written.
+
+### Deliberate choices worth knowing
+
+- `upload` takes an `int arr` or a `float arr` and packs it to int32 or
+  float32. A **mixed array is refused**: a shader reads one packed type, so
+  silently picking one would corrupt the data.
+- An unknown feature name in `has()` is an **error, not a silent false** —
+  false would read as "the GPU lacks it" when the truth is "no such feature".
+- `profile_ms` returns **-1.0 when not measured**, not 0.0, which would read as
+  an instantaneous kernel.
+- Destroying the bound kernel unbinds it, so the next `dispatch` fails with the
+  obvious message rather than a confusing one.
+- `close` is silent on an already-closed context, matching `pg.free_result`,
+  `json2.discard` and `image.discard`.
+- `download` allocates the `dyn` it returns. In a simulation loop, `free()` it
+  each turn: the collector runs at a safe point and a loop never reaches one.
+
+### Two bugs the tests found, both needing a real device
+
+The first version of the "a valid SPIR-V module loads" test wrote a synthetic
+8-byte file with the right magic number. It passed on the stub and failed on a
+real driver, which rejected it at pipeline creation — correctly, since a valid
+magic number does not make a valid module. The fixture is now a genuine compute
+shader, compiled and embedded so the suite needs no shader toolchain.
+
+With a device available, the second bug appeared: the fence was created
+unsignalled, so the first `submit` waited forever for a submission that had not
+happened yet. It did not fail — it **hung**. The fence is now created signalled,
+and `successive_batches_reuse_fence` runs three batches in a row, which is the
+shape that catches it.
+
+### Validation
+
+`std.compute` passes 39/39 on **both** backends. The end-to-end case runs a
+shader that doubles every element of a buffer and accepts either `2 4 6 16` on a
+device or `1 2 3 8` on the stub, reporting which path it took — a stub silently
+"passing" a GPU test would be worse than no test at all.
+
+`make test-all` passes. AddressSanitizer reports no errors. Builds are
+warning-free under `-Wall -Wextra -pedantic` for `build`, `build-secure`, both
+SRAM simulators, `build-rp2040`, `build-cortex-m` and `build-windows`, and with
+the Vulkan backend enabled.
+
+
 ## v0.30 — `std.graph` completed, and `std.video`
 
 Two additions driven by what Fluxa Turtle needed and could not express: rotating

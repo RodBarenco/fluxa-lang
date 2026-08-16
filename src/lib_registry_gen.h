@@ -19,6 +19,9 @@
 #ifdef FLUXA_STD_CACHE
 #  include "std/cache/fluxa_std_cache.h"
 #endif
+#ifdef FLUXA_STD_COMPUTE
+#  include "std/compute/fluxa_std_compute.h"
+#endif
 #ifdef FLUXA_STD_CRYPTO
 #  include "std/crypto/fluxa_std_crypto.h"
 #endif
@@ -158,6 +161,11 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
     { "cache", "std.cache", "cache", fluxa_std_cache_call, NULL, NULL, 0, 0, 1 },
 #else
     { "cache", "std.cache", "cache", NULL, NULL, NULL, 0, 0, 0 },
+#endif
+#ifdef FLUXA_STD_COMPUTE
+    { "compute", "std.compute", "compute", fluxa_std_compute_call, NULL, NULL, 0, 0, 1 },
+#else
+    { "compute", "std.compute", "compute", NULL, NULL, NULL, 0, 0, 0 },
 #endif
 #ifdef FLUXA_STD_CRYPTO
     { "crypto", "std.crypto", "crypto", fluxa_std_crypto_call, NULL, NULL, 0, 0, 1 },
@@ -316,7 +324,7 @@ static const FluxaLibEntry fluxa_lib_registry[] = {
 #endif
 };
 
-#define FLUXA_LIB_COUNT 33
+#define FLUXA_LIB_COUNT 34
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 static inline const FluxaLibEntry *

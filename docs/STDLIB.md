@@ -1805,6 +1805,215 @@ graph.draw_image(win, card, 220, 80)       // texture uploaded once, then reused
 graph.draw_image(win, card, 40, 400, 0.4)  // same buffer, drawn small as a thumbnail
 ```
 
+## std.compute — GPU Computation
+
+General-purpose computation on the GPU. No window, no swapchain, no input, no
+notion of a frame — `std.compute` treats the device as a calculating machine.
+
+It is fully independent of `std.graph` and `std.video`: nothing here needs a
+display, so the same code runs on a headless server and on a desktop.
+
+All functions that touch the device must run inside `danger {}`.
+
+### Context
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.init()` | `dyn` | Create a context and pick a device |
+| `compute.close(ctx)` | `nil` | Release the context and everything it owns. Silent if already closed. |
+| `compute.wait_idle(ctx)` | `nil` | Wait for all submitted work |
+| `compute.device_name(ctx)` | `str` | Name of the selected device |
+| `compute.has(ctx, feature)` | `bool` | `"float64"`, `"int64"`, `"int16"`, `"float16"`, `"timestamps"` |
+| `compute.version()` | `str` | Which backend is compiled in |
+
+An unknown feature name is an **error**, not a silent `false`: false would read
+as "the GPU lacks it" when the truth is "no such feature".
+
+### Buffers
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.create_buffer(ctx, size, usage)` | `int` | `usage` is `"storage"`, `"uniform"`, `"transfer"` or `"indirect"`. Max 1 GiB. |
+| `compute.destroy_buffer(ctx, buf)` | `nil` | |
+| `compute.buffer_size(ctx, buf)` | `int` | Size in bytes |
+| `compute.upload(ctx, buf, arr, offset)` | `nil` | Takes an `int arr` or a `float arr` |
+| `compute.download(ctx, buf, offset, size)` | `dyn` | Floats. `size` must be a multiple of 4. |
+| `compute.copy_buffer(ctx, src, dst, size, src_off, dst_off)` | `nil` | Source and destination may be the same buffer |
+| `compute.fill_buffer(ctx, buf, value)` | `nil` | Fill with a repeated 32-bit value |
+
+`upload` packs an int array to int32 and a float array to float32 — the two
+types a compute shader reads. **A mixed array is refused**: a shader reads one
+packed type, so silently picking one would corrupt the data.
+
+`download` allocates the `dyn` it returns. In a simulation loop, `free()` it
+each turn — the collector runs at a safe point and a `while` loop never reaches
+one, so anything allocated per iteration has to be released per iteration.
+
+### Kernels
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.load_kernel(ctx, path)` | `int` | Load a SPIR-V module, entry point `main` |
+| `compute.load_kernel_entry(ctx, path, entry)` | `int` | With an explicit entry point |
+| `compute.destroy_kernel(ctx, kernel)` | `nil` | Unbinds it if it was current |
+| `compute.bind_kernel(ctx, kernel)` | `nil` | Use it for the next dispatches |
+
+Shaders are supplied pre-compiled as `.spv`, which keeps the library free of a
+shader compiler:
+
+```sh
+glslangValidator -V kernel.comp -o kernel.spv
+# or
+glslc kernel.comp -o kernel.spv
+```
+
+The module is validated before it reaches the driver — magic number, 4-byte
+alignment, size cap — so a truncated or unrelated file is an ordinary Fluxa
+error rather than the driver's problem.
+
+### Binding and execution
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.bind_buffer(ctx, slot, buf)` | `nil` | Slot 0–31 |
+| `compute.bind_uniform(ctx, slot, buf)` | `nil` | Same slot range |
+| `compute.push_constants(ctx, arr, size)` | `nil` | Max 128 bytes — what Vulkan guarantees |
+| `compute.begin(ctx)` | `nil` | Open a batch |
+| `compute.dispatch(ctx, gx, gy, gz)` | `nil` | Run the bound kernel over a workgroup grid |
+| `compute.barrier(ctx, kind)` | `nil` | `"compute"`, `"compute_to_compute"`, `"compute_to_transfer"`, `"transfer_to_compute"` |
+| `compute.end(ctx)` | `int` | Submit the batch, returning a ticket |
+
+### Tickets
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.ready(ctx, ticket)` | `bool` | Has the batch finished? Does not block. |
+| `compute.wait(ctx, ticket)` | `nil` | Block until it has |
+| `compute.last_ticket(ctx)` | `int` | The most recent ticket |
+
+Tickets let the CPU keep working while the GPU does, instead of calling
+`wait_idle` after every dispatch.
+
+### Limits and profiling
+
+| Function | Returns | Notes |
+|---|---|---|
+| `compute.max_workgroup_x/y/z(ctx)` | `int` | Per-axis workgroup count limit |
+| `compute.max_buffer_size(ctx)` | `int` | Largest buffer the device supports |
+| `compute.memory_total(ctx)` | `int` | Device-local memory; 0 means "not reported" |
+| `compute.profile_begin(ctx, name)` | `nil` | Open a measurement region |
+| `compute.profile_end(ctx)` | `nil` | Close it |
+| `compute.profile_ms(ctx, name)` | `float` | Duration, or **-1.0 when not measured** |
+
+`profile_ms` returns -1.0 rather than 0.0 when no timing is available, since 0.0
+would read as an instantaneous kernel.
+
+### Complete example
+
+The shader (`double.comp`):
+
+```glsl
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer Data { float v[]; };
+void main() { v[gl_GlobalInvocationID.x] = v[gl_GlobalInvocationID.x] * 2.0; }
+```
+
+The program:
+
+```fluxa
+import std compute
+
+danger {
+    dyn g = compute.init()
+    print("device: ", compute.device_name(g))
+
+    int b = compute.create_buffer(g, 32, "storage")
+    float arr v[8] = 0.0
+    v[0] = 1.0
+    v[1] = 2.0
+    v[2] = 3.0
+    v[3] = 4.0
+    v[4] = 5.0
+    v[5] = 6.0
+    v[6] = 7.0
+    v[7] = 8.0
+    compute.upload(g, b, v, 0)
+
+    int k = compute.load_kernel(g, "double.spv")
+    compute.begin(g)
+    compute.bind_kernel(g, k)
+    compute.bind_buffer(g, 0, b)
+    compute.dispatch(g, 8, 1, 1)
+    int t = compute.end(g)
+    compute.wait(g, t)
+
+    dyn out = compute.download(g, b, 0, 32)
+    print(out[0], out[1], out[2], out[7])    // 2 4 6 16
+    free(out)
+
+    compute.destroy_kernel(g, k)
+    compute.destroy_buffer(g, b)
+    compute.close(g)
+}
+if err != nil { print(err[0]) }
+```
+
+### Handles, `prst`, and runtime swaps
+
+The context is a `dyn` cursor and is meant to be held in `prst dyn`, so a hot
+reload does not throw away the GPU work of the previous run:
+
+```fluxa
+prst dyn gpu = compute.init()
+```
+
+Buffers and kernels are plain `int`, which is what lets a Block method receive
+them. That combination has a trap worth understanding, and it is the same one
+behind *"Address already in use"* for sockets:
+
+| | in-process reload (`-dev`, `apply`) | runtime swap (`handover`, `update`) |
+|---|---|---|
+| the context | same device, same resources | rebuilt from its declaration |
+| an `int` handle | still valid | refers to a table that no longer exists |
+
+So a handle is not a bare index — it carries the generation of the context that
+issued it. A handle surviving from a previous context is caught:
+
+```
+compute.buffer_size (line 18): this buffer handle belongs to a previous
+context — a runtime swap rebuilds the context, so handles must be recreated too
+```
+
+Without that check the stale number would address whatever now occupies the
+same slot: a *wrong answer* rather than an error. `0` is never a valid handle,
+matching the convention used for socket and request handles.
+
+Practical consequence: **do not mark buffer or kernel handles `prst`**. Keep the
+context persistent and recreate the resources — the same rule the language
+already states for OS-level handles.
+
+### Backends
+
+| | Default (stub) | `make FLUXA_COMPUTE_VULKAN=1 build` |
+|---|---|---|
+| buffers, upload, download, copy, fill | real, in host memory | real, on the device |
+| argument and handle validation | identical | identical |
+| `dispatch` | **no-op — kernels do not run** | runs on the GPU |
+
+The stub is not a placeholder: everything except kernel execution behaves the
+same, which makes the library testable on a machine with no GPU. Executing
+SPIR-V without a device is not something a stub can honestly pretend at, so
+`compute.version()` always states which backend is present.
+
+Vulkan is opt-in rather than automatic. Linking libvulkan on a machine with no
+driver installed produces a binary that fails at `compute.init()` instead of
+falling back, so the default stays the stub:
+
+```
+compute.init: no Vulkan instance — is a driver (ICD) installed?
+```
+
 ## std.video — MP4 / H.264 Write and Read
 
 Writes and reads MP4 video with an H.264 track. Frames are the **same image
