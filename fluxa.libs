@@ -45,6 +45,7 @@ std.websocket = true    # WebSocket client, ws:// native  (none) [libwebsockets 
 std.http      = true    # HTTP server + client               mongoose (vendored in vendor/)
 std.mcp       = true    # Fluxa as MCP server (JSON-RPC 2.0)  mongoose (vendored in vendor/)
 std.graph     = true    # 2D/3D graphics, input                (none) [Raylib optional: make FLUXA_GRAPH_RAYLIB=1]
+std.compute   = true    # GPU compute (Vulkan)             (none) [Vulkan optional: make FLUXA_COMPUTE_VULKAN=1]                                                                  
 std.image     = true    # PNG/JPG/BMP/TGA/QOI encode/decode    (none) [Raylib codec optional: make FLUXA_IMAGE_RAYLIB=1]
 std.infer     = true    # local LLM inference, GGUF models     (none) [llama.cpp optional: make FLUXA_INFER_LLAMA=1]
 std.wserver   = true    # resilient HTTP server (thread pool)  libmicrohttpd-dev [stub if absent]

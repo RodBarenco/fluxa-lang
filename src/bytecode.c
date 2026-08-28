@@ -363,6 +363,17 @@ static inline Value vm_compare(Value l, Value r, Opcode op) {
             default: break;
         }
     }
+    /* String equality in the tree-walker is content-based. Keep the VM
+     * identical: treating the Value union as a double here compared pointer
+     * bits by accident, so separately allocated equal strings failed only
+     * after a while/function had been compiled to bytecode. */
+    if (l.type == VAL_STRING && r.type == VAL_STRING) {
+        const char *ls = l.as.string ? l.as.string : "";
+        const char *rs = r.as.string ? r.as.string : "";
+        if (op == OP_EQ)  return val_bool(strcmp(ls, rs) == 0);
+        if (op == OP_NEQ) return val_bool(strcmp(ls, rs) != 0);
+        return val_bool(0);
+    }
     double lv = (l.type==VAL_INT)?(double)l.as.integer:l.as.real;
     double rv = (r.type==VAL_INT)?(double)r.as.integer:r.as.real;
     switch (op) {

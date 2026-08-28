@@ -496,6 +496,17 @@ $(echo "$_out" | grep "FAIL" | sed 's/^/    /')"
 fi
 
 # ── sprint11: warm path (WHT + QJL, cold/warm/hot tiers) ─────────────────────
+printf "  %-56s" "bytecode/str equality in while"
+_out=$(bash "$SCRIPT_DIR/str_eq_in_loop.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "str_eq_in_loop: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  bytecode/str equality in while:
+$(echo "$_out" | grep -E "FAIL|expected|got" | sed 's/^/    /')"
+fi
+
 printf "  %-56s" "sprint11/warm_path (warm tier, edge cases)"
 _out=$(bash "$SCRIPT_DIR/sprint11_warm_path.sh" --fluxa "$FLUXA" 2>&1)
 if echo "$_out" | grep -q "warm_path: PASS"; then

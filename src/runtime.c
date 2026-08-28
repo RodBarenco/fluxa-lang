@@ -2291,7 +2291,16 @@ static Value eval(Runtime *rt, ASTNode *node) {
                             if (!nb) { rt_error(rt, "out of memory growing dyn"); return val_nil(); }
                             d->items = nb;
                         }
-                        for (long fi = d->count; fi < idx; fi++) d->items[fi] = val_nil();
+                        /* Clear through idx, not up to it. The slot at idx is
+                         * about to be released before being overwritten, and
+                         * realloc hands back memory holding whatever was there
+                         * before — so leaving it uninitialised means releasing
+                         * a Value read out of stale bytes. When those bytes
+                         * happen to look like VAL_STRING or VAL_ARR, that is a
+                         * free() of an arbitrary pointer: a crash inside
+                         * value_release_data with no error, at a point that
+                         * moves with whatever the allocator did last. */
+                        for (long fi = d->count; fi <= idx; fi++) d->items[fi] = val_nil();
                         d->count = (int)idx + 1;
                     }
                     /* Type validation */
@@ -2534,8 +2543,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                     if (!newbuf) { rt_error(rt, "out of memory growing dyn"); return val_nil(); }
                     d->items = newbuf;
                 }
-                /* Fill gap with nil */
-                for (long fi = d->count; fi < idx; fi++)
+                /* Fill through idx inclusive — see the note on the other
+                 * auto-grow path above. The slot being assigned is released
+                 * before it is overwritten, so it must hold a real Value and
+                 * not whatever realloc left in the block. */
+                for (long fi = d->count; fi <= idx; fi++)
                     d->items[fi] = val_nil();
                 d->count = (int)idx + 1;
             }

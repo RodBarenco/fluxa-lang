@@ -1,5 +1,57 @@
 # Fluxa-lang Changelog
 
+## Unreleased — string equality in bytecode loops
+
+`str == str` and `str != str` now compare string contents in the bytecode VM,
+matching the tree-walker. Previously the VM's generic numeric fallback read the
+string-pointer arm of `Value` as a `double`, so equal, separately owned strings
+could compare unequal inside compiled `while` loops and functions. Identity-
+sharing paths such as some field, array and parameter reads could hide the bug.
+
+A regression test covers local strings, inline literals, inequality and a loop
+compiled as part of a function.
+
+## v0.31.1 — auto-grow released an uninitialised slot
+
+Growing a `dyn` past its end could segfault, with no error and no message, in
+some fraction of runs. Reported from a real program: the crash appeared only
+when a `graph.init` window existed, moved around with the amount of growth, and
+`prst`, anchoring and `gc_cap` changed nothing.
+
+Both auto-grow paths filled the gap up to `idx - 1`:
+
+```c
+for (long fi = d->count; fi < idx; fi++) d->items[fi] = val_nil();
+d->count = (int)idx + 1;
+...
+value_release_data(&d->items[idx]);   /* the slot never initialised */
+d->items[idx] = v;
+```
+
+The slot at `idx` — the one being assigned — was left holding whatever `realloc`
+found in the reused block, and was then released before being overwritten. When
+those bytes happened to look like `VAL_STRING` or `VAL_ARR`, that release was a
+`free()` of an arbitrary pointer.
+
+That accounts for every observation in the report at once: the window mattered
+because raylib's large allocations meant the reused blocks held pointer-shaped
+data instead of zeros; more growth was worse because each one is another chance;
+`prst` and anchoring did not help because the *value* was rooted and the *bytes*
+were the problem; `gc_cap` did not help because nothing was being collected
+early; raylib never appeared on the stack because it was not raylib's memory
+that was wrong; and the death point moved because it depended on what the
+allocator had done last. `value_release_data` appeared twice on the stack
+because a container release walks its elements.
+
+The fix is `<= idx` in both paths.
+
+Two regression cases were added to `tests/suite2/s2_dyn.sh`. They churn the heap
+with discarded strings first, so the reused blocks are full of pointer-shaped
+bytes rather than zeros, and then grow — which reproduces the fault without
+raylib and without depending on the allocator's mood. The first fails against
+the previous binary.
+
+
 ## v0.31 — `std.compute`
 
 General-purpose GPU computation. No window, no swapchain, no input, no notion
@@ -101,6 +153,21 @@ driver's problem.
 
 Buffer sizes, offsets, copy regions, workgroup counts, descriptor slots and
 push-constant sizes are all bounded before anything is allocated or written.
+
+### Knowing whether the work is really accelerated
+
+`device_name` returns a vendor string, which does not answer that without
+parsing it, so `compute.device_type(ctx)` reports `"discrete"`,
+`"integrated"`, `"virtual"`, `"cpu"` or `"stub"`, and
+`compute.accelerated(ctx)` is the one-line form.
+
+Two of those answers matter. A software rasteriser such as Mesa's lavapipe —
+common on servers and in containers — reports `"cpu"`: it computes the right
+result, but on the CPU, which is not what a program written for a GPU expects.
+The stub reports `"stub"` and is more serious still, since buffers and
+transfers behave normally while kernels never run, so a program could believe
+it computed something when it did not. A program that cares can now ask and
+fall back to its own path.
 
 ### Deliberate choices worth knowing
 

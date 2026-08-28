@@ -232,7 +232,78 @@ else
 fi
 
 echo "────────────────────────────────────────────────────────────────────"
-total=10
+# ── CASE 11: auto-grow does not release an uninitialised slot ────────────────
+# The slot being assigned is released before it is overwritten. Both auto-grow
+# paths used to fill the gap only up to idx-1, leaving that slot holding
+# whatever realloc found in the reused block — so value_release_data ran on a
+# Value read out of stale bytes. When those bytes looked like VAL_STRING or
+# VAL_ARR it was a free() of an arbitrary pointer: a segfault with no message,
+# at a point that moved with whatever the allocator had done last, and only in
+# some fraction of runs.
+#
+# This exercises both paths (bare `d[i] =` and the arr_assign form) after
+# churning the heap with discarded strings, so the reused blocks are full of
+# pointer-shaped bytes rather than zeros.
+cat > "$WORK_DIR/dyn_grow_release.flx" << 'FLX'
+int j = 0
+while j < 300 {
+    dyn junk = ["aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb"]
+    junk[2] = "cccccccccccccccccccc"
+    junk[5] = "dddddddddddddddddddd"
+    junk[9] = "eeeeeeeeeeeeeeeeeeee"
+    j = j + 1
+}
+dyn p = [0.0]
+int k = 1
+while k < 400 {
+    p[k] = 1.0
+    k = k + 1
+}
+dyn q = [0]
+int m = 1
+while m < 400 {
+    q[m] = m
+    m = m + 1
+}
+print("LEN", len(p), len(q))
+print("LAST", p[399], q[399])
+FLX
+ok=1
+for _ in 1 2 3 4 5 6; do
+    out=$(timeout 20s "$FLUXA" run "$WORK_DIR/dyn_grow_release.flx" 2>&1 || true)
+    echo "$out" | grep -q "LEN 400 400" || ok=0
+    echo "$out" | grep -q "LAST 1 399"  || ok=0
+done
+if [ "$ok" -eq 1 ]; then
+    pass "auto_grow_does_not_release_uninitialised_slot"
+else
+    fail "auto_grow_does_not_release_uninitialised_slot" \
+         "LEN 400 400 / LAST 1 399 in six consecutive runs" "$out"
+fi
+
+# ── CASE 12: growth interleaved with strings in the same dyn ─────────────────
+# The released slot matters most when the dyn genuinely holds heap values, so
+# the release path is real rather than a no-op on scalars.
+cat > "$WORK_DIR/dyn_grow_strings.flx" << 'FLX'
+dyn s = ["seed"]
+int i = 1
+while i < 200 {
+    s[i] = "value"
+    i = i + 1
+}
+s[50]  = "replaced"
+s[199] = "last"
+print("LEN", len(s))
+print("V", s[50], s[199], s[7])
+FLX
+out=$(timeout 20s "$FLUXA" run "$WORK_DIR/dyn_grow_strings.flx" 2>&1 || true)
+if echo "$out" | grep -q "LEN 200" && echo "$out" | grep -q "V replaced last value"; then
+    pass "auto_grow_with_heap_values_in_slots"
+else
+    fail "auto_grow_with_heap_values_in_slots" "LEN 200 / V replaced last value" "$out"
+fi
+
+total=12
 if [ "$FAILS" -eq 0 ]; then
     echo "  Results: ${total} passed, 0 failed"
     echo "  → dyn: PASS"
