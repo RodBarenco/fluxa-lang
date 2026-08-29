@@ -1381,6 +1381,15 @@ Observation runs until promotion — no cap, no cold-lock. Fluxa is strongly typ
 
 **TCO trampoline fix:** When a tail call targets a different function (`pong` calling `ping`), the trampoline updates both `rt->current_fn` and `rt->current_wf` before continuing. Without this fix, the wrong WarmFunc slot would be used for the new target function.
 
+**VM callback fallback:** A function or Block method called by hot-loop
+bytecode may fall back to the tree interpreter when its body is not bytecode-
+compilable. That bridge uses the same iterative TCO contract: `ret.tco_active`
+reuses one saved frame for the complete chain, including mutual recursion.
+Parameters copied from VM registers are borrowed and are not released by the
+callee; arguments produced by a subsequent tail call are owned by the reused
+frame and are released at its teardown. Argument and parameter counts are
+validated against the 512-slot variable stack before binding.
+
 **Block methods excluded:** `current_instance != NULL` in Block method frames → warm path disabled. Block methods use `inst->scope`, not the stack-slot path, so `warm_local` would be incorrect.
 
 **Hash table (WarmProfile):** Open-addressing hash keyed by `(uintptr_t)fn_node` — the ASTNode pointer is stable across all calls to the same function. The table is a single contiguous heap-allocated `WarmFunc[]` block, starting at `warm_func_cap` entries (default 32) and growing via `realloc × 2` when > 75% full. `warm_func_cap` in `fluxa.toml` sets the **initial** capacity — not a ceiling. One pointer indirection total; all WarmFuncs are contiguous for cache locality.

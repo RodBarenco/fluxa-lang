@@ -507,6 +507,18 @@ else
 $(echo "$_out" | grep -E "FAIL|expected|got" | sed 's/^/    /')"
 fi
 
+# ── VM callback fallback: TCO return/frame/ownership parity ──────────────────
+printf "  %-56s" "vm/tco_bridge (plain + Block + ownership + deep TCO)"
+_out=$(bash "$SCRIPT_DIR/vm_tco_bridge.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "vm_tco_bridge: PASS"; then
+    echo "PASS"; PASS=$((PASS+1))
+else
+    echo "FAIL"; FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}
+  vm/tco_bridge:
+$(echo "$_out" | sed 's/^/    /')"
+fi
+
 printf "  %-56s" "sprint11/warm_path (warm tier, edge cases)"
 _out=$(bash "$SCRIPT_DIR/sprint11_warm_path.sh" --fluxa "$FLUXA" 2>&1)
 if echo "$_out" | grep -q "warm_path: PASS"; then

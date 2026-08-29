@@ -1164,6 +1164,158 @@ static void vm_set_field_callback(void *rt_opaque, Value *owner_kv, const char *
     scope_set(&inst->scope, field, val);
 }
 
+/* Interpreter fallback for calls made by bytecode loops.
+ *
+ * NODE_RETURN represents `return fn(args)` as ret.tco_active so the normal
+ * call_function() trampoline can reuse its frame.  The old VM bridges ran a
+ * single body and inspected only ret.active; a fallback callee ending in a
+ * tail call consequently returned VAL_NIL.  That nil could then be bound to
+ * the next method parameter and reported as an apparent scope violation.
+ *
+ * Preserve the language's TCO and ownership contracts here: save the VM frame
+ * once for the whole tail-call chain, skip teardown of the initial borrowed
+ * VM parameters, and own/release arguments produced by subsequent tail calls. */
+static Value vm_eval_fallback(Runtime *rt, ASTNode *fn_node,
+                              BlockInstance *instance,
+                              const Value *vm_args, int argc) {
+    if (rt->call_depth >= FLUXA_MAX_DEPTH) {
+        rt_error(rt, "stack overflow — max call depth reached");
+        return val_nil();
+    }
+    if (argc < 0 || argc > FLUXA_STACK_SIZE) {
+        rt_error(rt, "VM call argument count exceeds the variable stack");
+        return val_nil();
+    }
+
+    Scope          caller_scope = rt->scope;
+    int            caller_sz    = rt->stack_size;
+    BlockInstance *caller_inst  = rt->current_instance;
+    ASTNode       *caller_fn    = rt->current_fn;
+    int save_slots = caller_sz < FLUXA_STACK_SIZE
+                   ? caller_sz : FLUXA_STACK_SIZE;
+    Value caller_stack[FLUXA_STACK_SIZE];
+    if (save_slots > 0)
+        memcpy(caller_stack, rt->stack,
+               sizeof(Value) * (size_t)save_slots);
+
+    Value *pending_args = NULL;
+    if (argc > 0) {
+        pending_args = (Value *)malloc(sizeof(Value) * (size_t)argc);
+        if (!pending_args) {
+            rt_error(rt, "out of memory copying VM call arguments");
+            return val_nil();
+        }
+        memcpy(pending_args, vm_args, sizeof(Value) * (size_t)argc);
+    }
+
+    rt->scope            = scope_new();
+    rt->stack_size       = 0;
+    rt->current_instance = instance;
+    rt->call_depth++;
+
+    int params_borrowed = 1;
+    int param_count = argc;
+    Value result = val_nil();
+
+    while (1) {
+        int declared = fn_node->as.func_decl.param_count;
+        if (declared < 0 || declared > FLUXA_STACK_SIZE) {
+            rt_error(rt, "tail-call parameter count exceeds the variable stack");
+            free(pending_args);
+            pending_args = NULL;
+            break;
+        }
+        if (param_count != declared) {
+            char buf[280];
+            snprintf(buf, sizeof(buf),
+                     "function '%s' expects %d argument(s), got %d (tail call)",
+                     fn_node->as.func_decl.name, declared, param_count);
+            rt_error(rt, buf);
+            free(pending_args);
+            pending_args = NULL;
+            break;
+        }
+
+        int zero_slots = param_count + 64;
+        if (zero_slots < caller_sz + 1) zero_slots = caller_sz + 1;
+        if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
+        for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
+        rt->stack_size = 0;
+        for (int i = 0; i < param_count; i++) {
+            rt->stack[i] = pending_args[i];
+            rt->stack_size = i + 1;
+        }
+        free(pending_args);
+        pending_args = NULL;
+
+        rt->current_fn = fn_node;
+        rt->current_wf = rt->warm.enabled
+                       ? warm_profile_get_func(&rt->warm, (uintptr_t)fn_node)
+                       : NULL;
+        Value self; self.type = VAL_FUNC; self.as.func = fn_node;
+        scope_set(&rt->scope, fn_node->as.func_decl.name, self);
+        rt->ret.active        = 0;
+        rt->ret.tco_active    = 0;
+        rt->ret.tco_fn        = NULL;
+        rt->ret.tco_args      = NULL;
+        rt->ret.tco_arg_count = 0;
+        rt->ret.value         = val_nil();
+
+        ASTNode *body = fn_node->as.func_decl.body;
+        for (int i = 0; i < body->as.list.count; i++) {
+            eval(rt, body->as.list.children[i]);
+            if (rt->had_error || rt->ret.active || rt->ret.tco_active) break;
+        }
+        if (rt->warm.enabled && rt->current_wf)
+            warm_update_sig(rt->current_wf);
+        if (rt->had_error) break;
+
+        if (rt->ret.tco_active) {
+            ASTNode *next_fn = rt->ret.tco_fn;
+            Value *next_args = rt->ret.tco_args;
+            int next_argc = rt->ret.tco_arg_count;
+
+            frame_release_slots_from(rt,
+                                     params_borrowed ? param_count : 0,
+                                     NULL);
+            scope_free(&rt->scope);
+            rt->scope = scope_new();
+            rt->stack_size = 0;
+            rt->ret.tco_active = 0;
+            rt->ret.tco_fn = NULL;
+            rt->ret.tco_args = NULL;
+            rt->ret.tco_arg_count = 0;
+
+            fn_node         = next_fn;
+            pending_args    = next_args;
+            param_count     = next_argc;
+            params_borrowed = 0;
+            continue;
+        }
+
+        result = rt->ret.active ? rt->ret.value : val_nil();
+        rt->ret.active = 0;
+        break;
+    }
+
+    free(pending_args);
+    frame_release_slots_from(rt, params_borrowed ? param_count : 0, &result);
+    scope_free(&rt->scope);
+    rt->scope            = caller_scope;
+    rt->stack_size       = caller_sz;
+    rt->current_instance = caller_inst;
+    rt->current_fn       = caller_fn;
+    rt->current_wf       = (rt->warm.enabled && caller_fn)
+                           ? warm_profile_get_func(&rt->warm,
+                                                   (uintptr_t)caller_fn)
+                           : NULL;
+    if (save_slots > 0)
+        memcpy(rt->stack, caller_stack,
+               sizeof(Value) * (size_t)save_slots);
+    rt->call_depth--;
+    return result;
+}
+
 /* ── v0.14: vm_call_callback — bridges OP_CALL_METHOD / OP_CALL_FUNC ────── */
 /* Called from vm_run when the bytecode VM encounters a call opcode.
  * owner: NULL → plain function call; non-NULL → Block method call.
@@ -1267,76 +1419,7 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
                 return inline_result;
             }
         }
-        /* ── Fallback: full frame save/restore ──────────────────────── */
-        /* Save caller frame */
-        Scope          caller_scope = rt->scope;
-        int            caller_sz    = rt->stack_size;
-        BlockInstance *caller_inst  = rt->current_instance;
-        ASTNode       *caller_fn    = rt->current_fn;
-        /* Save VM register range. caller_sz = chunk.next_reg (set before vm_run).
-         * Stack-allocated: each C call frame is independent — no overflow risk
-         * since vm_call_callback is not called recursively (VM back-edge → callback
-         * → eval → while → vm_run → back-edge — but this inner vm_run has its
-         * own callback invocation with its own C frame). */
-        int   save_slots   = (caller_sz < FLUXA_STACK_SIZE) ? caller_sz : FLUXA_STACK_SIZE;
-        /* Fixed-size array: predictable stack usage, no VLA overhead */
-        Value caller_stack[FLUXA_STACK_SIZE];
-        if (save_slots > 0)
-            memcpy(caller_stack, rt->stack, sizeof(Value) * save_slots);
-        rt->scope            = scope_new();
-        rt->stack_size       = 0;
-        rt->current_instance = inst;
-        rt->current_fn       = fn_node;
-        rt->current_wf       = rt->warm.enabled
-                               ? warm_profile_get_func(&rt->warm,
-                                                       (uintptr_t)fn_node)
-                               : NULL;
-        rt->call_depth++;
-        /* args = &R[first_arg] inside rt->stack — copy before zeroing */
-        Value arg_copy[64];
-        int safe_argc = argc < 64 ? argc : 64;
-        for (int i = 0; i < safe_argc; i++) arg_copy[i] = args[i];
-        int zero_slots = argc + 64;
-        if (zero_slots < caller_sz + 1) zero_slots = caller_sz + 1;
-        if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
-        for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
-        for (int i = 0; i < safe_argc; i++) {
-            rt->stack[i] = arg_copy[i];
-            if (rt->stack_size <= i) rt->stack_size = i + 1;
-        }
-        /* Register self for recursion */
-        Value self; self.type = VAL_FUNC; self.as.func = fn_node;
-        scope_set(&rt->scope, fn_node->as.func_decl.name, self);
-        rt->ret.active = rt->ret.tco_active = 0;
-        rt->ret.value  = val_nil();
-        /* Execute body */
-        ASTNode *body = fn_node->as.func_decl.body;
-        for (int i = 0; i < body->as.list.count; i++) {
-            eval(rt, body->as.list.children[i]);
-            if (rt->had_error || rt->ret.active || rt->ret.tco_active) break;
-        }
-        if (rt->warm.enabled && rt->current_wf)
-            warm_update_sig(rt->current_wf);
-        Value result = rt->ret.active ? rt->ret.value : val_nil();
-        rt->ret.active = 0;
-        /* Ownership teardown (bug K): release the LOCALS' heap values before
-         * the VM caller frame is restored. Param slots [0, argc) adopted VM
-         * register pointers and are skipped — the VM owns those. */
-        frame_release_slots_from(rt, safe_argc, &result);
-        /* Restore caller frame */
-        scope_free(&rt->scope);
-        rt->scope            = caller_scope;
-        rt->stack_size       = caller_sz;
-        rt->current_instance = caller_inst;
-        rt->current_fn       = caller_fn;
-        rt->current_wf       = (rt->warm.enabled && caller_fn)
-                               ? warm_profile_get_func(&rt->warm,
-                                                       (uintptr_t)caller_fn)
-                               : NULL;
-        if (save_slots > 0)
-            memcpy(rt->stack, caller_stack, sizeof(Value) * save_slots);
-        rt->call_depth--;
-        return result;
+        return vm_eval_fallback(rt, fn_node, inst, args, argc);
     }
 
     /* ── Plain function call ────────────────────────────────────────────── */
@@ -1396,64 +1479,8 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         free(fn_regs);
         return result;
     }
-    fn_fallback: ;
-    Scope          caller_scope = rt->scope;
-    int            caller_sz    = rt->stack_size;
-    BlockInstance *caller_inst  = rt->current_instance;
-    ASTNode       *caller_fn    = rt->current_fn;
-    int   save_slots   = (caller_sz < FLUXA_STACK_SIZE) ? caller_sz : FLUXA_STACK_SIZE;
-    Value caller_stack[FLUXA_STACK_SIZE];
-    if (save_slots > 0)
-        memcpy(caller_stack, rt->stack, sizeof(Value) * save_slots);
-    rt->scope            = scope_new();
-    rt->stack_size       = 0;
-    /* Preserve current_instance for intra-Block calls (e.g. iterate() from run()) */
-    rt->current_instance = caller_inst;
-    rt->current_fn       = fn_node;
-    rt->current_wf       = rt->warm.enabled
-                           ? warm_profile_get_func(&rt->warm, (uintptr_t)fn_node)
-                           : NULL;
-    rt->call_depth++;
-    /* args = &R[first_arg] inside rt->stack — copy before zeroing */
-    Value parg_copy[64];
-    int safe_argc2 = argc < 64 ? argc : 64;
-    for (int i = 0; i < safe_argc2; i++) parg_copy[i] = args[i];
-    int zero_slots = argc + 64;
-    if (zero_slots < caller_sz + 1) zero_slots = caller_sz + 1;
-    if (zero_slots > FLUXA_STACK_SIZE) zero_slots = FLUXA_STACK_SIZE;
-    for (int i = 0; i < zero_slots; i++) rt->stack[i].type = VAL_NIL;
-    for (int i = 0; i < safe_argc2; i++) {
-        rt->stack[i] = parg_copy[i];
-        if (rt->stack_size <= i) rt->stack_size = i + 1;
-    }
-    Value self; self.type = VAL_FUNC; self.as.func = fn_node;
-    scope_set(&rt->scope, fn_node->as.func_decl.name, self);
-    rt->ret.active = rt->ret.tco_active = 0;
-    rt->ret.value  = val_nil();
-    ASTNode *body = fn_node->as.func_decl.body;
-    for (int i = 0; i < body->as.list.count; i++) {
-        eval(rt, body->as.list.children[i]);
-        if (rt->had_error || rt->ret.active || rt->ret.tco_active) break;
-    }
-    if (rt->warm.enabled && rt->current_wf)
-        warm_update_sig(rt->current_wf);
-    Value result = rt->ret.active ? rt->ret.value : val_nil();
-    rt->ret.active = 0;
-    /* Ownership teardown (bug K): locals only — param slots hold VM register
-     * pointers owned by the VM lifecycle (see frame_release_slots_from). */
-    frame_release_slots_from(rt, safe_argc2, &result);
-    scope_free(&rt->scope);
-    rt->scope            = caller_scope;
-    rt->stack_size       = caller_sz;
-    rt->current_instance = caller_inst;
-    rt->current_fn       = caller_fn;
-    rt->current_wf       = (rt->warm.enabled && caller_fn)
-                           ? warm_profile_get_func(&rt->warm, (uintptr_t)caller_fn)
-                           : NULL;
-    if (save_slots > 0)
-        memcpy(rt->stack, caller_stack, sizeof(Value) * save_slots);
-    rt->call_depth--;
-    return result;
+    fn_fallback:
+    return vm_eval_fallback(rt, fn_node, rt->current_instance, args, argc);
 }
 
 /* ── Runtime-aware scope cleanup ─────────────────────────────────────────── */

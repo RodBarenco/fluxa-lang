@@ -1,5 +1,28 @@
 # Fluxa-lang Changelog
 
+## Unreleased — tail calls across bytecode loops preserve their frame
+
+Calls made by a compiled `while` now use an iterative tail-call trampoline when
+the callee falls back to the tree interpreter. Previously both VM callback
+fallbacks executed one function body and inspected only `ret.active`; a callee
+ending in `return sibling(args)` sets `ret.tco_active`, so its valid return was
+silently replaced by `nil`. A following method then appeared to have an unbound
+parameter (`undefined variable`) even though its arguments and lexical scope
+had been resolved correctly.
+
+The shared fallback preserves one saved VM frame for the entire tail-call
+chain. Initial VM-register parameters remain borrowed, tail-call-produced
+arguments are owned and released by the reused frame, and the 500-frame guard
+still applies to genuinely nested calls. Dynamic argument copying replaces the
+old fixed 64-value arrays, with an explicit 512-slot bound before allocation or
+binding. This avoids silent truncation and prevents an oversized count from
+becoming an out-of-bounds stack write.
+
+Regression coverage includes plain functions, external and internal Block
+method calls, non-tail controls, string ownership, and 2,000 mutual tail calls
+from a bytecode loop. The original texture-decoder reduction now completes
+without exposing another frame's state.
+
 ## Unreleased — mutable RGBA images and tinted drawing
 
 - `image.update_rgba(img, pixels)` atomically replaces a live image's complete
