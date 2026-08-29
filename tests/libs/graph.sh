@@ -864,6 +864,55 @@ FLX
 echo "$out" | grep -qi "expected int" && pass "draw_circle_still_requires_int_radius" \
     || fail "draw_circle_still_requires_int_radius" "expected int" "$out"
 
+# draw_image_tint accepts num positions/scale and RGBA modulation
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "tint")
+    dyn img = image.new(2, 2)
+    graph.begin_frame(win)
+    graph.draw_image_tint(win, img, 10.5, 20, 255, 128, 64, 96, 1.5)
+    graph.end_frame(win)
+    image.discard(img)
+    graph.close(win)
+    print("TINT_OK")
+}
+if err != nil { print("ERR", err[0]) }
+FLX
+)
+echo "$out" | grep -q "TINT_OK" && pass "draw_image_tint_accepts_num_and_rgba" \
+    || fail "draw_image_tint_accepts_num_and_rgba" "TINT_OK" "$out"
+
+# tint validates both color range and scale on the headless backend too
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "tint")
+    dyn img = image.new(2, 2)
+    graph.draw_image_tint(win, img, 0, 0, 256, 255, 255, 255, 1)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "0..255" && pass "draw_image_tint_color_validated" \
+    || fail "draw_image_tint_color_validated" "0..255 range" "$out"
+
+out=$(run_img << 'FLX'
+import std graph
+import std image
+danger {
+    dyn win = graph.init(200, 150, "tint")
+    dyn img = image.new(2, 2)
+    graph.draw_image_tint(win, img, 0, 0, 255, 255, 255, 255, 0)
+}
+if err != nil { print(err[0]) }
+FLX
+)
+echo "$out" | grep -qi "scale must be positive" && pass "draw_image_tint_scale_validated" \
+    || fail "draw_image_tint_scale_validated" "scale must be positive" "$out"
+
 echo "────────────────────────────────────────────────────────────────"
 echo "  → std.graph: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.graph: PASS" && exit 0 || exit 1

@@ -24,6 +24,7 @@
  *   graph.end_frame(win)              → nil
  *   graph.capture(win)                → dyn   (RGBA snapshot; free via image.discard)
  *   graph.draw_image(win,img,x,y[,s]) → nil   (draw an image buffer; optional scale)
+ *   graph.draw_image_tint(win,img,x,y,r,g,b,a,scale) → nil
  *   graph.clear(win, r, g, b)         → nil   (RGB 0-255)
  *   graph.fps(win)                    → int
  *   graph.set_fps(win, fps)           → nil
@@ -770,6 +771,36 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         DrawTexturePro(*tex, src, dst, piv, (float)rot, WHITE);
 #else
         (void)win; (void)b; (void)dx; (void)dy; (void)rot; (void)scale;
+#endif
+        return graph_nil();
+    }
+
+    /* graph.draw_image_tint(win,img,x,y,r,g,b,a,scale) → nil
+     * Draw the whole image with color/alpha modulation without changing its
+     * RGBA bytes. It shares the image's versioned texture cache with the other
+     * image draw paths, so update_rgba triggers one upload on the next draw. */
+    if (!strcmp(fn_name,"draw_image_tint")) {
+        NEED(9); GET_WIN(0,win);
+        FluxaImageBuf *b = (args[1].type==VAL_DYN && args[1].as.dyn && args[1].as.dyn->count>0
+                            && args[1].as.dyn->items[0].type==VAL_PTR)
+                           ? (FluxaImageBuf *)args[1].as.dyn->items[0].as.ptr : NULL;
+        if (!fluxa_imgbuf_valid(b)) GRAPH_ERR("draw_image_tint: expected a live image handle");
+        GRAPH_NUM(2,dx); GRAPH_NUM(3,dy);
+        GET_INT(4,cr); GET_INT(5,cg); GET_INT(6,cb); GET_INT(7,ca);
+        GRAPH_NUM(8,scale);
+        if (cr<0 || cr>255 || cg<0 || cg>255 ||
+            cb<0 || cb>255 || ca<0 || ca>255)
+            GRAPH_ERR("draw_image_tint: color components must be in the 0..255 range");
+        if (scale<=0.0) GRAPH_ERR("draw_image_tint: scale must be positive");
+#ifdef FLUXA_GRAPH_RAYLIB
+        Texture2D *tex=graph_img_texture(b);
+        if (!tex) GRAPH_ERR("draw_image_tint: out of memory");
+        DrawTextureEx(*tex,(Vector2){(float)dx,(float)dy},0.0f,(float)scale,
+                      (Color){(unsigned char)cr,(unsigned char)cg,
+                              (unsigned char)cb,(unsigned char)ca});
+#else
+        (void)win; (void)b; (void)dx; (void)dy; (void)cr; (void)cg;
+        (void)cb; (void)ca; (void)scale;
 #endif
         return graph_nil();
     }

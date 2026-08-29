@@ -1446,6 +1446,7 @@ Use `prst dyn win` in main scope. **Never as a Block field.**
 | `graph.end_frame(win)` | `nil` | Present frame |
 | `graph.capture(win)` | `dyn` | Snapshot the current frame as an RGBA image buffer (feeds `std.image`). Release with `image.discard`. Stub returns a blank buffer of the logical size. |
 | `graph.draw_image(win, img, x, y[, scale])` | `nil` | Draw an RGBA image buffer (from `std.image` or `graph.capture`) at (x,y). Optional `scale` (1.0 = original). The GPU texture is **cached** on the buffer and reused across frames — re-uploaded only when the pixels change — so drawing every frame is cheap. Completes the round trip (`image → graph`). |
+| `graph.draw_image_tint(win, img, x, y, r, g, b, a, scale)` | `nil` | Draw the complete image with RGB and alpha modulation without modifying its pixels. `x`, `y`, and `scale` accept int or float; RGBA components are `0..255`. |
 | `graph.clear(win, r, g, b)` | `nil` | Clear background (RGB 0–255) |
 | `graph.fps(win)` | `int` | Current FPS |
 | `graph.set_fps(win, fps)` | `nil` | Set target FPS |
@@ -1685,6 +1686,7 @@ validate/re-encode untrusted images server-side before redistributing them.
 | `image.load(path)` | `dyn` | Decode a file into an RGBA buffer. **Needs `danger`.** |
 | `image.sload(path[, max_bytes[, max_edge]])` | `dyn` | **Secure** decode of an untrusted file: validates size, magic bytes (PNG or QOI only), and dimensions around the decode, to shrink the attack surface of hostile images. Defaults: ≤24 MB, ≤8192 px per edge. Pass `max_bytes` / `max_edge` to tighten the bounds to what your own images should never exceed (e.g. `sload(p, 262144, 1200)` for game cards). Same result as `load` for a valid file within limits. **Needs `danger`.** |
 | `image.resize(img, w, h)` | `nil` | Scale in place (Bicubic on the codec backend, nearest-neighbour on stub) |
+| `image.update_rgba(img, pixels)` | `nil` | Replace every pixel from a tightly packed row-major `int arr` of RGBA components. Requires exactly `width * height * 4` values in `0..255`; invalid input leaves the image unchanged. The next graph draw refreshes its cached texture. |
 | `image.blit(dst, src, x, y[, mask])` | `nil` | Compose `src` onto `dst` at (x,y), alpha-blended and clipped. Optional `mask` image gates the source by the mask's alpha (for clipped/rounded frames). Pure RGBA — both backends. |
 | `image.width(img)` | `int` | Width in pixels |
 | `image.height(img)` | `int` | Height in pixels |

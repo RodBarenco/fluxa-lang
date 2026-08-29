@@ -598,5 +598,44 @@ FLX
     echo "$out" | grep -qi "CRC" && pass "get_text_validates_full_png" || fail "get_text_validates_full_png" "CRC mismatch after first match" "$out"
 fi
 
+# update_rgba replaces the complete buffer and accepts all byte endpoints
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(2, 1)
+int arr pixels[8] = [255, 0, 128, 255, 1, 2, 3, 0]
+image.update_rgba(im, pixels)
+print("UPDATED", image.width(im), image.height(im))
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "UPDATED 2 1" && pass "update_rgba_replaces_pixels" \
+    || fail "update_rgba_replaces_pixels" "UPDATED 2 1" "$out"
+
+# size mismatch is rejected before the image is modified
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(2, 1)
+int arr pixels[4] = [255, 0, 0, 255]
+danger { image.update_rgba(im, pixels) }
+if err != nil { print(err[0]) }
+image.discard(im)
+FLX
+)
+echo "$out" | grep -qi "expected 8 components" && pass "update_rgba_size_validated" \
+    || fail "update_rgba_size_validated" "expected 8 components" "$out"
+
+# components outside the RGBA byte range are rejected
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(1, 1)
+int arr pixels[4] = [0, 256, 0, 255]
+danger { image.update_rgba(im, pixels) }
+if err != nil { print(err[0]) }
+image.discard(im)
+FLX
+)
+echo "$out" | grep -qi "0..255" && pass "update_rgba_range_validated" \
+    || fail "update_rgba_range_validated" "0..255 range" "$out"
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1

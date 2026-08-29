@@ -30,6 +30,7 @@
  *   image.save(img, path)      → bool  encode by extension (.png/.jpg/.bmp/.tga/.qoi)
  *   image.load(path)           → dyn   decode a file into an RGBA buffer
  *   image.resize(img, w, h)    → nil   scale in place (Bicubic on raylib, NN on stub)
+ *   image.update_rgba(img, px) → nil   replace all RGBA bytes from an int arr
  *   image.blit(dst,src,x,y[,m]) → nil   compose src onto dst; optional mask image
  *   image.width(img)           → int
  *   image.height(img)          → int
@@ -348,6 +349,36 @@ static inline Value fluxa_std_image_call(const char *fn_name,
         }
 #endif
         fluxa_imgbuf_touch(b);   /* pixels changed → invalidate any GPU cache */
+        return image_nil();
+    }
+
+    /* image.update_rgba(img, pixels) → nil
+     * Replace the complete tightly-packed RGBA buffer in row-major order.
+     * Validate the entire input before changing the image, so a bad component
+     * cannot leave half of the old frame mixed with half of the new one. */
+    if (strcmp(fn_name,"update_rgba")==0) {
+        NEED(2); GET_IMG(0,b);
+        if (args[1].type!=VAL_ARR || !args[1].as.arr.data)
+            IMG_ERR("update_rgba: pixels must be an int arr");
+        size_t expected=(size_t)b->width*(size_t)b->height*4u;
+        if ((size_t)args[1].as.arr.size!=expected) {
+            snprintf(errbuf,sizeof(errbuf),
+                     "image.update_rgba (line %d): expected %zu components, got %d",
+                     line,expected,args[1].as.arr.size);
+            errstack_push(err,ERR_FLUXA,errbuf,"image",line);
+            *had_error=1;
+            return image_nil();
+        }
+        for (size_t i=0; i<expected; i++) {
+            Value p=args[1].as.arr.data[i];
+            if (p.type!=VAL_INT)
+                IMG_ERR("update_rgba: every component must be int");
+            if (p.as.integer<0 || p.as.integer>255)
+                IMG_ERR("update_rgba: components must be in the 0..255 range");
+        }
+        for (size_t i=0; i<expected; i++)
+            b->rgba[i]=(unsigned char)args[1].as.arr.data[i].as.integer;
+        fluxa_imgbuf_touch(b);   /* stale cached texture uploads on next draw */
         return image_nil();
     }
 

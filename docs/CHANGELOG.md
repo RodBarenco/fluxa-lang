@@ -1,5 +1,15 @@
 # Fluxa-lang Changelog
 
+## Unreleased — mutable RGBA images and tinted drawing
+
+- `image.update_rgba(img, pixels)` atomically replaces a live image's complete
+  RGBA buffer from an `int arr` and invalidates its cached GPU texture.
+- `graph.draw_image_tint(win, img, x, y, r, g, b, a, scale)` draws an image
+  with color and alpha modulation without changing the source pixels.
+
+Both APIs validate their dimensions, ranges and handles on the real and stub
+backends. The image and graph suites cover their successful and error paths.
+
 ## Unreleased — string equality in bytecode loops
 
 `str == str` and `str != str` now compare string contents in the bytecode VM,
