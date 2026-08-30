@@ -1,0 +1,27 @@
+// Fields are instance data; methods are Block-owned code.  Identical public
+// spellings must coexist and must not leak across Block definitions.
+int same = 100
+
+fn use_param(int same) int {
+    return same + 1
+}
+
+Block A {
+    int same = 3
+    fn same() int { return 7 }
+    fn internal() int { return same + same() }
+}
+
+Block B {
+    int same = 30
+    fn same() int { return 70 }
+    fn internal() int { return same + same() }
+}
+
+Block a typeof A
+Block b typeof B
+
+print(same)
+print(use_param(5))
+print(a.same, " ", a.same(), " ", a.internal())
+print(b.same, " ", b.same(), " ", b.internal())

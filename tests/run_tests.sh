@@ -120,6 +120,10 @@ run_test "block_methods"       tests/block_methods.flx    "10
 0
 120
 720"
+run_test "block_member_namespace" tests/block_member_namespace.flx "100
+6
+3   7   10
+30   70   100"
 run_test "block_typeof_error"  tests/block_no_instance_typeof.flx "" 1
 run_test "sprint6"             tests/sprint6.flx          "10
 4

@@ -6,12 +6,29 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include "bytecode.h"
+#include "block.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ── Compiler: ASTNode → Chunk ───────────────────────────────────────────── */
 static void compile_node(Chunk *c, ASTNode *node);
+
+static int chunk_add_method_key(Chunk *c, const char *owner,
+                                const char *method) {
+    BlockInstance *inst = block_inst_find(owner);
+    if (!inst && !block_def_find(owner))
+        return chunk_add_const_str(c, method); /* stdlib / FFI */
+    char key[256];
+    if (!block_method_key(method, key, sizeof(key))) {
+        c->ok = 0;
+        return 0;
+    }
+    int index = chunk_add_const_str(c, key);
+    if (c->ok)
+        c->owned_method_keys[index >> 3] |= (unsigned char)(1u << (index & 7));
+    return index;
+}
 
 static uint16_t compile_expr(Chunk *c, ASTNode *node) {
     if (!node || !c->ok) return 0;
@@ -79,7 +96,8 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
         case NODE_MEMBER_CALL: {
             /* inst.method(args) as expression — compile to OP_CALL_METHOD */
             int owner_k  = chunk_add_const_str(c, node->as.member_call.owner);
-            int method_k = chunk_add_const_str(c, node->as.member_call.method);
+            int method_k = chunk_add_method_key(c, node->as.member_call.owner,
+                                                node->as.member_call.method);
             if (!c->ok) return 0;
             /* Evaluate args into consecutive temp registers */
             int argc = node->as.member_call.arg_count;
@@ -207,7 +225,8 @@ static void compile_node(Chunk *c, ASTNode *node) {
             /* inst.method(args) as statement — compile to OP_CALL_METHOD,
              * result (if any) discarded */
             int owner_k  = chunk_add_const_str(c, node->as.member_call.owner);
-            int method_k = chunk_add_const_str(c, node->as.member_call.method);
+            int method_k = chunk_add_method_key(c, node->as.member_call.owner,
+                                                node->as.member_call.method);
             if (!c->ok) break;
             int argc = node->as.member_call.arg_count;
             uint16_t first_arg = c->next_reg;

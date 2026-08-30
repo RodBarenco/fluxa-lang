@@ -1,6 +1,27 @@
 # Fluxa-lang Changelog
 
-## Unreleased — tail calls across bytecode loops preserve their frame
+## v0.20.0 — scoped names, VM correctness, and framebuffer APIs
+
+This is the first release whose public documentation and build manifest use the
+same standard-library inventory: 34 modules. README, specification, programming
+guide and stdlib reference now identify the release consistently as v0.20.0.
+
+### Block fields and methods have separate namespaces
+
+A Block field and method may now use the same public identifier. Fields remain
+instance-owned data while methods are stored under a private, reversible key
+created before bytecode execution. Different Block definitions therefore do
+not compete for member names, and `obj.name` and `obj.name()` resolve
+independently without adding a second runtime table or another hot-path lookup.
+
+The internal key preserves the identifier length and is decoded before an
+error is exposed, so diagnostics contain only the source-level name. Bytecode
+tracks ownership of synthesized method keys and releases them with the chunk;
+this prevents the namespace conversion from adding a per-call-site leak.
+Regression coverage includes a global and parameter with the same name, two
+Blocks with identical field/method names, and both external and internal calls.
+
+### Tail calls across bytecode loops preserve their frame
 
 Calls made by a compiled `while` now use an iterative tail-call trampoline when
 the callee falls back to the tree interpreter. Previously both VM callback
@@ -23,7 +44,7 @@ method calls, non-tail controls, string ownership, and 2,000 mutual tail calls
 from a bytecode loop. The original texture-decoder reduction now completes
 without exposing another frame's state.
 
-## Unreleased — mutable RGBA images and tinted drawing
+### Mutable RGBA images and tinted drawing
 
 - `image.update_rgba(img, pixels)` atomically replaces a live image's complete
   RGBA buffer from an `int arr` and invalidates its cached GPU texture.
@@ -33,7 +54,7 @@ without exposing another frame's state.
 Both APIs validate their dimensions, ranges and handles on the real and stub
 backends. The image and graph suites cover their successful and error paths.
 
-## Unreleased — string equality in bytecode loops
+### String equality in bytecode loops
 
 `str == str` and `str != str` now compare string contents in the bytecode VM,
 matching the tree-walker. Previously the VM's generic numeric fallback read the
@@ -1256,7 +1277,11 @@ slot; the second argument is still the string `"worker"`). Count is bounded to
 trailing arguments. Adds 6 tests (spawn count + 1-indexed names, arg passing,
 numeric-name coexistence, out-of-range/unknown-fn/arity errors).
 
-## v0.20.0 — exact KNN index (VKN3) + wserver TCP_NODELAY
+## Archived development note — exact KNN index (VKN3) + wserver TCP_NODELAY
+
+This development entry was formerly labeled `v0.20.0` while the public release
+line was still at v0.19. It is retained for technical history, but is not a
+second v0.20.0 release.
 
 Two stdlib changes driven by a high-throughput vector-search service (3M-vector
 fraud scoring at 900 req/s under a sub-core budget). The runtime is unchanged —

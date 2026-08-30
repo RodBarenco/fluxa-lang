@@ -30,6 +30,25 @@ BlockDef *block_def_find(const char *name) {
     return def;
 }
 
+int block_method_key(const char *public_name, char *out, size_t out_size) {
+    if (!public_name || !out) return 0;
+    size_t n = strlen(public_name);
+    if (n == 0 || n + 1 > out_size ||
+        (unsigned char)public_name[0] >= 0x80) return 0;
+    memcpy(out, public_name, n + 1);
+    out[0] = (char)((unsigned char)out[0] | 0x80u);
+    return 1;
+}
+
+int block_method_public(const char *key, char *out, size_t out_size) {
+    if (!key || !out) return 0;
+    size_t n = strlen(key);
+    if (n == 0 || n + 1 > out_size) return 0;
+    memcpy(out, key, n + 1);
+    out[0] = (char)((unsigned char)out[0] & 0x7fu);
+    return 1;
+}
+
 /* ── BlockInstance ────────────────────────────────────────────────────────── */
 BlockInstance *block_inst_find(const char *name) {
     BlockInstance *inst = NULL;

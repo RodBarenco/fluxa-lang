@@ -38,6 +38,12 @@ BlockDef *block_def_register(const char *name, ASTNode *node);
 /* Find a BlockDef by name — NULL if not found */
 BlockDef *block_def_find(const char *name);
 
+/* Internal method namespace.  Public identifiers never include this prefix;
+ * bytecode emits the key before execution and the runtime performs the same
+ * single scope lookup as before. */
+int block_method_key(const char *public_name, char *out, size_t out_size);
+int block_method_public(const char *key, char *out, size_t out_size);
+
 /* Find a BlockInstance by name — NULL if not found */
 BlockInstance *block_inst_find(const char *name);
 

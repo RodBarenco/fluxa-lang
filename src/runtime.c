@@ -863,7 +863,12 @@ static void block_member_init(ASTNode *member, Scope *scope, void *userdata) {
             scope_set_owned(scope, member->as.var_decl.var_name, v);
     } else if (member->type == NODE_FUNC_DECL) {
         Value v; v.type = VAL_FUNC; v.as.func = member;
-        scope_set(scope, member->as.func_decl.name, v);
+        char key[256];
+        if (!block_method_key(member->as.func_decl.name, key, sizeof(key))) {
+            rt_error(rt, "invalid Block method identifier");
+            return;
+        }
+        scope_set(scope, key, v);
     } else if (member->type == NODE_ARR_DECL) {
         /* arr field in Block — deep copy if default is another arr */
         int size = member->as.arr_decl.size;
@@ -1394,17 +1399,25 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         if (!scope_get(&inst->scope, method_or_func, &fn_val) ||
             fn_val.type != VAL_FUNC) {
             char buf[280];
-            snprintf(buf, sizeof(buf), "block has no method '%s'",
-                     method_or_func);
+            char public_method[256];
+            if (!block_method_public(method_or_func, public_method,
+                                     sizeof(public_method)))
+                snprintf(public_method, sizeof(public_method), "%s", method_or_func);
+            snprintf(buf, sizeof(buf), "block has no method '%.220s'",
+                     public_method);
             rt_error(rt, buf); return val_nil();
         }
         ASTNode *fn_node = fn_val.as.func;
         int param_count  = fn_node->as.func_decl.param_count;
         if (argc != param_count) {
             char buf[280];
+            char public_method[256];
+            if (!block_method_public(method_or_func, public_method,
+                                     sizeof(public_method)))
+                snprintf(public_method, sizeof(public_method), "%s", method_or_func);
             snprintf(buf, sizeof(buf),
-                "Block method '%s' expects %d arg(s), got %d",
-                method_or_func, param_count, argc);
+                "Block method '%.220s' expects %d arg(s), got %d",
+                public_method, param_count, argc);
             rt_error(rt, buf); return val_nil();
         }
         /* ── Fase 3: try inline execution first (zero frame overhead) ─── */
@@ -1431,8 +1444,11 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
     /* 1. Current scope (local fns registered in this frame) */
     if (!scope_get(&rt->scope, method_or_func, &fn_val) || fn_val.type != VAL_FUNC) {
         /* 2. Instance scope — handles intra-Block calls like iterate() from run() */
-        if (rt->current_instance)
-            scope_get(&rt->current_instance->scope, method_or_func, &fn_val);
+        if (rt->current_instance) {
+            char key[256];
+            if (block_method_key(method_or_func, key, sizeof(key)))
+                scope_get(&rt->current_instance->scope, key, &fn_val);
+        }
     }
     /* 3. Global table — top-level functions */
     if (fn_val.type != VAL_FUNC)
@@ -1838,8 +1854,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 /* Resolve the function */
                 Value fn_val;
                 int found = scope_get(&rt->scope, fn_name, &fn_val);
-                if (!found && rt->current_instance)
-                    found = scope_get(&rt->current_instance->scope, fn_name, &fn_val);
+                if (!found && rt->current_instance) {
+                    char key[256];
+                    if (block_method_key(fn_name, key, sizeof(key)))
+                        found = scope_get(&rt->current_instance->scope, key, &fn_val);
+                }
                 if (!found && rt->call_depth > 0)
                     found = scope_table_get(rt->global_table, fn_name, &fn_val);
                 if (found && fn_val.type == VAL_FUNC && !builtin_is(fn_name)) {
@@ -1876,8 +1895,11 @@ static Value eval(Runtime *rt, ASTNode *node) {
             Value fn_val;
             int found = scope_get(&rt->scope, name, &fn_val);
             /* Inside a Block method: look up sibling methods in instance scope */
-            if (!found && rt->current_instance)
-                found = scope_get(&rt->current_instance->scope, name, &fn_val);
+            if (!found && rt->current_instance) {
+                char key[256];
+                if (block_method_key(name, key, sizeof(key)))
+                    found = scope_get(&rt->current_instance->scope, key, &fn_val);
+            }
             /* Fall back to global scope for top-level fns */
             if (!found && rt->call_depth > 0)
                 found = scope_table_get(rt->global_table, name, &fn_val);
@@ -1895,7 +1917,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
             BlockInstance *call_inst = NULL;
             if (fn_val.type == VAL_FUNC && rt->current_instance) {
                 Value check;
-                if (scope_get(&rt->current_instance->scope, name, &check) &&
+                char key[256];
+                if (block_method_key(name, key, sizeof(key)) &&
+                    scope_get(&rt->current_instance->scope, key, &check) &&
                     check.type == VAL_FUNC)
                     call_inst = rt->current_instance;
             }
@@ -2704,7 +2728,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
             /* Look up the method in the instance scope */
             Value fn_val;
-            if (!scope_get(&inst->scope, method, &fn_val) ||
+            char method_key[256];
+            if (!block_method_key(method, method_key, sizeof(method_key)) ||
+                !scope_get(&inst->scope, method_key, &fn_val) ||
                 fn_val.type != VAL_FUNC) {
                 char buf[280];
                 snprintf(buf, sizeof(buf),
@@ -3236,7 +3262,9 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 rt_error(rt, buf); return val_nil();
             }
             Value fn_val;
-            if (!scope_get(&inst->scope, method, &fn_val)) {
+            char method_key[256];
+            if (!block_method_key(method, method_key, sizeof(method_key)) ||
+                !scope_get(&inst->scope, method_key, &fn_val)) {
                 char buf[280];
                 snprintf(buf, sizeof(buf), "'%s' has no method '%s'", owner, method);
                 rt_error(rt, buf); return val_nil();

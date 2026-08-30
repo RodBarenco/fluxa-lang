@@ -38,7 +38,9 @@ static Value flx_invoke_method_n(Runtime *rt, BlockInstance *inst,
     if (!inst || !method_name) return flxt_nil();
 
     Value fn_val; fn_val.type = VAL_NIL;
-    if (!scope_get(&inst->scope, method_name, &fn_val) ||
+    char method_key[256];
+    if (!block_method_key(method_name, method_key, sizeof(method_key)) ||
+        !scope_get(&inst->scope, method_key, &fn_val) ||
         fn_val.type != VAL_FUNC) {
         char buf[280];
         snprintf(buf, sizeof(buf),
@@ -404,7 +406,9 @@ Value fluxa_std_flxthread_call(const char *fn_name,
         BlockInstance *inst = args[1].as.block_inst;
         /* Verify method exists */
         Value fn_chk; fn_chk.type = VAL_NIL;
-        if (!scope_get(&inst->scope, method_name, &fn_chk) ||
+        char method_key[256];
+        if (!block_method_key(method_name, method_key, sizeof(method_key)) ||
+            !scope_get(&inst->scope, method_key, &fn_chk) ||
             fn_chk.type != VAL_FUNC) {
             free(ra); t->active = 0;
             snprintf(errbuf, sizeof(errbuf),

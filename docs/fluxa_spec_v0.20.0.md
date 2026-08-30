@@ -2,11 +2,11 @@
 
 **Technical Specification**
 
-**v0.16 — Beta**
+**v0.20.0 — Beta**
 
-*Reflects runtime behavior as of v0.23 (reference-counted immutable strings; see §13.6).*
+*Reflects runtime behavior shipped in v0.20.0.*
 
-*Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 28 stdlib libs · Module System*
+*Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 34 stdlib libs · Module System*
 
 *Hobby language — Rio de Janeiro, Brazil*
 
@@ -376,7 +376,27 @@ Fields inside a Block can be declared with or without `prst`:
 - `prst int x = 0` — survives hot reloads, stored in PrstPool
 - `int x = 0` — valid, lives for the duration of the execution, dies on reload
 
-### 7.2 Block field restrictions
+### 7.2 Field and method namespaces
+
+Fields and methods occupy separate member namespaces. A Block may therefore
+give state and behavior the same public name: field syntax resolves the data,
+while call syntax resolves the method. The rule applies independently to every
+Block definition and every `typeof` instance.
+
+```fluxa
+Block Reading {
+    int value = 40
+    fn value() int { return value + 2 }
+}
+
+print(Reading.value)    // 40 — field namespace
+print(Reading.value())  // 42 — method namespace
+```
+
+This separation is semantic; private runtime keys used to implement it are
+never valid source identifiers and must never appear in diagnostics.
+
+### 7.3 Block field restrictions
 
 The following are **not permitted** inside a Block:
 
@@ -431,7 +451,7 @@ Block Store {
 
 **No nested Block declarations.** A Block cannot contain another Block declaration. Compose behavior via methods and arguments, not nesting.
 
-### 7.3 typeof — Cloning with Isolated State
+### 7.4 typeof — Cloning with Isolated State
 
 `typeof` creates a new independent instance. Copies structure and values from the code. Does not copy current runtime state. `typeof` can only be applied to a defined Block — never to another instance.
 

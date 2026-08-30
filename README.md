@@ -1,8 +1,8 @@
 # Fluxa-lang
 
-**v0.19.2 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.20.0 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
-Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 29 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
+Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 34 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 
 ---
 
@@ -127,7 +127,7 @@ Tier 2 — Compiled fn bodies   vm_run_fn with isolated register file
 
 ---
 
-## Standard library — 31 libs
+## Standard library — 34 libs
 
 ```toml
 # fluxa.toml — runtime selection
@@ -137,6 +137,8 @@ std.csv        = "1.0"   # CSV streaming parser
 std.json       = "1.0"   # JSON streaming (no DOM)
 std.json2      = "1.0"   # JSON full DOM — path nav, typed getters
 std.strings    = "1.0"   # split, join, trim, find
+std.video      = "1.0"   # MP4/H.264 encode/decode
+std.cabi       = "1.0"   # deterministic typed host bridge
 std.cache      = "1.0"   # sharded k/v cache + bump-pointer arena
 std.time       = "1.0"   # sleep, now_ms, elapsed
 std.fs         = "1.0"   # read, write, listdir, mkdir (POSIX)
@@ -158,6 +160,7 @@ std.websocket  = "1.0"   # WebSocket client (pure C99 or libwebsockets)
 std.http       = "1.0"   # HTTP server + client (mongoose 7.21, dyn cursors)
 std.mcp        = "1.0"   # Fluxa as MCP server (JSON-RPC 2.0)
 std.graph      = "1.0"   # 2D/3D graphics (stub or Raylib)
+std.compute    = "1.0"   # GPU compute (stub or Vulkan)
 std.infer      = "1.0"   # local LLM inference (stub or llama.cpp)
 std.wserver    = "1.0"   # resilient HTTP server — int handles, auto-scaling pool
 std.pg         = "1.0"   # PostgreSQL client — int handles (libpq)
@@ -245,7 +248,7 @@ fluxa/
 │   ├── warm_profile.h     — WarmProfile: dynamic heap, WHT + QJL
 │   ├── prst_pool.h        — persistent variable pool + serialization
 │   ├── scope.h            — value types, FluxaArr, FluxaDyn
-│   └── std/               — 28 standard library modules
+│   └── std/               — 34 standard library modules
 ├── tests/
 │   ├── run_tests.sh       — master runner
 │   ├── libs/              — one script per stdlib lib
@@ -255,7 +258,7 @@ fluxa/
 │   ├── torture/           — IoT runtime simulation (Docker)
 │   └── fuzz/              — libFuzzer harnesses (pg, wserver, json, csv, ...)
 ├── docs/
-│   ├── fluxa_spec_v15.md  — language specification
+│   ├── fluxa_spec_v16.md  — language specification
 │   ├── STDLIB.md          — standard library reference
 │   ├── FLUXA_GUIDE.md     — step-by-step programming guide
 │   ├── CHANGELOG.md       — version history
@@ -269,7 +272,7 @@ fluxa/
 
 ---
 
-## Status — v0.16
+## Status — v0.20.0
 
 | Component | Status |
 |---|---|
@@ -281,7 +284,7 @@ fluxa/
 | IPC server | ✅ stable |
 | Prod mode + FLUXA_SECURE | ✅ stable |
 | Runtime Update Protocol | ✅ stable |
-| Standard library (31 libs) | ✅ stable |
+| Standard library (34 libs) | ✅ stable |
 | Module system (import live/static) | ✅ stable |
 | Hardware simulation (RP2040/ESP32) | ✅ stable |
 | Docker torture testing | ✅ stable |

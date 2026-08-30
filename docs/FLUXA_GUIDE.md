@@ -1,5 +1,7 @@
 # How to Program in Fluxa
 
+**v0.20.0**
+
 A step-by-step reference for writing correct Fluxa programs. Read this before writing
 any Fluxa code — especially the Block section (§8), the `danger` rules (§9), and the
 memory model (§12.5). The mistakes collected in §14 are the most common errors made
@@ -9,7 +11,7 @@ by anyone (human or AI) new to the language.
 
 ## 1. The Mental Model
 
-Fluxa's rules all flow from a small set of invariants. Internalize these seven before writing code:
+Fluxa's rules all flow from a small set of invariants. Internalize these eight before writing code:
 
 1. **Unique ownership.** Every value has exactly one owner. No value is accessed outside its scope. There is no shared mutable state between functions — data flows through arguments and return values only.
 2. **No global scope.** Variables declared at the top level belong to the program's execution context — they are not visible inside functions or Block methods. There is no free-variable capture, ever.
@@ -18,6 +20,7 @@ Fluxa's rules all flow from a small set of invariants. Internalize these seven b
 5. **`danger` is not a Block field declaration.** You cannot write a loose `danger` statement in a Block body (only typed fields and `fn` methods are allowed there). But `danger` **works inside a Block method** — that is the idiomatic place for a Block's fallible IO (see section 7).
 6. **`prst` is state that survives time.** A `prst` variable is simply marked to survive — hot reloads, Atomic Handover, runtime swap. It is how you make state explicit and durable; everything else dies and is reborn on each reload.
 7. **`err` is a ring buffer; `danger` is intentional containment.** Division by zero, overflow, failed IO — anything that would otherwise abort the runtime is captured by `danger {}` into the `err` ring. `danger` is not a safety net you sprinkle around: it is you declaring *"this may fail and I will handle it"*, and the handling is the `if err != nil` that closes the block. That is why all IO goes inside `danger` — and why every `danger` is followed by a decision.
+8. **Names belong to their semantic scope.** A function or method owns its parameters and locals; declarations outside that frame do not compete with them. Each Block owns its fields, and fields and methods are separate member namespaces: `obj.value` and `obj.value()` may both exist and mean different things.
 
 A practical consequence of rules 1–3: if a variable "isn't found" inside a function, the fix is never "make it global" (there is no global) — it is "pass it as a parameter".
 
@@ -225,6 +228,21 @@ behavior). Almost everything worth knowing about Block comes down to how these t
 differ — fields are restricted to concrete types, while methods are ordinary Fluxa
 code. The sections below cover instances, fields, methods, and the pattern that ties
 them together.
+
+Fields and methods have separate member namespaces. Reusing a public spelling is
+valid and unambiguous: member-access syntax selects the field, while call syntax
+selects the method. The same names may also be reused by another Block without any
+cross-Block collision.
+
+```fluxa
+Block Reading {
+    int value = 40
+    fn value() int { return value + 2 }
+}
+
+print(Reading.value)    // 40 — field
+print(Reading.value())  // 42 — method
+```
 
 ### Block instances
 
@@ -1003,4 +1021,3 @@ the section that explains it in full.
 | `prst int srv` / `prst int conn` for a socket or DB connection | Persistence restores a dead OS handle on restart — `Address already in use` | Plain `int`, reopened at startup; `prst` is for in-process `dyn` cursors |
 | `serve(port, true)` dispatcher + opening connections inside workers | Worker-side `pg.connect` hits the nested-`danger` rule | `serve(port, false)` + `ft.new("w", N, "worker", srv, db)` with pre-connected handles |
 | Sixteen separate `ft.new("w1", ...)` … `ft.new("w16", ...)` lines | Verbose and error-prone | Batch form: `ft.new("w", 16, "worker", srv)` |
-

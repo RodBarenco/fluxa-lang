@@ -84,6 +84,11 @@ typedef struct {
     int          count;
     int          cap;
     Value        constants[CHUNK_MAX_CONST];
+    /* Constants synthesized solely for the internal Block-method namespace.
+     * Ordinary constants retain their historical ownership rules; these bits
+     * let chunk_free release only the new allocations introduced by the
+     * namespace encoding. */
+    unsigned char owned_method_keys[(CHUNK_MAX_CONST + 7) / 8];
     int          const_count;
     int          ok;
     uint16_t     next_reg;   /* Issue #33: uint16_t — starts at 128 */
@@ -95,11 +100,19 @@ static inline void chunk_init(Chunk *c) {
     c->count = 0;
     c->cap   = CHUNK_INIT_CAP;
     c->const_count = 0;
+    memset(c->owned_method_keys, 0, sizeof(c->owned_method_keys));
     c->ok    = 1;
     c->next_reg = 128;
 }
 
 static inline void chunk_free(Chunk *c) {
+    for (int i = 0; i < c->const_count; i++) {
+        if ((c->owned_method_keys[i >> 3] & (1u << (i & 7))) &&
+            c->constants[i].type == VAL_STRING) {
+            fxstr_release(c->constants[i].as.string);
+            c->constants[i].as.string = NULL;
+        }
+    }
     free(c->code);
     c->code  = NULL;
     c->count = 0;
