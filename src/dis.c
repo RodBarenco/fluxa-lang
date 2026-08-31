@@ -928,7 +928,7 @@ int fluxa_dis_file(const char *inpath, const char *outpath_arg) {
                     has_hot = 1;
                 }
                 Chunk ch; chunk_init(&ch);
-                int ok = chunk_compile_loop(&ch, n);
+                int ok = chunk_compile_loop(&ch, n, NULL, NULL);
                 if (ok && ch.count > 0) {
                     dis("  %s @ line %d  (%d instructions)\n",
                         n->type==NODE_WHILE?"while":"if", n->line, ch.count);
@@ -945,7 +945,7 @@ int fluxa_dis_file(const char *inpath, const char *outpath_arg) {
                     ASTNode *s = body->as.list.children[j];
                     if (s && (s->type==NODE_WHILE||s->type==NODE_IF)) {
                                 Chunk ch; chunk_init(&ch);
-                        int ok = chunk_compile_loop(&ch, s);
+                        int ok = chunk_compile_loop(&ch, s, NULL, NULL);
                         if (ok && ch.count > 0) {
                             if (!has_hot)
                                 dis("-- 3. Hot Path — Bytecode VM -----------------------------------\n\n");
@@ -982,4 +982,3 @@ int fluxa_dis_file(const char *inpath, const char *outpath_arg) {
     fprintf(stdout,"fluxa_dis: wrote %s\n", outpath);
     return 0;
 }
-

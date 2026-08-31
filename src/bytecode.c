@@ -26,7 +26,14 @@ static int chunk_add_method_key(Chunk *c, const char *owner,
     }
     int index = chunk_add_const_str(c, key);
     if (c->ok)
-        c->owned_method_keys[index >> 3] |= (unsigned char)(1u << (index & 7));
+        c->owned_strings[index >> 3] |= (unsigned char)(1u << (index & 7));
+    return index;
+}
+
+static int chunk_add_index_name(Chunk *c, const char *name) {
+    int index = chunk_add_const_str(c, name);
+    if (c->ok)
+        c->owned_strings[index >> 3] |= (unsigned char)(1u << (index & 7));
     return index;
 }
 
@@ -60,6 +67,25 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
         case NODE_IDENTIFIER: {
             if (node->resolved_offset < 0) { c->ok = 0; return 0; }
             return (uint16_t)node->resolved_offset;
+        }
+        case NODE_ARR_ACCESS: {
+            const char *name = node->as.arr_access.arr_name;
+            if (!strcmp(name, "err") || !c->indexable_cb ||
+                !c->indexable_cb(c->indexable_rt, name,
+                                 node->resolved_offset)) {
+                c->ok = 0;
+                return 0;
+            }
+            uint16_t index_reg = compile_expr(c, node->as.arr_access.index);
+            if (!c->ok) return 0;
+            int name_k = chunk_add_index_name(c, name);
+            if (!c->ok) return 0;
+            uint16_t dst = c->next_reg++;
+            Instruction ins; ins.op=OP_GET_INDEX; ins.a=dst;
+            ins.b=(uint16_t)name_k; ins.c=index_reg;
+            ins.offset=node->resolved_offset;
+            chunk_emit(c, ins);
+            return dst;
         }
         case NODE_BINARY_EXPR: {
             uint16_t r1 = compile_expr(c, node->as.binary.left);
@@ -263,6 +289,34 @@ static void compile_node(Chunk *c, ASTNode *node) {
             chunk_emit(c, ins);
             break;
         }
+        case NODE_ARR_ASSIGN: {
+            const char *name = node->as.arr_assign.arr_name;
+            if (!c->indexable_cb ||
+                !c->indexable_cb(c->indexable_rt, name,
+                                 node->resolved_offset)) {
+                c->ok = 0;
+                break;
+            }
+            uint16_t index_reg = compile_expr(c, node->as.arr_assign.index);
+            if (!c->ok) break;
+            int name_k = chunk_add_index_name(c, name);
+            if (!c->ok) break;
+            Instruction prep; prep.op=OP_PREP_INDEX;
+            prep.a=(node->resolved_offset < 0)
+                   ? UINT16_MAX : (uint16_t)node->resolved_offset;
+            prep.b=(uint16_t)name_k; prep.c=index_reg;
+            prep.offset=0;
+            int prep_ip = chunk_emit(c, prep);
+            uint16_t value_reg = compile_expr(c, node->as.arr_assign.value);
+            if (!c->ok) break;
+            Instruction set; set.op=OP_SET_INDEX; set.a=value_reg;
+            set.b=(uint16_t)name_k; set.c=index_reg;
+            set.offset=node->resolved_offset;
+            chunk_emit(c, set);
+            /* Validate before compiling/evaluating the RHS at runtime. */
+            chunk_patch(c, prep_ip, c->count);
+            break;
+        }
         case NODE_FUNC_CALL: {
             /* fn(args) as statement */
             int fn_k = chunk_add_const_str(c, node->as.list.name);
@@ -311,8 +365,11 @@ static void compile_node(Chunk *c, ASTNode *node) {
     c->next_reg = start_reg;
 }
 
-int chunk_compile_loop(Chunk *c, ASTNode *loop_node) {
+int chunk_compile_loop(Chunk *c, ASTNode *loop_node,
+                       vm_indexable_cb_t indexable_cb, void *indexable_rt) {
     chunk_init(c);
+    c->indexable_cb = indexable_cb;
+    c->indexable_rt = indexable_rt;
     compile_node(c, loop_node);
     if (!c->ok) { chunk_free(c); return 0; }
     Instruction ret; ret.op=OP_RETURN; ret.a=0; ret.b=0; ret.c=0; ret.offset=0;
@@ -320,9 +377,12 @@ int chunk_compile_loop(Chunk *c, ASTNode *loop_node) {
     return 1;
 }
 
-int chunk_compile_fn(Chunk *c, ASTNode *fn_node) {
+int chunk_compile_fn(Chunk *c, ASTNode *fn_node,
+                     vm_indexable_cb_t indexable_cb, void *indexable_rt) {
     if (!fn_node || fn_node->type != NODE_FUNC_DECL) return 0;
     chunk_init(c);
+    c->indexable_cb = indexable_cb;
+    c->indexable_rt = indexable_rt;
     ASTNode *body = fn_node->as.func_decl.body;
     /* Params are pre-bound at resolved_offset 0..param_count-1 by caller.
      * next_reg starts at 128 to avoid collision with param/local slots. */
@@ -416,9 +476,15 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
                 vm_call_cb_t      call_cb,
                 vm_get_field_cb_t get_field_cb,
                 vm_set_field_cb_t set_field_cb,
+                vm_index_cb_t     index_cb,
                 void             *rt_opaque) {
-    (void)fn_stack_size;
     Value retval; retval.type = VAL_NIL;
+    VMIndexCache index_cache[CHUNK_MAX_CONST];
+    for (int ci = 0; ci < c->const_count; ci++) {
+        index_cache[ci].slot = NULL;
+        index_cache[ci].prst_index = -2;
+        index_cache[ci].failed = 0;
+    }
 
     Instruction *ip  = c->code;
     Instruction *end = c->code + c->count;
@@ -434,6 +500,7 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
         &&FN_JUMP_IF_FALSE, &&FN_JUMP, &&FN_RETURN,
         &&FN_CALL_METHOD, &&FN_CALL_FUNC,
         &&FN_GET_FIELD, &&FN_SET_FIELD,
+        &&FN_GET_INDEX, &&FN_PREP_INDEX, &&FN_SET_INDEX,
         &&FN_RETURN_VAL, &&FN_RETURN_NIL
     };
 
@@ -522,6 +589,41 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
                          c->constants[fn_c].as.string, R[fn_a]);
         FNEXT();
     }
+    FN_GET_INDEX: {
+        Value nil = val_nil();
+        if (index_cb)
+            R[fn_a] = index_cb(rt_opaque, VM_INDEX_GET,
+                               &index_cache[fn_b],
+                               c->constants[fn_b].as.string,
+                               R, fn_stack_size, fn_off, R[fn_c], nil);
+        else R[fn_a] = nil;
+        if (index_cache[fn_b].failed) goto fn_done;
+        FNEXT();
+    }
+    FN_PREP_INDEX: {
+        Value nil = val_nil();
+        int hint = (fn_a == UINT16_MAX) ? -1 : (int)fn_a;
+        Value ok = index_cb
+                 ? index_cb(rt_opaque, VM_INDEX_PREP,
+                            &index_cache[fn_b],
+                            c->constants[fn_b].as.string,
+                            R, fn_stack_size, hint, R[fn_c], nil)
+                 : val_bool(0);
+        if (index_cache[fn_b].failed) goto fn_done;
+        if (ok.type != VAL_BOOL || !ok.as.boolean) ip = c->code + fn_off;
+        FNEXT();
+    }
+    FN_SET_INDEX: {
+        Value nil = val_nil();
+        if (index_cb)
+            (void)index_cb(rt_opaque, VM_INDEX_SET,
+                           &index_cache[fn_b],
+                           c->constants[fn_b].as.string,
+                           R, fn_stack_size, fn_off, R[fn_c], R[fn_a]);
+        else (void)nil;
+        if (index_cache[fn_b].failed) goto fn_done;
+        FNEXT();
+    }
     FN_RETURN_VAL: { retval = R[fn_a]; goto fn_done; }
     FN_RETURN_NIL: { goto fn_done; }
     FN_RETURN:     { goto fn_done; }  /* OP_RETURN = loop sentinel, treat as nil */
@@ -569,6 +671,21 @@ fn_done:
                 if(get_field_cb)R[ins->a]=get_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string);else R[ins->a].type=VAL_NIL; break;
             case OP_SET_FIELD:
                 if(set_field_cb)set_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string,R[ins->a]); break;
+            case OP_GET_INDEX: {
+                Value nil=val_nil();
+                if(index_cb)R[ins->a]=index_cb(rt_opaque,VM_INDEX_GET,&index_cache[ins->b],c->constants[ins->b].as.string,R,fn_stack_size,ins->offset,R[ins->c],nil);else R[ins->a]=nil;
+                if(index_cache[ins->b].failed)return retval;break;
+            }
+            case OP_PREP_INDEX: {
+                Value nil=val_nil();int hint=(ins->a==UINT16_MAX)?-1:(int)ins->a;
+                Value ok=index_cb?index_cb(rt_opaque,VM_INDEX_PREP,&index_cache[ins->b],c->constants[ins->b].as.string,R,fn_stack_size,hint,R[ins->c],nil):val_bool(0);
+                if(index_cache[ins->b].failed)return retval;
+                if(ok.type!=VAL_BOOL||!ok.as.boolean)ip=c->code+ins->offset;break;
+            }
+            case OP_SET_INDEX: {
+                Value nil=val_nil();if(index_cb)(void)index_cb(rt_opaque,VM_INDEX_SET,&index_cache[ins->b],c->constants[ins->b].as.string,R,fn_stack_size,ins->offset,R[ins->c],R[ins->a]);else(void)nil;
+                if(index_cache[ins->b].failed)return retval;break;
+            }
             case OP_RETURN_VAL: return R[ins->a];
             case OP_RETURN_NIL: return retval;
             case OP_RETURN:     return retval;
@@ -585,14 +702,20 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
            vm_tick_cb_t      tick_cb,
            vm_get_field_cb_t get_field_cb,
            vm_set_field_cb_t set_field_cb,
-           vm_store_cb_t     store_cb) {
+           vm_store_cb_t     store_cb,
+           vm_index_cb_t     index_cb) {
     (void)scope;
 
     Instruction *ip  = c->code;
     Instruction *end = c->code + c->count;
     Value       *R   = stack_ptr;
 
-    (void)stack_size;
+    VMIndexCache index_cache[CHUNK_MAX_CONST];
+    for (int ci = 0; ci < c->const_count; ci++) {
+        index_cache[ci].slot = NULL;
+        index_cache[ci].prst_index = -2;
+        index_cache[ci].failed = 0;
+    }
 
 #ifdef __GNUC__
     #pragma GCC diagnostic push
@@ -604,6 +727,7 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         &&L_JUMP_IF_FALSE, &&L_JUMP, &&L_RETURN,
         &&L_CALL_METHOD, &&L_CALL_FUNC,
         &&L_GET_FIELD,   &&L_SET_FIELD,
+        &&L_GET_INDEX,   &&L_PREP_INDEX, &&L_SET_INDEX,
         &&L_RETURN_VAL,  &&L_RETURN_NIL
     };
 
@@ -714,6 +838,38 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         }
         NEXT();
     }
+    L_GET_INDEX: {
+        Value nil = val_nil();
+        if (index_cb)
+            R[i_a] = index_cb(rt_opaque, VM_INDEX_GET,
+                              &index_cache[i_b], c->constants[i_b].as.string,
+                              R, stack_size, i_off, R[i_c], nil);
+        else R[i_a] = nil;
+        if (index_cache[i_b].failed) return 1;
+        NEXT();
+    }
+    L_PREP_INDEX: {
+        Value nil = val_nil();
+        int hint = (i_a == UINT16_MAX) ? -1 : (int)i_a;
+        Value ok = index_cb
+                 ? index_cb(rt_opaque, VM_INDEX_PREP,
+                            &index_cache[i_b], c->constants[i_b].as.string,
+                            R, stack_size, hint, R[i_c], nil)
+                 : val_bool(0);
+        if (index_cache[i_b].failed) return 1;
+        if (ok.type != VAL_BOOL || !ok.as.boolean) ip = c->code + i_off;
+        NEXT();
+    }
+    L_SET_INDEX: {
+        Value nil = val_nil();
+        if (index_cb)
+            (void)index_cb(rt_opaque, VM_INDEX_SET,
+                           &index_cache[i_b], c->constants[i_b].as.string,
+                           R, stack_size, i_off, R[i_c], R[i_a]);
+        else (void)nil;
+        if (index_cache[i_b].failed) return 1;
+        NEXT();
+    }
     L_RETURN_VAL: return 1;   /* handled by vm_run_fn; in vm_run = stop */
     L_RETURN_NIL: return 1;   /* same */
     L_RETURN: return 1;
@@ -805,6 +961,21 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
                                  c->constants[instr->c].as.string,
                                  R[instr->a]);
                 break;
+            case OP_GET_INDEX: {
+                Value nil=val_nil();
+                if(index_cb)R[instr->a]=index_cb(rt_opaque,VM_INDEX_GET,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,instr->offset,R[instr->c],nil);else R[instr->a]=nil;
+                if(index_cache[instr->b].failed)return 1;break;
+            }
+            case OP_PREP_INDEX: {
+                Value nil=val_nil();int hint=(instr->a==UINT16_MAX)?-1:(int)instr->a;
+                Value ok=index_cb?index_cb(rt_opaque,VM_INDEX_PREP,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,hint,R[instr->c],nil):val_bool(0);
+                if(index_cache[instr->b].failed)return 1;
+                if(ok.type!=VAL_BOOL||!ok.as.boolean)ip=c->code+instr->offset;break;
+            }
+            case OP_SET_INDEX: {
+                Value nil=val_nil();if(index_cb)(void)index_cb(rt_opaque,VM_INDEX_SET,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,instr->offset,R[instr->c],R[instr->a]);else(void)nil;
+                if(index_cache[instr->b].failed)return 1;break;
+            }
             case OP_RETURN_VAL: return 1;
             case OP_RETURN_NIL:  return 1;
             case OP_RETURN: return 1;

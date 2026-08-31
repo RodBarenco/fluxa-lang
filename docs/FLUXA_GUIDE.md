@@ -1,6 +1,6 @@
 # How to Program in Fluxa
 
-**v0.20.0**
+**v0.30.1**
 
 A step-by-step reference for writing correct Fluxa programs. Read this before writing
 any Fluxa code — especially the Block section (§8), the `danger` rules (§9), and the
@@ -68,6 +68,13 @@ Useful for memoization, call counting, and accumulation without exposing state o
 ## 3. Arrays
 
 Fixed-size, typed. Declare size at write time.
+
+Fixed `int`, `float`, and `bool` arrays are eligible for bytecode execution
+inside `while` loops. Their payload remains on the heap; the VM caches only the
+owning value slot and performs the same type and bounds checks as ordinary
+execution. `str arr` retains its owned-read behavior, and `dyn` retains its
+growth and GC behavior, so those two forms continue through the tree evaluator.
+This distinction affects performance only, never source semantics.
 
 ```fluxa
 int arr   values[3]    = [1, 2, 3]

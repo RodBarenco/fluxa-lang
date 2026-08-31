@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.20.0 — Beta**
+**v0.30.1 — Beta**
 
-*Reflects runtime behavior shipped in v0.20.0.*
+*Reflects runtime behavior shipped in v0.30.1.*
 
 *Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 34 stdlib libs · Module System*
 
@@ -80,6 +80,15 @@ values[5] = 1       // [fluxa] Runtime error (line N): array index out of bounds
 ```
 
 The scalar form (`int arr a[N] = 0`) is the standard pattern for large arrays on embedded targets — no need to list N elements explicitly, and the type is enforced on the fill value at runtime.
+
+**Execution contract.** Fixed primitive arrays remain heap-resident. A compiled
+`while` may execute `int`, `float`, and `bool` element reads and writes through
+dedicated bytecode instructions, but it caches only the owning `Value` slot and
+revalidates the container, integer index, bounds, and assignment type. Invalid
+write targets are rejected before the right-hand side is evaluated. `str arr`
+continues through the ownership-aware evaluator, and `dyn` continues through
+its growth/GC-aware evaluator; both retain exactly the semantics specified
+here and below.
 
 ### 3.3 dyn — Heterogeneous Dynamic Array
 

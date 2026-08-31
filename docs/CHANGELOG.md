@@ -1,10 +1,36 @@
 # Fluxa-lang Changelog
 
-## v0.20.0 — scoped names, VM correctness, and framebuffer APIs
+## v0.30.1 — scoped names, VM correctness, and array bytecode
 
 This is the first release whose public documentation and build manifest use the
 same standard-library inventory: 34 modules. README, specification, programming
-guide and stdlib reference now identify the release consistently as v0.20.0.
+guide and stdlib reference now identify the release consistently as v0.30.1.
+
+### Fixed primitive arrays execute in the bytecode VM
+
+`NODE_ARR_ACCESS` and `NODE_ARR_ASSIGN` now compile to dedicated indexed-read,
+preflight and indexed-write opcodes. Previously either node rejected the whole
+enclosing loop or function chunk, sending pixel-heavy code to the tree walker;
+the same two-million-iteration loop measured approximately 8x slower after one
+array operation was introduced.
+
+Array payloads remain heap-resident. Each VM invocation caches only the stable
+owning `Value` slot, never the payload pointer, then checks the slot type, index
+type and bounds on every operation. Writes preserve homogeneous element types
+and mirror primitive `prst` elements to their independent pool copy. A separate
+preflight opcode validates the target before evaluating the assignment's right
+side, preserving the language's observable error and side-effect order.
+
+The optimized path is deliberately limited to fixed `int`, `float` and `bool`
+arrays. `str arr` stays on the evaluator until VM temporary ownership can retain
+and release element reads explicitly; `dyn` stays there because indexing also
+owns auto-growth and GC rules. This prevents the performance change from
+introducing aliases, stale payload pointers, leaks or use-after-free behavior.
+
+Regression coverage exercises global and Block-owned arrays, array parameters,
+all three primitive element types, read/write parity, bounds-before-RHS order,
+type errors, and the unchanged `str arr`/`dyn` fallbacks. Sanitizer stress runs
+cover 100 million indexed reads and writes.
 
 ### Block fields and methods have separate namespaces
 

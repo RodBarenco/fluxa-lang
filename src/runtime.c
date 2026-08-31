@@ -430,6 +430,12 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
 /* v0.14: field access callbacks — Value* owner_kv for inline cache */
 static Value vm_get_field_callback(void *rt_opaque, Value *owner_kv, const char *field);
 static void  vm_set_field_callback(void *rt_opaque, Value *owner_kv, const char *field, Value val);
+static int   vm_indexable_callback(void *rt_opaque, const char *name, int resolved_offset);
+static Value vm_index_callback(void *rt_opaque, int action,
+                               VMIndexCache *cache, const char *name,
+                               Value *registers, int register_count,
+                               int resolved_offset, Value index,
+                               Value incoming);
 /* v0.14: tick callback — called at every OP_JUMP back-edge. */
 static void vm_tick_callback(void *rt_opaque);
 
@@ -938,6 +944,105 @@ static void vm_store_callback(void *rt_opaque, Value *slot, Value *incoming) {
     if (old_d == new_d) return;
     if (old_d) gc_unpin(&rt->gc, old_d);
     if (new_d) gc_pin(&rt->gc, new_d);
+}
+
+/* Cache only the owning Value slot.  The heap payload may be replaced, so a
+ * cached FluxaArr.data pointer would be a stale-pointer/UAF risk. */
+static Value *vm_index_slot(Runtime *rt, VMIndexCache *cache, const char *name,
+                            Value *registers, int register_count,
+                            int resolved_offset) {
+    if (cache->slot) return cache->slot;
+    if (resolved_offset >= 0 && resolved_offset < register_count &&
+        registers[resolved_offset].type == VAL_ARR) {
+        cache->slot = &registers[resolved_offset];
+        return cache->slot;
+    }
+    ScopeEntry *entry = NULL;
+    if (rt->current_instance)
+        HASH_FIND_STR(rt->current_instance->scope.table, name, entry);
+    if (!entry) HASH_FIND_STR(rt->scope.table, name, entry);
+    if (!entry && rt->call_depth > 0)
+        HASH_FIND_STR(rt->global_table, name, entry);
+    if (entry && entry->value.type == VAL_ARR) {
+        cache->slot = &entry->value;
+        return cache->slot;
+    }
+    return NULL;
+}
+
+/* String reads require owned retains and dyn owns growth/GC behavior.  Until
+ * VM temporaries have an explicit release protocol, only fixed primitive
+ * arrays are eligible for this bytecode path. */
+static int vm_array_is_primitive(const Value *slot) {
+    if (!slot || slot->type != VAL_ARR) return 0;
+    for (int i = 0; i < slot->as.arr.size; i++) {
+        ValType t = slot->as.arr.data[i].type;
+        if (t != VAL_NIL && t != VAL_INT && t != VAL_FLOAT && t != VAL_BOOL)
+            return 0;
+    }
+    return 1;
+}
+
+static int vm_indexable_callback(void *rt_opaque, const char *name,
+                                 int resolved_offset) {
+    Runtime *rt = (Runtime *)rt_opaque;
+    if (!rt || !name || strcmp(name, "err") == 0) return 0;
+    VMIndexCache cache = { NULL, -2, 0 };
+    Value *slot = vm_index_slot(rt, &cache, name, rt->stack,
+                                rt->stack_size, resolved_offset);
+    return vm_array_is_primitive(slot);
+}
+
+static Value vm_index_callback(void *rt_opaque, int action,
+                               VMIndexCache *cache, const char *name,
+                               Value *registers, int register_count,
+                               int resolved_offset, Value index,
+                               Value incoming) {
+    Runtime *rt = (Runtime *)rt_opaque;
+    if (!rt) return action == VM_INDEX_PREP ? val_bool(0) : val_nil();
+    Value *slot = vm_index_slot(rt, cache, name, registers,
+                                register_count, resolved_offset);
+    if (!slot || slot->type != VAL_ARR) {
+        char buf[280];
+        snprintf(buf, sizeof(buf), "'%s' is not an array", name);
+        rt_error(rt, buf); cache->failed = 1;
+        return action == VM_INDEX_PREP ? val_bool(0) : val_nil();
+    }
+    if (index.type != VAL_INT) {
+        rt_error(rt, "array index must be an integer"); cache->failed = 1;
+        return action == VM_INDEX_PREP ? val_bool(0) : val_nil();
+    }
+    long idx = index.as.integer;
+    if (idx < 0 || idx >= slot->as.arr.size) {
+        char buf[280];
+        snprintf(buf, sizeof(buf), "array index out of bounds: %s[%ld] (size %d)",
+                 name, idx, slot->as.arr.size);
+        rt_error(rt, buf); cache->failed = 1;
+        return action == VM_INDEX_PREP ? val_bool(0) : val_nil();
+    }
+    if (action == VM_INDEX_PREP) return val_bool(1);
+    if (action == VM_INDEX_GET) return slot->as.arr.data[idx];
+
+    ValType old_type = slot->as.arr.data[idx].type;
+    if (old_type != VAL_NIL && old_type != incoming.type) {
+        char buf[320];
+        snprintf(buf, sizeof(buf),
+                 "type error: %s[%ld] is %s, cannot assign %s", name, idx,
+                 val_type_name(old_type), val_type_name(incoming.type));
+        rt_error(rt, buf); cache->failed = 1;
+        return val_nil();
+    }
+    slot->as.arr.data[idx] = incoming;
+    if (!rt->dry_run && rt->mode == FLUXA_MODE_PROJECT) {
+        if (cache->prst_index == -2)
+            cache->prst_index = prst_pool_find(RT_POOL(rt), name);
+        if (cache->prst_index >= 0) {
+            Value *pool = &RT_POOL(rt)->entries[cache->prst_index].value;
+            if (pool->type == VAL_ARR && idx < pool->as.arr.size)
+                pool->as.arr.data[idx] = incoming;
+        }
+    }
+    return val_nil();
 }
 
 static void vm_tick_callback(void *rt_opaque) {
@@ -1473,7 +1578,10 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
      * via field names which can't be resolved to stack offsets in fn body). */
     if (!fn_node->fn_chunk) {
         Chunk *ch = (Chunk *)malloc(sizeof(Chunk));
-        if (ch && chunk_compile_fn(ch, fn_node)) {
+        /* Parameters are not bound until fn_regs exists. Avoid inferring an
+         * array parameter from an unrelated caller/global slot of same name;
+         * its nested while can compile after the real binding exists. */
+        if (ch && chunk_compile_fn(ch, fn_node, NULL, NULL)) {
             fn_node->fn_chunk = ch;  /* cache on AST node — never freed */
         } else {
             free(ch);
@@ -1491,7 +1599,8 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         for (int _i = 0; _i < param_count; _i++) fn_regs[_i] = args[_i];
         Value result = vm_run_fn(ch, fn_regs, reg_count,
                                  vm_call_callback, vm_get_field_callback,
-                                 vm_set_field_callback, rt);
+                                 vm_set_field_callback,
+                                 vm_index_callback, rt);
         free(fn_regs);
         return result;
     }
@@ -1975,7 +2084,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
 
         case NODE_WHILE: {
             Chunk chunk;
-            if (chunk_compile_loop(&chunk, node)) {
+            if (chunk_compile_loop(&chunk, node,
+                                   vm_indexable_callback, rt)) {
                 /* Thread clone: refresh stack from shared pool before VM so
                  * the loop starts with the latest prst values from any thread. */
                 if (rt->shared_prst_pool && rt->mode == FLUXA_MODE_PROJECT) {
@@ -2002,7 +2112,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 vm_run(&chunk, &rt->scope, rt->stack, rt->stack_size,
                        rt->cancel_flag, vm_call_callback, rt, tick,
                        vm_get_field_callback, vm_set_field_callback,
-                       vm_store_callback);
+                       vm_store_callback, vm_index_callback);
                 chunk_free(&chunk);
                 /* Sprint 7: after VM, sync prst vars from rt->stack back to
                  * pool and global_table. The VM writes rt->stack[offset]

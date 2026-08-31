@@ -46,6 +46,11 @@ typedef enum {
      *   b = constants[] index → VAL_STRING owner name
      *   c = constants[] index → VAL_STRING field name   */
     OP_SET_FIELD,
+    /* Fixed numeric/bool array indexing. Array payloads remain on the heap;
+     * the VM caches only the address of their official Value descriptor. */
+    OP_GET_INDEX,
+    OP_PREP_INDEX,
+    OP_SET_INDEX,
     /* OP_RETURN_VAL: return a value from a compiled function body.
      *   a = register holding return value.
      * OP_RETURN_NIL: return nil (void functions).
@@ -66,6 +71,9 @@ typedef Value (*vm_call_cb_t)(void       *rt_opaque,
                                Value      *args,
                                int         argc);
 
+typedef int (*vm_indexable_cb_t)(void *rt, const char *name,
+                                 int resolved_offset);
+
 /* ── Instruction (3-address register-based) ──────────────────────────────── */
 typedef struct {
     Opcode   op;
@@ -84,14 +92,16 @@ typedef struct {
     int          count;
     int          cap;
     Value        constants[CHUNK_MAX_CONST];
-    /* Constants synthesized solely for the internal Block-method namespace.
+    /* Strings synthesized for internal method keys and array-name operands.
      * Ordinary constants retain their historical ownership rules; these bits
      * let chunk_free release only the new allocations introduced by the
      * namespace encoding. */
-    unsigned char owned_method_keys[(CHUNK_MAX_CONST + 7) / 8];
+    unsigned char owned_strings[(CHUNK_MAX_CONST + 7) / 8];
     int          const_count;
     int          ok;
     uint16_t     next_reg;   /* Issue #33: uint16_t — starts at 128 */
+    vm_indexable_cb_t indexable_cb;
+    void             *indexable_rt;
 } Chunk;
 
 /* ── Chunk lifecycle (inline — trivial) ──────────────────────────────────── */
@@ -100,14 +110,16 @@ static inline void chunk_init(Chunk *c) {
     c->count = 0;
     c->cap   = CHUNK_INIT_CAP;
     c->const_count = 0;
-    memset(c->owned_method_keys, 0, sizeof(c->owned_method_keys));
+    memset(c->owned_strings, 0, sizeof(c->owned_strings));
     c->ok    = 1;
     c->next_reg = 128;
+    c->indexable_cb = NULL;
+    c->indexable_rt = NULL;
 }
 
 static inline void chunk_free(Chunk *c) {
     for (int i = 0; i < c->const_count; i++) {
-        if ((c->owned_method_keys[i >> 3] & (1u << (i & 7))) &&
+        if ((c->owned_strings[i >> 3] & (1u << (i & 7))) &&
             c->constants[i].type == VAL_STRING) {
             fxstr_release(c->constants[i].as.string);
             c->constants[i].as.string = NULL;
@@ -157,10 +169,26 @@ static inline int chunk_add_const_str(Chunk *c, const char *sval) {
 }
 
 /* ── Public API (implemented in bytecode.c) ──────────────────────────────── */
-int chunk_compile_loop(Chunk *c, ASTNode *loop_node);
+enum { VM_INDEX_GET = 0, VM_INDEX_PREP, VM_INDEX_SET };
+
+typedef struct {
+    Value *slot;
+    int    prst_index; /* -2 unresolved, -1 ordinary array, >=0 pool entry */
+    int    failed;     /* callback raised a runtime error: stop this VM chunk */
+} VMIndexCache;
+
+typedef Value (*vm_index_cb_t)(void *rt, int action,
+                               VMIndexCache *cache, const char *name,
+                               Value *registers, int register_count,
+                               int resolved_offset, Value index,
+                               Value incoming);
+
+int chunk_compile_loop(Chunk *c, ASTNode *loop_node,
+                       vm_indexable_cb_t indexable_cb, void *indexable_rt);
 /* Compile a function body — uses OP_RETURN_VAL / OP_RETURN_NIL.
  * Params are at resolved_offset 0..param_count-1 in the register file. */
-int chunk_compile_fn(Chunk *c, ASTNode *fn_node);
+int chunk_compile_fn(Chunk *c, ASTNode *fn_node,
+                     vm_indexable_cb_t indexable_cb, void *indexable_rt);
 
 /* cancel_flag: NULL for normal; set *cancel_flag=1 to abort (used by -dev).
  * call_cb / rt_opaque: dispatch OP_CALL_METHOD / OP_CALL_FUNC to runtime C.
@@ -185,6 +213,7 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
                 vm_call_cb_t      call_cb,
                 vm_get_field_cb_t get_field_cb,
                 vm_set_field_cb_t set_field_cb,
+                vm_index_cb_t     index_cb,
                 void             *rt_opaque);
 
 /* Called by OP_MOVE when writing to a variable register (dst < 128, the
@@ -203,6 +232,7 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
            vm_tick_cb_t      tick_cb,
            vm_get_field_cb_t get_field_cb,
            vm_set_field_cb_t set_field_cb,
-           vm_store_cb_t     store_cb);
+           vm_store_cb_t     store_cb,
+           vm_index_cb_t     index_cb);
 
 #endif /* FLUXA_BYTECODE_H */

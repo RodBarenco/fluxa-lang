@@ -523,6 +523,17 @@ else
 $(echo "$_out" | sed 's/^/    /')"
 fi
 
+_out=$(bash "$SCRIPT_DIR/vm_array_index.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "vm_array_index: PASS"; then
+    echo "  PASS  vm/array-index-bytecode"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/array-index-bytecode"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/array-index-bytecode"
+fi
+
 printf "  %-56s" "sprint11/warm_path (warm tier, edge cases)"
 _out=$(bash "$SCRIPT_DIR/sprint11_warm_path.sh" --fluxa "$FLUXA" 2>&1)
 if echo "$_out" | grep -q "warm_path: PASS"; then
