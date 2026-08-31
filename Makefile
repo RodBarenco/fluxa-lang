@@ -349,7 +349,8 @@ CORTEXM_CFLAGS = $(EMBEDDED_CFLAGS)  \
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: all build build-windows build-windows-profile          \
+.PHONY: all build build-asan test-leaks                      \
+        build-windows build-windows-profile                  \
         build-windows-essential                                \
         build-windows-essential-static build-windows-packaged   \
         prepare-windows-raylib-static windows-test              \
@@ -751,13 +752,25 @@ build-embedded:
 #   make build-asan
 #   ./fluxa_asan run <file.flx>
 
-build-asan:
-	$(CC) -std=c99 -Wall -Wextra -g \
-	  -fsanitize=address,undefined   \
-	  -Isrc -Ivendor -DFLUXA_HAS_FFI=1 \
-	  $(SRCS) -o $(TARGET)_asan \
-	  $(FFI_LDFLAGS) -ldl -lm -lpthread
+# Mirrors `build` exactly and adds the sanitizers, rather than hand-rolling a
+# second flag set: the hand-rolled one omitted _POSIX_C_SOURCE (leaving
+# S_ISSOCK undefined, so the link failed) and every std lib define, so it could
+# not exercise the libraries the runtime actually ships with. -O1 and frame
+# pointers are for readable traces; the later flags win over CFLAGS' -O2.
+build-asan: $(CABI_NATIVE_ARTIFACT)
+	@python3 scripts/gen_lib_registry.py
+	$(CC) $(CFLAGS) -g -O1 -fno-omit-frame-pointer \
+	  -fsanitize=address,undefined \
+	  $(SRCS) $(FLUXA_EXTRA_SRCS) -o $(TARGET)_asan $(LDFLAGS)
 	@echo "✓ asan build ok → ./$(TARGET)_asan  (development only — do not ship)"
+
+# Leaks that grow with the iteration count are the ones that matter: a bounded
+# residue is a fixed cost, while a per-iteration leak kills a long run. The
+# suite cannot see either — a leaking program still prints the right answer —
+# so this runs each case at two iteration counts under LeakSanitizer and fails
+# only when the allocation count grows between them.
+test-leaks: build-asan
+	@bash tests/leak_scaling.sh --fluxa ./$(TARGET)_asan
 
 
 # ─────────────────────────────────────────────────────────────────────────────

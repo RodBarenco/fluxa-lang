@@ -112,9 +112,23 @@ void scope_set(Scope *s, const char *name, Value value) {
     ScopeEntry *entry = NULL;
     HASH_FIND_STR(s->table, name, entry);
     if (entry) {
-        value_release_data(&entry->value);
+        /* A store must never free what it is about to keep.  The incoming
+         * value can be the entry's own storage — `obj.f = obj.f` reaches here
+         * — so guard the pointer-owning types the way scope_set_owned does,
+         * and copy the string in *before* releasing the old entry rather than
+         * after.  Releasing first only happened to be safe while every caller
+         * held an independent reference. */
+        /* int, float and bool lead the ValType enum and own nothing, so one
+         * compare takes the common store past the guards entirely. */
+        if (entry->value.type > VAL_BOOL) {
+            if (entry->value.type == VAL_ARR && value.type == VAL_ARR &&
+                entry->value.as.arr.data == value.as.arr.data) { entry->value = value; return; }
+            if (entry->value.type == VAL_DYN && value.type == VAL_DYN &&
+                entry->value.as.dyn == value.as.dyn) { entry->value = value; return; }
+        }
         if (value.type == VAL_STRING && value.as.string)
             value.as.string = fxstr_new(value.as.string); /* copy-in: source may be pool-raw */
+        value_release_data(&entry->value);
         /* Note: VAL_ARR ownership transfers — caller must not free data */
         entry->value = value;
     } else {

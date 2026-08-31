@@ -1030,6 +1030,14 @@ static int type_name_is_value(const char *t) {
                  strcmp(t, "bool") == 0);
 }
 
+/* Declared types the bytecode field path can carry.  int, float and bool own
+ * no heap data; str is carried as an owned reference — the field callback
+ * retains on the way out and the register's drop balances it.  Everything else
+ * (arr, dyn, Block instances, unknown) stays on the evaluator. */
+static int type_name_is_field_ok(const char *t) {
+    return type_name_is_value(t) || (t && strcmp(t, "str") == 0);
+}
+
 /* A declared return type that can never produce a string.  "nil" included:
  * those calls hand back VAL_NIL. */
 static int ret_type_never_string(const char *t) {
@@ -1058,10 +1066,10 @@ static const char *vm_probe_callback(void *rt_opaque, int kind,
         if (prst_pool_has(RT_POOL(rt), name)) return NULL;
         int is_fn = 0;
         const char *t = block_decl_type(inst->def, name, &is_fn);
-        if (!t || is_fn || !type_name_is_value(t)) return NULL;
+        if (!t || is_fn || !type_name_is_field_ok(t)) return NULL;
         if (!scope_has(&inst->scope, name)) return NULL;
         if (resolve_instance(rt, inst->name) != inst) return NULL;
-        if (flag) *flag = 1;
+        if (flag) *flag = type_name_is_value(t);
         return inst->name;
     }
 
@@ -1231,6 +1239,11 @@ static int stmt_is_inlinable(const ASTNode *s, int param_count) {
 /* Evaluate a simple expression inline — no eval() call, no scope lookup overhead.
  * params: args array indexed by resolved_offset (param 0 = args[0], etc.)
  * inst:   Block instance for MEMBER_ACCESS field reads                       */
+/* Ownership contract: the returned Value is OWNED by the caller.  A string
+ * literal allocates, and the param and field branches retain, so every branch
+ * hands back one reference the caller must release or hand on.  The branches
+ * used to disagree — literals allocated while params and fields were borrowed
+ * aliases — and every consumer had to know which branch it had reached. */
 static Value eval_simple_expr(const ASTNode *e, const Value *params, int param_count,
                                BlockInstance *inst, Runtime *rt) {
     if (!e) return val_nil();
@@ -1242,45 +1255,57 @@ static Value eval_simple_expr(const ASTNode *e, const Value *params, int param_c
         case NODE_IDENTIFIER: {
             int off = e->resolved_offset;
             /* Only params are safe — fields are rejected by expr_is_inlinable */
-            if (off >= 0 && off < param_count) return params[off];
+            if (off >= 0 && off < param_count) {
+                Value v = params[off];
+                if (v.type == VAL_STRING && v.as.string)
+                    v.as.string = fxstr_retain(v.as.string);
+                return v;
+            }
             return val_nil();
         }
         case NODE_MEMBER_ACCESS: {
             Value v; v.type = VAL_NIL;
             BlockInstance *fi = resolve_instance(rt, e->as.member_access.owner);
             if (fi) scope_get(&fi->scope, e->as.member_access.field, &v);
+            if (v.type == VAL_STRING && v.as.string)
+                v.as.string = fxstr_retain(v.as.string);
             return v;
         }
         case NODE_BINARY_EXPR: {
             Value l = eval_simple_expr(e->as.binary.left,  params, param_count, inst, rt);
             Value r = eval_simple_expr(e->as.binary.right, params, param_count, inst, rt);
             const char *op = e->as.binary.op;
+            /* One exit: the operands are owned by this frame and no result
+             * here carries a string, so both are released before returning. */
+            Value out = val_nil();
             if (l.type == VAL_INT && r.type == VAL_INT) {
                 long lv = l.as.integer, rv = r.as.integer;
-                if      (!strcmp(op,"+"))  return val_int(lv + rv);
-                else if (!strcmp(op,"-"))  return val_int(lv - rv);
-                else if (!strcmp(op,"*"))  return val_int(lv * rv);
-                else if (!strcmp(op,"/"))  return rv ? val_int(lv / rv) : val_int(0);
-                else if (!strcmp(op,"%"))  return rv ? val_int(lv % rv) : val_int(0);
-                else if (!strcmp(op,"==")) return val_bool(lv == rv);
-                else if (!strcmp(op,"!=")) return val_bool(lv != rv);
-                else if (!strcmp(op,"<"))  return val_bool(lv <  rv);
-                else if (!strcmp(op,">"))  return val_bool(lv >  rv);
-                else if (!strcmp(op,"<=")) return val_bool(lv <= rv);
-                else if (!strcmp(op,">=")) return val_bool(lv >= rv);
+                if      (!strcmp(op,"+"))  out = val_int(lv + rv);
+                else if (!strcmp(op,"-"))  out = val_int(lv - rv);
+                else if (!strcmp(op,"*"))  out = val_int(lv * rv);
+                else if (!strcmp(op,"/"))  out = rv ? val_int(lv / rv) : val_int(0);
+                else if (!strcmp(op,"%"))  out = rv ? val_int(lv % rv) : val_int(0);
+                else if (!strcmp(op,"==")) out = val_bool(lv == rv);
+                else if (!strcmp(op,"!=")) out = val_bool(lv != rv);
+                else if (!strcmp(op,"<"))  out = val_bool(lv <  rv);
+                else if (!strcmp(op,">"))  out = val_bool(lv >  rv);
+                else if (!strcmp(op,"<=")) out = val_bool(lv <= rv);
+                else if (!strcmp(op,">=")) out = val_bool(lv >= rv);
             }
             if (l.type == VAL_FLOAT || r.type == VAL_FLOAT) {
                 double lv = (l.type==VAL_INT) ? (double)l.as.integer : l.as.real;
                 double rv = (r.type==VAL_INT) ? (double)r.as.integer : r.as.real;
-                if      (!strcmp(op,"+"))  return val_float(lv + rv);
-                else if (!strcmp(op,"-"))  return val_float(lv - rv);
-                else if (!strcmp(op,"*"))  return val_float(lv * rv);
-                else if (!strcmp(op,"/"))  return rv ? val_float(lv/rv) : val_float(0);
-                else if (!strcmp(op,"==")) return val_bool(lv == rv);
-                else if (!strcmp(op,"<"))  return val_bool(lv <  rv);
-                else if (!strcmp(op,">"))  return val_bool(lv >  rv);
+                if      (!strcmp(op,"+"))  out = val_float(lv + rv);
+                else if (!strcmp(op,"-"))  out = val_float(lv - rv);
+                else if (!strcmp(op,"*"))  out = val_float(lv * rv);
+                else if (!strcmp(op,"/"))  out = rv ? val_float(lv/rv) : val_float(0);
+                else if (!strcmp(op,"==")) out = val_bool(lv == rv);
+                else if (!strcmp(op,"<"))  out = val_bool(lv <  rv);
+                else if (!strcmp(op,">"))  out = val_bool(lv >  rv);
             }
-            return val_nil();
+            if (l.type == VAL_STRING && l.as.string) fxstr_release(l.as.string);
+            if (r.type == VAL_STRING && r.as.string) fxstr_release(r.as.string);
+            return out;
         }
         default:
             return val_nil();
@@ -1311,7 +1336,14 @@ static int method_try_inline(Runtime *rt, ASTNode *fn_node,
                 if (!fi) { return 0; }
                 Value v = eval_simple_expr(s->as.member_assign.value,
                                            args, param_count, inst, rt);
+                /* Copy in, then release.  Adopting would be cheaper but would
+                 * let two Blocks share one buffer, and a Block's state is
+                 * specified as independent of every other Block's (§7.4); the
+                 * copy is what materialises that.  v is owned, so it has to be
+                 * released here rather than abandoned. */
                 scope_set(&fi->scope, s->as.member_assign.field, v);
+                if (v.type == VAL_STRING && v.as.string)
+                    fxstr_release(v.as.string);
                 break;
             }
             case NODE_ASSIGN:
@@ -1643,11 +1675,9 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         {
             Value inline_result;
             if (method_try_inline(rt, fn_node, inst, args, argc, &inline_result)) {
-                /* str return ownership fix (see call_function): a method that
-                 * inlines `return field` aliases the instance's char*. Hand
-                 * the caller an owned copy so free() on the result is safe. */
-                if (inline_result.type == VAL_STRING && inline_result.as.string)
-                    fxstr_retain(inline_result.as.string);   /* O(1) owned read */
+                /* eval_simple_expr already hands back an owned reference —
+                 * retaining again added one nobody dropped, leaking a string
+                 * per call for every method that inlines a `return`. */
                 return inline_result;
             }
         }
