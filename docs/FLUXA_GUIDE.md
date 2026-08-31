@@ -1,6 +1,6 @@
 # How to Program in Fluxa
 
-**v0.30.1**
+**v0.30.2**
 
 A step-by-step reference for writing correct Fluxa programs. Read this before writing
 any Fluxa code — especially the Block section (§8), the `danger` rules (§9), and the
@@ -151,6 +151,11 @@ pool[1].set(20.0)
 ## 6. Functions
 
 Return type declared at the end. Everything passed as arguments — no implicit access to outer scope.
+
+`return` may appear inside a `while`, including inside nested `if` or `while`
+blocks. It exits the owning function immediately. This is identical on the tree
+evaluator and bytecode hot path; a hot loop is not demoted merely because its
+body can return.
 
 ```fluxa
 fn add(int a, int b) int {

@@ -204,7 +204,8 @@ static void *flx_fn_runner(void *arg) {
         for (int _ai = 0; _ai < bind_n; _ai++) {
             Value av = t->fn_args[_ai];
             if (av.type == VAL_ARR)
-                rt->stack[_ai] = val_arr_ref(av.as.arr.data, av.as.arr.size);
+                rt->stack[_ai] = val_arr_ref(av.as.arr.data, av.as.arr.size,
+                                             av.as.arr.owned);
             else
                 rt->stack[_ai] = av;
             if (rt->stack_size <= _ai) rt->stack_size = _ai + 1;

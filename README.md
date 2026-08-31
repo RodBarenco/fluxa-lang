@@ -1,6 +1,6 @@
 # Fluxa-lang
 
-**v0.30.1 — Beta** · Hobby language · Rio de Janeiro, Brazil
+**v0.30.2 — Beta** · Hobby language · Rio de Janeiro, Brazil
 
 Fluxa is a statically-typed, C99-embedded scripting language designed for IoT and embedded systems (RP2040, ESP32). Feature-complete and stable. 34 standard library modules. Module system for multi-file projects. Three-tier execution: AST tree-walker → warm bytecode VM → compiled function bodies.
 
@@ -258,7 +258,7 @@ fluxa/
 │   ├── torture/           — IoT runtime simulation (Docker)
 │   └── fuzz/              — libFuzzer harnesses (pg, wserver, json, csv, ...)
 ├── docs/
-│   ├── fluxa_spec_v16.md  — language specification
+│   ├── fluxa_spec_v0.30.2.md — language specification
 │   ├── STDLIB.md          — standard library reference
 │   ├── FLUXA_GUIDE.md     — step-by-step programming guide
 │   ├── CHANGELOG.md       — version history
@@ -272,7 +272,7 @@ fluxa/
 
 ---
 
-## Status — v0.30.1
+## Status — v0.30.2
 
 | Component | Status |
 |---|---|

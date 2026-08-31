@@ -1,5 +1,5 @@
 # Fluxa Standard Library
-**v0.30.1**
+**v0.30.2**
 
 Reference documentation for all 34 stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.time`, `std.video`, `std.fs`, `std.zlib`, `std.flxthread`, `std.cabi`, `std.cache`, `std.pid`, `std.libv`, `std.libdsp`, `std.crypto`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.compute`, `std.image`, `std.infer`, `std.wserver`, `std.pg`, `std.sound`.
 

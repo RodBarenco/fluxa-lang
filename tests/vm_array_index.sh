@@ -73,4 +73,35 @@ out=$(timeout 10s "$FLUXA" run "$WORK_DIR/fallback.flx" 2>&1 || true)
 if [[ "$out" != "FALLBACK A B 2 3" ]]; then
     echo "  vm_array_index: FAIL (fallback parity)"; echo "    got: $out"; exit 1
 fi
+cat > "$WORK_DIR/large_field.flx" << 'FLX'
+// Regression: bytecode eligibility used to rescan every element of every
+// field array each time this while was compiled.  With a framebuffer-sized
+// array, composing many short calls dominated the useful work.
+Block Frame {
+    int arr pixels[196608] = 0
+    fn touch(int at) int {
+        int i = 0
+        int value = 0
+        while i < 1 {
+            value = pixels[at]
+            pixels[at] = value + 1
+            i = i + 1
+        }
+        return value
+    }
+    fn get(int at) int { return pixels[at] }
+}
+Block frame typeof Frame
+int n = 0
+int sum = 0
+while n < 1000 {
+    sum = sum + frame.touch(n % 64)
+    n = n + 1
+}
+print("LARGE", sum, frame.get(0), frame.get(63))
+FLX
+out=$(timeout 3s "$FLUXA" run "$WORK_DIR/large_field.flx" 2>&1 || true)
+if [[ "$out" != "LARGE 7320 16 15" ]]; then
+    echo "  vm_array_index: FAIL (large field eligibility cache)"; echo "    got: $out"; exit 1
+fi
 echo "  vm_array_index: PASS"

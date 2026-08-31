@@ -357,6 +357,21 @@ static const char *op_name(Opcode op) {
         case OP_JUMP_IF_FALSE: return "JUMP_IF_FALSE";
         case OP_JUMP:          return "JUMP";
         case OP_RETURN:        return "RETURN";
+        case OP_CALL_METHOD:   return "CALL_METHOD";
+        case OP_CALL_FUNC:     return "CALL_FUNC";
+        case OP_GET_FIELD:     return "GET_FIELD";
+        case OP_GET_FIELD_V:   return "GET_FIELD_V";
+        case OP_SET_FIELD:     return "SET_FIELD";
+        case OP_GET_INDEX:     return "GET_INDEX";
+        case OP_PREP_INDEX:    return "PREP_INDEX";
+        case OP_SET_INDEX:     return "SET_INDEX";
+        case OP_RETURN_VAL:    return "RETURN_VAL";
+        case OP_RETURN_NIL:    return "RETURN_NIL";
+        case OP_LOADK_STR:     return "LOADK_STR";
+        case OP_MOVE_STR:      return "MOVE_STR";
+        case OP_DROP_STR:      return "DROP_STR";
+        case OP_NOT:           return "NOT";
+        case OP_TRUTHY:        return "TRUTHY";
         default:               return "OP?";
     }
 }
@@ -370,6 +385,7 @@ static void dis_chunk(Chunk *ch, int indent_depth) {
         Instruction in = ch->code[i];
         dis("%s  %04d  %-16s", pad, i, op_name(in.op));
         switch (in.op) {
+            case OP_LOADK_STR:
             case OP_LOADK: {
                 /* b = const index */
                 dis("  r%-3d  K%-3d  ", in.a, in.b);
@@ -383,7 +399,61 @@ static void dis_chunk(Chunk *ch, int indent_depth) {
                 break;
             }
             case OP_MOVE:
+            case OP_MOVE_STR:
+            case OP_NOT:
+            case OP_TRUTHY:
                 dis("  r%-3d  r%-3d", in.a, in.b);
+                break;
+            case OP_DROP_STR:
+            case OP_RETURN_VAL:
+                dis("  r%-3d", in.a);
+                break;
+            case OP_RETURN_NIL:
+                break;
+            case OP_GET_FIELD:
+            case OP_GET_FIELD_V:
+                dis("  r%-3d  %s.%s", in.a,
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?",
+                    (in.c < ch->const_count && ch->constants[in.c].type == VAL_STRING)
+                        ? ch->constants[in.c].as.string : "?");
+                break;
+            case OP_SET_FIELD:
+                dis("  %s.%s  <- r%d",
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?",
+                    (in.c < ch->const_count && ch->constants[in.c].type == VAL_STRING)
+                        ? ch->constants[in.c].as.string : "?", in.a);
+                break;
+            case OP_GET_INDEX:
+                dis("  r%-3d  %s[r%d]", in.a,
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?", in.c);
+                break;
+            case OP_PREP_INDEX:
+                dis("  %s[r%d]  else -> %04d",
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?", in.c, in.offset);
+                break;
+            case OP_SET_INDEX:
+                dis("  %s[r%d]  <- r%d",
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?", in.c, in.a);
+                break;
+            case OP_CALL_METHOD:
+                dis("  r%-3d  %s.%s  args r%d..%d", in.a,
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?",
+                    (in.c < ch->const_count && ch->constants[in.c].type == VAL_STRING)
+                        ? ch->constants[in.c].as.string : "?",
+                    (in.offset >> 16) & 0xFFFF,
+                    ((in.offset >> 16) & 0xFFFF) + (in.offset & 0xFFFF) - 1);
+                break;
+            case OP_CALL_FUNC:
+                dis("  r%-3d  %s()  args r%d..%d", in.a,
+                    (in.b < ch->const_count && ch->constants[in.b].type == VAL_STRING)
+                        ? ch->constants[in.b].as.string : "?",
+                    in.c, in.c + in.offset - 1);
                 break;
             case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD:
             case OP_EQ:  case OP_NEQ: case OP_LT:  case OP_GT:
@@ -391,7 +461,7 @@ static void dis_chunk(Chunk *ch, int indent_depth) {
                 dis("  r%-3d  r%-3d  r%-3d", in.a, in.b, in.c);
                 break;
             case OP_JUMP_IF_FALSE:
-                dis("  r%-3d  -> %04d", in.b, in.offset);
+                dis("  r%-3d  -> %04d", in.a, in.offset);
                 break;
             case OP_JUMP:
                 dis("  -> %04d", in.offset);
@@ -928,7 +998,7 @@ int fluxa_dis_file(const char *inpath, const char *outpath_arg) {
                     has_hot = 1;
                 }
                 Chunk ch; chunk_init(&ch);
-                int ok = chunk_compile_loop(&ch, n, NULL, NULL);
+                int ok = chunk_compile_loop(&ch, n, NULL, NULL, NULL);
                 if (ok && ch.count > 0) {
                     dis("  %s @ line %d  (%d instructions)\n",
                         n->type==NODE_WHILE?"while":"if", n->line, ch.count);
@@ -945,7 +1015,7 @@ int fluxa_dis_file(const char *inpath, const char *outpath_arg) {
                     ASTNode *s = body->as.list.children[j];
                     if (s && (s->type==NODE_WHILE||s->type==NODE_IF)) {
                                 Chunk ch; chunk_init(&ch);
-                        int ok = chunk_compile_loop(&ch, s, NULL, NULL);
+                        int ok = chunk_compile_loop(&ch, s, NULL, NULL, NULL);
                         if (ok && ch.count > 0) {
                             if (!has_hot)
                                 dis("-- 3. Hot Path — Bytecode VM -----------------------------------\n\n");

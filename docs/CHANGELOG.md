@@ -1,10 +1,89 @@
 # Fluxa-lang Changelog
 
-## v0.30.1 — scoped names, VM correctness, and array bytecode
+## v0.30.2 — Block fields, logical operators and value semantics in the VM
 
 This is the first release whose public documentation and build manifest use the
 same standard-library inventory: 34 modules. README, specification, programming
-guide and stdlib reference now identify the release consistently as v0.30.1.
+guide and stdlib reference now identify the release consistently as v0.30.2.
+
+Loops reach the bytecode VM far more often than before, which is where most of
+this release lives. Two defects that had been latent for as long as the VM has
+existed became reachable as a direct result, and both are fixed here.
+
+### Bool and nil comparison read indeterminate bytes
+
+`vm_compare` reached its numeric path for every operand pair that was not two
+ints or two strings, and that path read `Value.as` as a `double`. `val_bool()`
+writes only the `int` member of that union, so the remaining bytes were
+indeterminate: `flag == false` inside a compiled loop answered from whatever
+the destination register had held before it. The same read applied to `nil` and
+to Block instances, and `vm_arith` reinterpreted its operands the same way.
+
+Equality now mirrors the evaluator member for member, including `nil` identity
+and content-based string comparison, and ordering is restricted to `int` and
+`float` — the only types the evaluator accepts there. `vm_arith` treats a
+non-numeric operand as zero rather than reinterpreting it.
+
+The defect predates indexed array opcodes and was invisible while few loops
+compiled; the presence of an array read in the same loop was enough to change
+the answer. `tests/vm_value_semantics.sh` compares each operator inside a
+compiled loop against the same expression at top level.
+
+### Reading a str Block field inside a compiled loop was a use-after-free
+
+`scope_get` hands back a borrowed alias of a field's own storage, while every
+VM string register owns one reference and releases it at the end of the
+statement. Reading `obj.name` in a compiled loop therefore freed the field
+itself, and the loop went on to read reused heap — silently, with no
+diagnostic, producing whatever bytes the allocator had put there.
+
+The field callback now retains before the value crosses into the VM, the same
+rule `method_try_inline` already applied to an inlined `return field`. The
+value-typed field opcode releases rather than strands a reference in the case
+its compile-time guarantee is ever violated.
+
+### Block fields execute in the bytecode VM
+
+A bare identifier inside a Block method is the instance's own field, and the
+resolver leaves it without a stack slot. Any such read or write rejected the
+whole enclosing loop, so a method that touched one of its own fields ran in the
+tree walker no matter what else it contained. A loop doing nothing but
+`total = total + i` on a field measured 340 ms where the same loop over a local
+measured 58 ms.
+
+These now compile to the existing field opcodes. A compile-time probe reads the
+Block declaration's AST — the declared type, never the current value — and
+admits a field only when that type is `int`, `float` or `bool`, so no string,
+array or `dyn` ownership crosses the VM boundary through this path. `prst`
+fields are refused: they carry pool synchronisation and, in thread clones,
+locking that the field opcodes do not perform. Fields proven to be value-typed
+use an opcode that keeps its destination register off the string band, removing
+a release before every field read.
+
+The probe runs only while a chunk is being built. Nothing it does is on the
+per-iteration path.
+
+### Logical operators compile
+
+`!`, `&&` and `||` had no compiler support: the unary form reached
+`compile_expr` with a null right operand and the operator table ended at `>=`.
+A single `!` anywhere in a loop body demoted the entire loop. In one real
+program a two-million-iteration loop went from 0.07 s to 0.45 s for exactly
+that reason.
+
+They compile to two opcodes rather than one, because the evaluator applies two
+different truthiness rules and the VM has to reproduce each: under `!` a `0.0`
+float is false, while under `&&` and `||` every non-nil value that is not a
+bool or an int is true. Short-circuit evaluation is preserved. Regression
+coverage runs eleven operand combinations inside a compiled loop and at top
+level and requires both to agree.
+
+### Calls cost two fewer dispatches
+
+A literal argument is emitted straight into the call's argument window instead
+of into a temporary that is then moved, and the result register joins the
+string band only when the callee's declared return type could produce a string.
+Both are decided while compiling.
 
 ### Fixed primitive arrays execute in the bytecode VM
 
@@ -31,6 +110,22 @@ Regression coverage exercises global and Block-owned arrays, array parameters,
 all three primitive element types, read/write parity, bounds-before-RHS order,
 type errors, and the unchanged `str arr`/`dyn` fallbacks. Sanitizer stress runs
 cover 100 million indexed reads and writes.
+
+### Returns from hot loops propagate to the owning function
+
+Standalone `while` chunks now return both a `Value` and an explicit
+`did_return` signal to the tree evaluator. Previously `OP_RETURN_VAL` stopped
+`vm_run` but discarded its register, so execution resumed after the loop and a
+later return could replace the intended result. The defect predated indexed
+array opcodes, but array-heavy loops had normally failed bytecode compilation
+and hidden it on the evaluator path.
+
+`NODE_WHILE` now translates the VM signal into the existing `rt->ret` contract.
+The loop stays in bytecode: no return-bearing chunk is demoted. The signal exits
+nested loops correctly, distinguishes normal completion from `return nil`, and
+keeps the existing mutual-tail-call protection. Regression coverage includes
+unconditional, conditional, nested and array-bearing returns plus 2,000 mutual
+tail calls.
 
 ### Block fields and methods have separate namespaces
 

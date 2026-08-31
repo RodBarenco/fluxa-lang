@@ -14,6 +14,83 @@
 /* ── Compiler: ASTNode → Chunk ───────────────────────────────────────────── */
 static void compile_node(Chunk *c, ASTNode *node);
 
+static int expr_may_string(const ASTNode *node) {
+    if (!node) return 0;
+    switch (node->type) {
+        case NODE_STRING_LIT:
+        case NODE_IDENTIFIER:
+        case NODE_MEMBER_ACCESS:
+        case NODE_MEMBER_CALL:
+        case NODE_FUNC_CALL:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void mark_string_reg(Chunk *c, uint16_t reg) {
+    if (reg >= CHUNK_MAX_REG) { c->ok = 0; return; }
+    c->string_regs[reg >> 3] |= (unsigned char)(1u << (reg & 7));
+}
+
+static void emit_string_drops(Chunk *c, uint16_t first, uint16_t end) {
+    if (end > CHUNK_MAX_REG) end = CHUNK_MAX_REG;
+    for (uint16_t reg = first; reg < end; reg++) {
+        unsigned char mask = (unsigned char)(1u << (reg & 7));
+        if (!(c->string_regs[reg >> 3] & mask)) continue;
+        Instruction drop;
+        drop.op=OP_DROP_STR; drop.a=reg; drop.b=0; drop.c=0; drop.offset=0;
+        chunk_emit(c, drop);
+        c->string_regs[reg >> 3] &= (unsigned char)~mask;
+    }
+}
+
+/* Emit a literal directly into `dst`.  The caller uses this to fill a call's
+ * argument window without the extra MOVE that compile_expr()'s fresh temporary
+ * would need.  Only literals qualify: they cannot re-enter compile_expr and so
+ * cannot nest another call inside the window that is being built. */
+static int compile_literal_into(Chunk *c, ASTNode *node, uint16_t dst) {
+    if (!node) return 0;
+    Instruction i; i.a=dst; i.c=0; i.offset=0;
+    switch (node->type) {
+        case NODE_INT_LIT:
+            i.op=OP_LOADK; i.b=(uint16_t)chunk_add_const_int(c, node->as.integer.value); break;
+        case NODE_FLOAT_LIT:
+            i.op=OP_LOADK; i.b=(uint16_t)chunk_add_const_float(c, node->as.real.value); break;
+        case NODE_BOOL_LIT:
+            i.op=OP_LOADK; i.b=(uint16_t)chunk_add_const_bool(c, node->as.boolean.value); break;
+        case NODE_STRING_LIT:
+            i.op=OP_LOADK_STR; i.b=(uint16_t)chunk_add_const_str(c, node->as.str.value); break;
+        default: return 0;
+    }
+    if (!c->ok) return 0;
+    if (node->type == NODE_STRING_LIT) mark_string_reg(c, dst);
+    chunk_emit(c, i);
+    return 1;
+}
+
+static uint16_t alloc_reg(Chunk *c) {
+    if (c->next_reg >= CHUNK_MAX_REG) {
+        c->ok = 0;
+        return 0;
+    }
+    uint16_t reg = c->next_reg++;
+    if (c->next_reg > c->peak_reg) c->peak_reg = c->next_reg;
+    return reg;
+}
+
+static int reserve_regs(Chunk *c, int count, uint16_t *first) {
+    if (count < 0 || count > 255 ||
+        (unsigned)c->next_reg + (unsigned)count > CHUNK_MAX_REG) {
+        c->ok = 0;
+        return 0;
+    }
+    *first = c->next_reg;
+    c->next_reg = (uint16_t)(c->next_reg + count);
+    if (c->next_reg > c->peak_reg) c->peak_reg = c->next_reg;
+    return 1;
+}
+
 static int chunk_add_method_key(Chunk *c, const char *owner,
                                 const char *method) {
     BlockInstance *inst = block_inst_find(owner);
@@ -42,31 +119,53 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
     switch (node->type) {
         case NODE_INT_LIT: {
             int k = chunk_add_const_int(c, node->as.integer.value);
-            uint16_t dst = c->next_reg++;
+            uint16_t dst = alloc_reg(c);
             Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint16_t)k; i.c=0; i.offset=0;
             chunk_emit(c, i); return dst;
         }
         case NODE_FLOAT_LIT: {
             int k = chunk_add_const_float(c, node->as.real.value);
-            uint16_t dst = c->next_reg++;
+            uint16_t dst = alloc_reg(c);
             Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint16_t)k; i.c=0; i.offset=0;
             chunk_emit(c, i); return dst;
         }
         case NODE_BOOL_LIT: {
             int k = chunk_add_const_bool(c, node->as.boolean.value);
-            uint16_t dst = c->next_reg++;
+            uint16_t dst = alloc_reg(c);
             Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint16_t)k; i.c=0; i.offset=0;
             chunk_emit(c, i); return dst;
         }
         case NODE_STRING_LIT: {
             int k = chunk_add_const_str(c, node->as.str.value);
-            uint16_t dst = c->next_reg++;
-            Instruction i; i.op=OP_LOADK; i.a=dst; i.b=(uint16_t)k; i.c=0; i.offset=0;
+            uint16_t dst = alloc_reg(c);
+            mark_string_reg(c, dst);
+            Instruction i; i.op=OP_LOADK_STR; i.a=dst; i.b=(uint16_t)k; i.c=0; i.offset=0;
             chunk_emit(c, i); return dst;
         }
         case NODE_IDENTIFIER: {
-            if (node->resolved_offset < 0) { c->ok = 0; return 0; }
-            return (uint16_t)node->resolved_offset;
+            if (node->resolved_offset >= 0)
+                return (uint16_t)node->resolved_offset;
+            /* Bare name the resolver left unmapped.  Inside a Block method
+             * this is the instance's own field; the tree walker reaches it
+             * via rt->current_instance.  Compile it to the existing field
+             * opcode instead of demoting the whole loop. */
+            int prim = 0;
+            const char *owner = c->probe_cb
+                ? c->probe_cb(c->indexable_rt, VM_PROBE_BARE_FIELD, NULL,
+                              node->as.str.value, &prim)
+                : NULL;
+            if (!owner) { c->ok = 0; return 0; }
+            int owner_k = chunk_add_const_str(c, owner);
+            int field_k = chunk_add_const_str(c, node->as.str.value);
+            if (!c->ok) return 0;
+            uint16_t dst = alloc_reg(c);
+            Instruction ins;
+            ins.op = prim ? OP_GET_FIELD_V : OP_GET_FIELD;
+            if (!prim) mark_string_reg(c, dst);
+            ins.a=dst;
+            ins.b=(uint16_t)owner_k; ins.c=(uint16_t)field_k; ins.offset=0;
+            chunk_emit(c, ins);
+            return dst;
         }
         case NODE_ARR_ACCESS: {
             const char *name = node->as.arr_access.arr_name;
@@ -80,7 +179,7 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
             if (!c->ok) return 0;
             int name_k = chunk_add_index_name(c, name);
             if (!c->ok) return 0;
-            uint16_t dst = c->next_reg++;
+            uint16_t dst = alloc_reg(c);
             Instruction ins; ins.op=OP_GET_INDEX; ins.a=dst;
             ins.b=(uint16_t)name_k; ins.c=index_reg;
             ins.offset=node->resolved_offset;
@@ -88,9 +187,53 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
             return dst;
         }
         case NODE_BINARY_EXPR: {
+            const char *lop = node->as.binary.op;
+            if (!strcmp(lop, "!")) {
+                uint16_t src = compile_expr(c, node->as.binary.left);
+                if (!c->ok) return 0;
+                uint16_t dst = alloc_reg(c);
+                if (!c->ok) return 0;
+                Instruction n; n.op=OP_NOT; n.a=dst; n.b=src; n.c=0; n.offset=0;
+                chunk_emit(c, n);
+                return dst;
+            }
+            if (!strcmp(lop, "&&") || !strcmp(lop, "||")) {
+                int is_and = (lop[0] == '&');
+                uint16_t lr = compile_expr(c, node->as.binary.left);
+                if (!c->ok) return 0;
+                uint16_t tl = alloc_reg(c);
+                if (!c->ok) return 0;
+                Instruction t1; t1.op=OP_TRUTHY; t1.a=tl; t1.b=lr; t1.c=0; t1.offset=0;
+                chunk_emit(c, t1);
+                /* One destination written on both paths, allocated before the
+                 * branch so the short-circuit and the evaluated-right arms
+                 * agree on the register. */
+                uint16_t dst = alloc_reg(c);
+                if (!c->ok) return 0;
+                Instruction mv; mv.op=OP_MOVE; mv.a=dst; mv.b=tl; mv.c=0; mv.offset=0;
+                chunk_emit(c, mv);
+                Instruction jf; jf.op=OP_JUMP_IF_FALSE; jf.a=tl; jf.b=0; jf.c=0; jf.offset=0;
+                int jf_idx = chunk_emit(c, jf);
+                int jmp_idx = -1;
+                if (!is_and) {
+                    /* `||` keeps the left result when it is true, so jump over
+                     * the right operand; `&&` keeps it when it is false, which
+                     * is what JUMP_IF_FALSE already does. */
+                    Instruction jmp; jmp.op=OP_JUMP; jmp.a=0; jmp.b=0; jmp.c=0; jmp.offset=0;
+                    jmp_idx = chunk_emit(c, jmp);
+                    chunk_patch(c, jf_idx, c->count);
+                }
+                uint16_t rr = compile_expr(c, node->as.binary.right);
+                if (!c->ok) return 0;
+                Instruction t2; t2.op=OP_TRUTHY; t2.a=dst; t2.b=rr; t2.c=0; t2.offset=0;
+                chunk_emit(c, t2);
+                if (is_and) chunk_patch(c, jf_idx, c->count);
+                else        chunk_patch(c, jmp_idx, c->count);
+                return dst;
+            }
             uint16_t r1 = compile_expr(c, node->as.binary.left);
             uint16_t r2 = compile_expr(c, node->as.binary.right);
-            uint16_t dst = c->next_reg++;
+            uint16_t dst = alloc_reg(c);
             Instruction i; i.a=dst; i.b=r1; i.c=r2; i.offset=0;
             const char *op = node->as.binary.op;
             if      (!strcmp(op,"+"))  i.op = OP_ADD;
@@ -110,11 +253,19 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
         }
         case NODE_MEMBER_ACCESS: {
             /* inst.field as expression → OP_GET_FIELD */
+            int prim = 0;
+            if (c->probe_cb)
+                (void)c->probe_cb(c->indexable_rt, VM_PROBE_FIELD,
+                                  node->as.member_access.owner,
+                                  node->as.member_access.field, &prim);
             int owner_k = chunk_add_const_str(c, node->as.member_access.owner);
             int field_k = chunk_add_const_str(c, node->as.member_access.field);
             if (!c->ok) return 0;
-            uint16_t dst = c->next_reg++;
-            Instruction ins; ins.op=OP_GET_FIELD; ins.a=dst;
+            uint16_t dst = alloc_reg(c);
+            Instruction ins;
+            ins.op = prim ? OP_GET_FIELD_V : OP_GET_FIELD;
+            if (!prim) mark_string_reg(c, dst);
+            ins.a=dst;
             ins.b=(uint16_t)owner_k; ins.c=(uint16_t)field_k; ins.offset=0;
             chunk_emit(c, ins);
             return dst;
@@ -127,28 +278,49 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
             if (!c->ok) return 0;
             /* Evaluate args into consecutive temp registers */
             int argc = node->as.member_call.arg_count;
-            uint16_t first_arg = c->next_reg;
+            uint16_t first_arg;
+            if (!reserve_regs(c, argc, &first_arg)) return 0;
+            uint16_t arg_temp_base = c->next_reg;
             for (int i = 0; i < argc; i++) {
+                c->next_reg = arg_temp_base;
+                /* A literal goes straight into its slot: the extra
+                 * temporary plus MOVE cost one dispatch per argument
+                 * on every call. */
+                if (compile_literal_into(c, node->as.member_call.args[i],
+                                         first_arg + (uint16_t)i)) continue;
+                if (!c->ok) return 0;
                 uint16_t ar = compile_expr(c, node->as.member_call.args[i]);
                 if (!c->ok) return 0;
                 /* Move into consecutive slots if not already there */
                 if (ar != first_arg + (uint16_t)i) {
                     Instruction mv;
-                    mv.op=(Opcode)OP_MOVE; mv.a=first_arg+(uint16_t)i;
-                    mv.b=ar; mv.c=0; mv.offset=0;
+                    mv.op=expr_may_string(node->as.member_call.args[i]) ? OP_MOVE_STR : OP_MOVE;
+                    mv.a=first_arg+(uint16_t)i; mv.b=ar; mv.c=0; mv.offset=0;
                     chunk_emit(c, mv);
+                    if (mv.op == OP_MOVE_STR) mark_string_reg(c, mv.a);
                 }
-                c->next_reg = first_arg + (uint16_t)i + 1;
             }
-            uint16_t dst = c->next_reg++;
-            /* Pack first_arg_reg and argc into offset field.
-             * Both fit in 16 bits each; combined in a 32-bit int. */
+            c->next_reg = arg_temp_base;
+            uint16_t dst = alloc_reg(c);
+            /* Only a callee whose declared return type could be a string
+             * needs the result register on the string band and the drop that
+             * follows it — one dispatch per call. */
+            int ret_str = 1;
+            if (c->probe_cb) {
+                int f = 0;
+                if (c->probe_cb(c->indexable_rt, VM_PROBE_RET,
+                                node->as.member_call.owner,
+                                node->as.member_call.method, &f) && f)
+                    ret_str = 0;
+            }
+            if (ret_str) mark_string_reg(c, dst);
+            /* Pack the complete 16-bit first register and argument count. */
             Instruction ins;
             ins.op = OP_CALL_METHOD;
             ins.a  = dst;
             ins.b  = (uint16_t)owner_k;
             ins.c  = (uint16_t)method_k;
-            ins.offset = ((int)first_arg << 8) | (argc & 0xFF);
+            ins.offset = ((int)first_arg << 16) | (argc & 0xFFFF);
             chunk_emit(c, ins);
             return dst;
         }
@@ -157,19 +329,37 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
             int fn_k = chunk_add_const_str(c, node->as.list.name);
             if (!c->ok) return 0;
             int argc = node->as.list.count;
-            uint16_t first_arg = c->next_reg;
+            uint16_t first_arg;
+            if (!reserve_regs(c, argc, &first_arg)) return 0;
+            uint16_t arg_temp_base = c->next_reg;
             for (int i = 0; i < argc; i++) {
+                c->next_reg = arg_temp_base;
+                /* A literal goes straight into its slot: the extra
+                 * temporary plus MOVE cost one dispatch per argument
+                 * on every call. */
+                if (compile_literal_into(c, node->as.list.children[i],
+                                         first_arg + (uint16_t)i)) continue;
+                if (!c->ok) return 0;
                 uint16_t ar = compile_expr(c, node->as.list.children[i]);
                 if (!c->ok) return 0;
                 if (ar != first_arg + (uint16_t)i) {
                     Instruction mv;
-                    mv.op=OP_MOVE; mv.a=first_arg+(uint16_t)i;
-                    mv.b=ar; mv.c=0; mv.offset=0;
+                    mv.op=expr_may_string(node->as.list.children[i]) ? OP_MOVE_STR : OP_MOVE;
+                    mv.a=first_arg+(uint16_t)i; mv.b=ar; mv.c=0; mv.offset=0;
                     chunk_emit(c, mv);
+                    if (mv.op == OP_MOVE_STR) mark_string_reg(c, mv.a);
                 }
-                c->next_reg = first_arg + (uint16_t)i + 1;
             }
-            uint16_t dst = c->next_reg++;
+            c->next_reg = arg_temp_base;
+            uint16_t dst = alloc_reg(c);
+            int ret_str = 1;
+            if (c->probe_cb) {
+                int f = 0;
+                if (c->probe_cb(c->indexable_rt, VM_PROBE_RET, NULL,
+                                node->as.list.name, &f) && f)
+                    ret_str = 0;
+            }
+            if (ret_str) mark_string_reg(c, dst);
             Instruction ins;
             ins.op = OP_CALL_FUNC;
             ins.a  = dst;
@@ -197,12 +387,30 @@ static void compile_node(Chunk *c, ASTNode *node) {
             uint16_t src = compile_expr(c, val);
             if (!c->ok) break;
             if (node->resolved_offset >= 0) {
-                Instruction i; i.op=OP_MOVE; i.a=(uint16_t)node->resolved_offset;
+                Instruction i;
+                i.op=expr_may_string(val) ? OP_MOVE_STR : OP_MOVE;
+                i.a=(uint16_t)node->resolved_offset;
                 i.b=src; i.c=0; i.offset=0;
                 chunk_emit(c, i);
-            } else {
-                c->ok = 0;
+                break;
             }
+            /* Same bare-name case as the read side: store straight into the
+             * current instance's field via the existing field opcode. */
+            const char *vname = (node->type == NODE_VAR_DECL)
+                              ? node->as.var_decl.var_name
+                              : node->as.assign.var_name;
+            int vprim = 0;
+            const char *owner = c->probe_cb
+                ? c->probe_cb(c->indexable_rt, VM_PROBE_BARE_FIELD, NULL,
+                              vname, &vprim)
+                : NULL;
+            if (!owner) { c->ok = 0; break; }
+            int owner_k = chunk_add_const_str(c, owner);
+            int field_k = chunk_add_const_str(c, vname);
+            if (!c->ok) break;
+            Instruction si; si.op=OP_SET_FIELD; si.a=src;
+            si.b=(uint16_t)owner_k; si.c=(uint16_t)field_k; si.offset=0;
+            chunk_emit(c, si);
             break;
         }
         case NODE_BLOCK_STMT:
@@ -217,6 +425,8 @@ static void compile_node(Chunk *c, ASTNode *node) {
             if (!c->ok) return;
             Instruction jf; jf.op=OP_JUMP_IF_FALSE; jf.a=cond_reg; jf.b=0; jf.c=0; jf.offset=0;
             int jf_idx = chunk_emit(c, jf);
+            if (!(c->string_regs[cond_reg >> 3] & (1u << (cond_reg & 7))))
+                emit_string_drops(c, start_reg, c->next_reg);
             c->next_reg = start_reg;
             compile_node(c, node->as.if_stmt.then_body);
             if (!c->ok) return;
@@ -239,6 +449,8 @@ static void compile_node(Chunk *c, ASTNode *node) {
             if (!c->ok) return;
             Instruction jf; jf.op=OP_JUMP_IF_FALSE; jf.a=cond_reg; jf.b=0; jf.c=0; jf.offset=0;
             int jf_idx = chunk_emit(c, jf);
+            if (!(c->string_regs[cond_reg >> 3] & (1u << (cond_reg & 7))))
+                emit_string_drops(c, start_reg, c->next_reg);
             c->next_reg = start_reg;
             compile_node(c, node->as.while_stmt.body);
             if (!c->ok) return;
@@ -255,25 +467,47 @@ static void compile_node(Chunk *c, ASTNode *node) {
                                                 node->as.member_call.method);
             if (!c->ok) break;
             int argc = node->as.member_call.arg_count;
-            uint16_t first_arg = c->next_reg;
+            uint16_t first_arg;
+            if (!reserve_regs(c, argc, &first_arg)) return;
+            uint16_t arg_temp_base = c->next_reg;
             for (int i = 0; i < argc; i++) {
+                c->next_reg = arg_temp_base;
+                /* A literal goes straight into its slot: the extra
+                 * temporary plus MOVE cost one dispatch per argument
+                 * on every call. */
+                if (compile_literal_into(c, node->as.member_call.args[i],
+                                         first_arg + (uint16_t)i)) continue;
+                if (!c->ok) return;
                 uint16_t ar = compile_expr(c, node->as.member_call.args[i]);
                 if (!c->ok) return;
                 if (ar != first_arg + (uint16_t)i) {
                     Instruction mv;
-                    mv.op=OP_MOVE; mv.a=first_arg+(uint16_t)i;
-                    mv.b=ar; mv.c=0; mv.offset=0;
+                    mv.op=expr_may_string(node->as.member_call.args[i]) ? OP_MOVE_STR : OP_MOVE;
+                    mv.a=first_arg+(uint16_t)i; mv.b=ar; mv.c=0; mv.offset=0;
                     chunk_emit(c, mv);
+                    if (mv.op == OP_MOVE_STR) mark_string_reg(c, mv.a);
                 }
-                c->next_reg = first_arg + (uint16_t)i + 1;
             }
-            uint16_t dst = c->next_reg++;
+            c->next_reg = arg_temp_base;
+            uint16_t dst = alloc_reg(c);
+            /* Only a callee whose declared return type could be a string
+             * needs the result register on the string band and the drop that
+             * follows it — one dispatch per call. */
+            int ret_str = 1;
+            if (c->probe_cb) {
+                int f = 0;
+                if (c->probe_cb(c->indexable_rt, VM_PROBE_RET,
+                                node->as.member_call.owner,
+                                node->as.member_call.method, &f) && f)
+                    ret_str = 0;
+            }
+            if (ret_str) mark_string_reg(c, dst);
             Instruction ins;
             ins.op = OP_CALL_METHOD;
             ins.a  = dst;
             ins.b  = (uint16_t)owner_k;
             ins.c  = (uint16_t)method_k;
-            ins.offset = ((int)first_arg << 8) | (argc & 0xFF);
+            ins.offset = ((int)first_arg << 16) | (argc & 0xFFFF);
             chunk_emit(c, ins);
             break;
         }
@@ -322,19 +556,37 @@ static void compile_node(Chunk *c, ASTNode *node) {
             int fn_k = chunk_add_const_str(c, node->as.list.name);
             if (!c->ok) break;
             int argc = node->as.list.count;
-            uint16_t first_arg = c->next_reg;
+            uint16_t first_arg;
+            if (!reserve_regs(c, argc, &first_arg)) return;
+            uint16_t arg_temp_base = c->next_reg;
             for (int i = 0; i < argc; i++) {
+                c->next_reg = arg_temp_base;
+                /* A literal goes straight into its slot: the extra
+                 * temporary plus MOVE cost one dispatch per argument
+                 * on every call. */
+                if (compile_literal_into(c, node->as.list.children[i],
+                                         first_arg + (uint16_t)i)) continue;
+                if (!c->ok) return;
                 uint16_t ar = compile_expr(c, node->as.list.children[i]);
                 if (!c->ok) return;
                 if (ar != first_arg + (uint16_t)i) {
                     Instruction mv;
-                    mv.op=OP_MOVE; mv.a=first_arg+(uint16_t)i;
-                    mv.b=ar; mv.c=0; mv.offset=0;
+                    mv.op=expr_may_string(node->as.list.children[i]) ? OP_MOVE_STR : OP_MOVE;
+                    mv.a=first_arg+(uint16_t)i; mv.b=ar; mv.c=0; mv.offset=0;
                     chunk_emit(c, mv);
+                    if (mv.op == OP_MOVE_STR) mark_string_reg(c, mv.a);
                 }
-                c->next_reg = first_arg + (uint16_t)i + 1;
             }
-            uint16_t dst = c->next_reg++;
+            c->next_reg = arg_temp_base;
+            uint16_t dst = alloc_reg(c);
+            int ret_str = 1;
+            if (c->probe_cb) {
+                int f = 0;
+                if (c->probe_cb(c->indexable_rt, VM_PROBE_RET, NULL,
+                                node->as.list.name, &f) && f)
+                    ret_str = 0;
+            }
+            if (ret_str) mark_string_reg(c, dst);
             Instruction ins;
             ins.op = OP_CALL_FUNC;
             ins.a  = dst;
@@ -362,40 +614,43 @@ static void compile_node(Chunk *c, ASTNode *node) {
             c->ok = 0;
             break;
     }
+    emit_string_drops(c, start_reg, c->next_reg);
     c->next_reg = start_reg;
 }
 
 int chunk_compile_loop(Chunk *c, ASTNode *loop_node,
-                       vm_indexable_cb_t indexable_cb, void *indexable_rt) {
+                       vm_indexable_cb_t indexable_cb,
+                       vm_probe_cb_t probe_cb, void *indexable_rt) {
     chunk_init(c);
     c->indexable_cb = indexable_cb;
+    c->probe_cb = probe_cb;
     c->indexable_rt = indexable_rt;
     compile_node(c, loop_node);
     if (!c->ok) { chunk_free(c); return 0; }
+    c->next_reg = c->peak_reg;
     Instruction ret; ret.op=OP_RETURN; ret.a=0; ret.b=0; ret.c=0; ret.offset=0;
     chunk_emit(c, ret);
     return 1;
 }
 
 int chunk_compile_fn(Chunk *c, ASTNode *fn_node,
-                     vm_indexable_cb_t indexable_cb, void *indexable_rt) {
+                     vm_indexable_cb_t indexable_cb,
+                     vm_probe_cb_t probe_cb, void *indexable_rt) {
     if (!fn_node || fn_node->type != NODE_FUNC_DECL) return 0;
     chunk_init(c);
     c->indexable_cb = indexable_cb;
+    c->probe_cb = probe_cb;
     c->indexable_rt = indexable_rt;
     ASTNode *body = fn_node->as.func_decl.body;
     /* Params are pre-bound at resolved_offset 0..param_count-1 by caller.
      * next_reg starts at 128 to avoid collision with param/local slots. */
-    uint16_t peak_reg = 128;
     for (int i = 0; i < body->as.list.count; i++) {
         compile_node(c, body->as.list.children[i]);
         if (!c->ok) { chunk_free(c); return 0; }
-        /* Track peak before reset — fn_regs must be large enough */
-        if (c->next_reg > peak_reg) peak_reg = c->next_reg;
         c->next_reg = 128;  /* reset temps after each statement */
     }
     /* Store peak so caller can allocate fn_regs correctly */
-    c->next_reg = peak_reg;
+    c->next_reg = c->peak_reg;
     /* Implicit nil return if no explicit OP_RETURN_VAL/NIL emitted */
     Instruction ret; ret.op=OP_RETURN_NIL; ret.a=0; ret.b=0; ret.c=0; ret.offset=0;
     chunk_emit(c, ret);
@@ -410,10 +665,34 @@ static inline int vm_truthy(Value v) {
     return 0;
 }
 
+/* The `!` operator's rule in the evaluator: bool, int and float answer by
+ * value, nil is false, anything else is true. */
+static inline int vm_truthy_not(Value v) {
+    if (v.type == VAL_BOOL)  return v.as.boolean;
+    if (v.type == VAL_INT)   return v.as.integer != 0;
+    if (v.type == VAL_FLOAT) return v.as.real != 0.0;
+    if (v.type == VAL_NIL)   return 0;
+    return 1;
+}
+
+/* The `&&` / `||` rule in the evaluator, which is deliberately not the same:
+ * only bool and int answer by value, and everything else is true unless it is
+ * nil — so a 0.0 float is true here and false under `!`. */
+static inline int vm_truthy_logic(Value v) {
+    if (v.type == VAL_BOOL) return v.as.boolean;
+    if (v.type == VAL_INT)  return v.as.integer != 0;
+    return v.type != VAL_NIL;
+}
+
 static inline Value vm_arith(Value l, Value r, Opcode op) {
     int both_int = (l.type == VAL_INT && r.type == VAL_INT);
-    double lv = (l.type == VAL_INT) ? (double)l.as.integer : l.as.real;
-    double rv = (r.type == VAL_INT) ? (double)r.as.integer : r.as.real;
+    /* Same union hazard as vm_compare: only int and float carry a numeric
+     * payload.  The evaluator raises on anything else; answer deterministically
+     * here rather than reinterpreting indeterminate bytes. */
+    double lv = (l.type == VAL_INT)   ? (double)l.as.integer
+              : (l.type == VAL_FLOAT) ? l.as.real : 0.0;
+    double rv = (r.type == VAL_INT)   ? (double)r.as.integer
+              : (r.type == VAL_FLOAT) ? r.as.real : 0.0;
     double res = 0;
     switch (op) {
         case OP_ADD: res = lv + rv; break;
@@ -442,22 +721,35 @@ static inline Value vm_compare(Value l, Value r, Opcode op) {
             default: break;
         }
     }
-    /* String equality in the tree-walker is content-based. Keep the VM
-     * identical: treating the Value union as a double here compared pointer
-     * bits by accident, so separately allocated equal strings failed only
-     * after a while/function had been compiled to bytecode. */
-    if (l.type == VAL_STRING && r.type == VAL_STRING) {
-        const char *ls = l.as.string ? l.as.string : "";
-        const char *rs = r.as.string ? r.as.string : "";
-        if (op == OP_EQ)  return val_bool(strcmp(ls, rs) == 0);
-        if (op == OP_NEQ) return val_bool(strcmp(ls, rs) != 0);
-        return val_bool(0);
+    /* Equality mirrors the evaluator member for member.  Reaching the numeric
+     * path below with a bool, nil or Block operand read Value.as as a double,
+     * and val_bool() only ever writes the int member of that union, so the
+     * remaining bytes were indeterminate: `flag == false` inside a compiled
+     * loop answered from whatever the register had held before.  It stayed
+     * hidden while few loops compiled. */
+    if (op == OP_EQ || op == OP_NEQ) {
+        int eq;
+        if      (l.type == VAL_NIL && r.type == VAL_NIL)         eq = 1;
+        else if (l.type == VAL_NIL || r.type == VAL_NIL)         eq = 0;
+        else if (l.type == VAL_INT    && r.type == VAL_INT)      eq = l.as.integer == r.as.integer;
+        else if (l.type == VAL_FLOAT  && r.type == VAL_FLOAT)    eq = l.as.real    == r.as.real;
+        else if (l.type == VAL_BOOL   && r.type == VAL_BOOL)     eq = l.as.boolean == r.as.boolean;
+        else if (l.type == VAL_STRING && r.type == VAL_STRING) {
+            const char *ls = l.as.string ? l.as.string : "";
+            const char *rs = r.as.string ? r.as.string : "";
+            eq = strcmp(ls, rs) == 0;
+        }
+        else eq = 0;
+        return val_bool(op == OP_EQ ? eq : !eq);
     }
+    /* Ordering is numeric only — the evaluator raises on anything else, so
+     * never reinterpret a non-numeric union here. */
+    if ((l.type != VAL_INT && l.type != VAL_FLOAT) ||
+        (r.type != VAL_INT && r.type != VAL_FLOAT))
+        return val_bool(0);
     double lv = (l.type==VAL_INT)?(double)l.as.integer:l.as.real;
     double rv = (r.type==VAL_INT)?(double)r.as.integer:r.as.real;
     switch (op) {
-        case OP_EQ:  return val_bool(lv == rv);
-        case OP_NEQ: return val_bool(lv != rv);
         case OP_LT:  return val_bool(lv <  rv);
         case OP_GT:  return val_bool(lv >  rv);
         case OP_LTE: return val_bool(lv <= rv);
@@ -465,6 +757,32 @@ static inline Value vm_compare(Value l, Value r, Opcode op) {
         default: break;
     }
     return val_bool(0);
+}
+
+/* Every VM register that contains a string owns one reference.  Calls and
+ * field reads return owned Values; constants and register moves are borrowed
+ * and therefore use vm_reg_copy().  Keeping this rule at the register write
+ * boundary prevents aliases from being released twice during frame teardown. */
+static inline void vm_reg_take(Value *dst, Value value) {
+    if (dst->type == VAL_STRING && dst->as.string)
+        fxstr_release(dst->as.string);
+    *dst = value;
+}
+
+/* Release the register's previous string reference without storing anything.
+ * Callers that immediately overwrite the slot with a callee's return value use
+ * this plus a direct assignment instead of vm_reg_take(dst, f(...)): passing
+ * the 24-byte Value as an argument forces it through a temporary, which is
+ * measurable on call-heavy and field-heavy loops. */
+static inline void vm_reg_clear(Value *dst) {
+    if (dst->type == VAL_STRING && dst->as.string)
+        fxstr_release(dst->as.string);
+}
+
+static inline void vm_reg_copy(Value *dst, Value value) {
+    if (value.type == VAL_STRING && value.as.string)
+        value.as.string = fxstr_retain(value.as.string);
+    vm_reg_take(dst, value);
 }
 
 /* ── VM execution ────────────────────────────────────────────────────────── */
@@ -501,7 +819,9 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
         &&FN_CALL_METHOD, &&FN_CALL_FUNC,
         &&FN_GET_FIELD, &&FN_SET_FIELD,
         &&FN_GET_INDEX, &&FN_PREP_INDEX, &&FN_SET_INDEX,
-        &&FN_RETURN_VAL, &&FN_RETURN_NIL
+        &&FN_RETURN_VAL, &&FN_RETURN_NIL,
+        &&FN_LOADK_STR, &&FN_MOVE_STR, &&FN_DROP_STR,
+        &&FN_GET_FIELD_V, &&FN_NOT, &&FN_TRUTHY
     };
 
     #define FNEXT() do { if (ip >= end) goto FN_RETURN_NIL;                          goto *fn_dispatch[(ip++)->op]; } while(0)
@@ -514,6 +834,14 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
 
     FN_LOADK: { R[fn_a] = c->constants[fn_b]; FNEXT(); }
     FN_MOVE:  { R[fn_a] = R[fn_b]; FNEXT(); }
+    FN_LOADK_STR: { vm_reg_copy(&R[fn_a], c->constants[fn_b]); FNEXT(); }
+    FN_MOVE_STR:  { vm_reg_copy(&R[fn_a], R[fn_b]); FNEXT(); }
+    FN_DROP_STR: {
+        if (R[fn_a].type == VAL_STRING && R[fn_a].as.string)
+            fxstr_release(R[fn_a].as.string);
+        R[fn_a] = val_nil();
+        FNEXT();
+    }
 
     FN_ADD: {
         Value *l = &R[fn_b], *r = &R[fn_c];
@@ -560,27 +888,44 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
     FN_JUMP: { ip = c->code + fn_off; FNEXT(); }
 
     FN_CALL_METHOD: {
+        vm_reg_clear(&R[fn_a]);
         if (call_cb) {
             const char *method = c->constants[fn_c].as.string;
-            int first_arg = (fn_off >> 8) & 0xFF;
-            int argc      =  fn_off       & 0xFF;
+            int first_arg = (fn_off >> 16) & 0xFFFF;
+            int argc      =  fn_off        & 0xFFFF;
             R[fn_a] = call_cb(rt_opaque, &c->constants[fn_b], method,
                               &R[first_arg], argc);
-        } else { R[fn_a].type = VAL_NIL; }
+        } else { R[fn_a] = val_nil(); }
         FNEXT();
     }
     FN_CALL_FUNC: {
+        vm_reg_clear(&R[fn_a]);
         if (call_cb) {
             const char *fn_name = c->constants[fn_b].as.string;
             R[fn_a] = call_cb(rt_opaque, NULL, fn_name, &R[fn_c], fn_off);
-        } else { R[fn_a].type = VAL_NIL; }
+        } else { R[fn_a] = val_nil(); }
+        FNEXT();
+    }
+    FN_NOT:    { R[fn_a] = val_bool(!vm_truthy_not(R[fn_b]));  FNEXT(); }
+    FN_TRUTHY: { R[fn_a] = val_bool(vm_truthy_logic(R[fn_b])); FNEXT(); }
+    FN_GET_FIELD_V: {
+        Value v = get_field_cb
+                ? get_field_cb(rt_opaque, &c->constants[fn_b],
+                               c->constants[fn_c].as.string)
+                : val_nil();
+        if (v.type > VAL_BOOL) {
+            if (v.type == VAL_STRING && v.as.string) fxstr_release(v.as.string);
+            v = val_nil();
+        }
+        R[fn_a] = v;
         FNEXT();
     }
     FN_GET_FIELD: {
+        vm_reg_clear(&R[fn_a]);
         if (get_field_cb)
             R[fn_a] = get_field_cb(rt_opaque, &c->constants[fn_b],
                                    c->constants[fn_c].as.string);
-        else R[fn_a].type = VAL_NIL;
+        else R[fn_a] = val_nil();
         FNEXT();
     }
     FN_SET_FIELD: {
@@ -591,6 +936,7 @@ Value vm_run_fn(Chunk *c, Value *fn_stack, int fn_stack_size,
     }
     FN_GET_INDEX: {
         Value nil = val_nil();
+        vm_reg_clear(&R[fn_a]);
         if (index_cb)
             R[fn_a] = index_cb(rt_opaque, VM_INDEX_GET,
                                &index_cache[fn_b],
@@ -641,39 +987,46 @@ fn_done:
     while (ip < end) {
         Instruction *ins = ip++;
         switch (ins->op) {
-            case OP_LOADK: R[ins->a] = c->constants[ins->b]; break;
-            case OP_MOVE:  R[ins->a] = R[ins->b]; break;
+            case OP_LOADK: vm_reg_copy(&R[ins->a], c->constants[ins->b]); break;
+            case OP_MOVE:  vm_reg_copy(&R[ins->a], R[ins->b]); break;
             case OP_ADD: {
                 Value *l=&R[ins->b],*r=&R[ins->c];
-                if(l->type==VAL_INT&&r->type==VAL_INT){R[ins->a].type=VAL_INT;R[ins->a].as.integer=l->as.integer+r->as.integer;}
-                else R[ins->a]=vm_arith(*l,*r,OP_ADD); break;
+                if(l->type==VAL_INT&&r->type==VAL_INT)vm_reg_take(&R[ins->a],val_int(l->as.integer+r->as.integer));
+                else vm_reg_take(&R[ins->a],vm_arith(*l,*r,OP_ADD)); break;
             }
-            case OP_SUB:   R[ins->a]=vm_arith(R[ins->b],R[ins->c],OP_SUB); break;
-            case OP_MUL:   R[ins->a]=vm_arith(R[ins->b],R[ins->c],OP_MUL); break;
-            case OP_DIV:   R[ins->a]=vm_arith(R[ins->b],R[ins->c],OP_DIV); break;
-            case OP_MOD:   R[ins->a]=vm_arith(R[ins->b],R[ins->c],OP_MOD); break;
-            case OP_EQ:    R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_EQ); break;
-            case OP_NEQ:   R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_NEQ); break;
-            case OP_LT:    R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_LT); break;
-            case OP_GT:    R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_GT); break;
-            case OP_LTE:   R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_LTE); break;
-            case OP_GTE:   R[ins->a]=vm_compare(R[ins->b],R[ins->c],OP_GTE); break;
+            case OP_SUB:   vm_reg_take(&R[ins->a],vm_arith(R[ins->b],R[ins->c],OP_SUB)); break;
+            case OP_MUL:   vm_reg_take(&R[ins->a],vm_arith(R[ins->b],R[ins->c],OP_MUL)); break;
+            case OP_DIV:   vm_reg_take(&R[ins->a],vm_arith(R[ins->b],R[ins->c],OP_DIV)); break;
+            case OP_MOD:   vm_reg_take(&R[ins->a],vm_arith(R[ins->b],R[ins->c],OP_MOD)); break;
+            case OP_EQ:    vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_EQ)); break;
+            case OP_NEQ:   vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_NEQ)); break;
+            case OP_LT:    vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_LT)); break;
+            case OP_GT:    vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_GT)); break;
+            case OP_LTE:   vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_LTE)); break;
+            case OP_GTE:   vm_reg_take(&R[ins->a],vm_compare(R[ins->b],R[ins->c],OP_GTE)); break;
             case OP_JUMP_IF_FALSE: {
                 int t=(R[ins->a].type==VAL_BOOL)?R[ins->a].as.boolean:vm_truthy(R[ins->a]);
                 if(!t) ip=c->code+ins->offset; break;
             }
             case OP_JUMP: ip=c->code+ins->offset; break;
             case OP_CALL_METHOD:
-                if(call_cb){const char *m=c->constants[ins->c].as.string;int fa=(ins->offset>>8)&0xFF,argc=ins->offset&0xFF;R[ins->a]=call_cb(rt_opaque,&c->constants[ins->b],m,&R[fa],argc);}else R[ins->a].type=VAL_NIL; break;
+                if(call_cb){const char *m=c->constants[ins->c].as.string;int fa=(ins->offset>>16)&0xFFFF,argc=ins->offset&0xFFFF;vm_reg_take(&R[ins->a],call_cb(rt_opaque,&c->constants[ins->b],m,&R[fa],argc));}else vm_reg_take(&R[ins->a],val_nil()); break;
             case OP_CALL_FUNC:
-                if(call_cb){R[ins->a]=call_cb(rt_opaque,NULL,c->constants[ins->b].as.string,&R[ins->c],ins->offset);}else R[ins->a].type=VAL_NIL; break;
+                if(call_cb){vm_reg_take(&R[ins->a],call_cb(rt_opaque,NULL,c->constants[ins->b].as.string,&R[ins->c],ins->offset));}else vm_reg_take(&R[ins->a],val_nil()); break;
             case OP_GET_FIELD:
-                if(get_field_cb)R[ins->a]=get_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string);else R[ins->a].type=VAL_NIL; break;
+                if(get_field_cb)vm_reg_take(&R[ins->a],get_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string));else vm_reg_take(&R[ins->a],val_nil()); break;
+            case OP_GET_FIELD_V: {
+                Value v=get_field_cb?get_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string):val_nil();
+                if(v.type>VAL_BOOL){if(v.type==VAL_STRING&&v.as.string)fxstr_release(v.as.string);v=val_nil();}
+                vm_reg_take(&R[ins->a],v); break;
+            }
+            case OP_NOT:    vm_reg_take(&R[ins->a], val_bool(!vm_truthy_not(R[ins->b]))); break;
+            case OP_TRUTHY: vm_reg_take(&R[ins->a], val_bool(vm_truthy_logic(R[ins->b]))); break;
             case OP_SET_FIELD:
                 if(set_field_cb)set_field_cb(rt_opaque,&c->constants[ins->b],c->constants[ins->c].as.string,R[ins->a]); break;
             case OP_GET_INDEX: {
                 Value nil=val_nil();
-                if(index_cb)R[ins->a]=index_cb(rt_opaque,VM_INDEX_GET,&index_cache[ins->b],c->constants[ins->b].as.string,R,fn_stack_size,ins->offset,R[ins->c],nil);else R[ins->a]=nil;
+                if(index_cb)vm_reg_take(&R[ins->a],index_cb(rt_opaque,VM_INDEX_GET,&index_cache[ins->b],c->constants[ins->b].as.string,R,fn_stack_size,ins->offset,R[ins->c],nil));else vm_reg_take(&R[ins->a],nil);
                 if(index_cache[ins->b].failed)return retval;break;
             }
             case OP_PREP_INDEX: {
@@ -689,6 +1042,12 @@ fn_done:
             case OP_RETURN_VAL: return R[ins->a];
             case OP_RETURN_NIL: return retval;
             case OP_RETURN:     return retval;
+            case OP_LOADK_STR: vm_reg_copy(&R[ins->a], c->constants[ins->b]); break;
+            case OP_MOVE_STR:  vm_reg_copy(&R[ins->a], R[ins->b]); break;
+            case OP_DROP_STR:
+                if (R[ins->a].type==VAL_STRING && R[ins->a].as.string)
+                    fxstr_release(R[ins->a].as.string);
+                R[ins->a]=val_nil(); break;
         }
     }
     return retval;
@@ -705,6 +1064,9 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
            vm_store_cb_t     store_cb,
            vm_index_cb_t     index_cb) {
     (void)scope;
+
+    c->return_value = val_nil();
+    c->did_return = 0;
 
     Instruction *ip  = c->code;
     Instruction *end = c->code + c->count;
@@ -728,7 +1090,9 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         &&L_CALL_METHOD, &&L_CALL_FUNC,
         &&L_GET_FIELD,   &&L_SET_FIELD,
         &&L_GET_INDEX,   &&L_PREP_INDEX, &&L_SET_INDEX,
-        &&L_RETURN_VAL,  &&L_RETURN_NIL
+        &&L_RETURN_VAL,  &&L_RETURN_NIL,
+        &&L_LOADK_STR,   &&L_MOVE_STR, &&L_DROP_STR,
+        &&L_GET_FIELD_V, &&L_NOT, &&L_TRUTHY
     };
 
     #define NEXT() do { if (ip >= end) goto L_RETURN; \
@@ -741,6 +1105,7 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
     NEXT();
 
     L_LOADK: { R[i_a] = c->constants[i_b]; NEXT(); }
+    L_LOADK_STR: { vm_reg_copy(&R[i_a], c->constants[i_b]); NEXT(); }
     L_MOVE:  {
         /* Variable-register store (dst < 128 = param/local band; temps live
          * at >= 128). When a VAL_DYN is written over or written in, delegate
@@ -750,7 +1115,15 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         if (store_cb && i_a < 128 &&
             (R[i_a].type == VAL_DYN || R[i_b].type == VAL_DYN))
             store_cb(rt_opaque, &R[i_a], &R[i_b]);
-        R[i_a] = R[i_b]; NEXT();
+        R[i_a] = R[i_b];
+        NEXT();
+    }
+    L_MOVE_STR: { vm_reg_copy(&R[i_a], R[i_b]); NEXT(); }
+    L_DROP_STR: {
+        if (R[i_a].type == VAL_STRING && R[i_a].as.string)
+            fxstr_release(R[i_a].as.string);
+        R[i_a] = val_nil();
+        NEXT();
     }
 
     L_ADD: {
@@ -804,29 +1177,53 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
 
     L_CALL_METHOD: {
         /* Pass &constants[i_b] — callback patches string→ptr inline cache */
-        if (!call_cb) { R[i_a].type = VAL_NIL; NEXT(); }
+        vm_reg_clear(&R[i_a]);
+        if (!call_cb) { R[i_a] = val_nil(); NEXT(); }
         const char *method = c->constants[i_c].as.string;
-        int first_arg = (i_off >> 8) & 0xFF;
-        int argc      =  i_off       & 0xFF;
-        R[i_a] = call_cb(rt_opaque, &c->constants[i_b], method, &R[first_arg], argc);
+        int first_arg = (i_off >> 16) & 0xFFFF;
+        int argc      =  i_off        & 0xFFFF;
+        R[i_a] = call_cb(rt_opaque, &c->constants[i_b], method,
+                         &R[first_arg], argc);
         NEXT();
     }
 
     L_CALL_FUNC: {
         /* OP_CALL_FUNC: owner_kv=NULL signals plain function */
-        if (!call_cb) { R[i_a].type = VAL_NIL; NEXT(); }
+        vm_reg_clear(&R[i_a]);
+        if (!call_cb) { R[i_a] = val_nil(); NEXT(); }
         const char *fn_name = c->constants[i_b].as.string;
         R[i_a] = call_cb(rt_opaque, NULL, fn_name, &R[i_c], i_off);
         NEXT();
     }
 
+    L_NOT:    { R[i_a] = val_bool(!vm_truthy_not(R[i_b]));  NEXT(); }
+    L_TRUTHY: { R[i_a] = val_bool(vm_truthy_logic(R[i_b])); NEXT(); }
+    L_GET_FIELD_V: {
+        /* Declared int/float/bool: the register is off the string band, so it
+         * needs neither a release before the write nor a drop after it.  The
+         * guard refuses anything that owns heap data rather than aliasing it
+         * into a register that has no drop. */
+        Value v = get_field_cb
+                ? get_field_cb(rt_opaque, &c->constants[i_b],
+                               c->constants[i_c].as.string)
+                : val_nil();
+        /* The callback owns out any string it returns; this opcode is only
+         * emitted for declared int/float/bool, so a string here cannot happen
+         * — release rather than strand the reference if it ever does. */
+        if (v.type > VAL_BOOL) {
+            if (v.type == VAL_STRING && v.as.string) fxstr_release(v.as.string);
+            v = val_nil();
+        }
+        R[i_a] = v;
+        NEXT();
+    }
     L_GET_FIELD: {
         /* Pass &constants[b] so callback can patch string→ptr (inline cache) */
+        vm_reg_clear(&R[i_a]);
         if (get_field_cb) {
-            R[i_a] = get_field_cb(rt_opaque,
-                                  &c->constants[i_b],
+            R[i_a] = get_field_cb(rt_opaque, &c->constants[i_b],
                                   c->constants[i_c].as.string);
-        } else { R[i_a].type = VAL_NIL; }
+        } else { R[i_a] = val_nil(); }
         NEXT();
     }
     L_SET_FIELD: {
@@ -840,6 +1237,7 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
     }
     L_GET_INDEX: {
         Value nil = val_nil();
+        vm_reg_clear(&R[i_a]);
         if (index_cb)
             R[i_a] = index_cb(rt_opaque, VM_INDEX_GET,
                               &index_cache[i_b], c->constants[i_b].as.string,
@@ -870,8 +1268,14 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
         if (index_cache[i_b].failed) return 1;
         NEXT();
     }
-    L_RETURN_VAL: return 1;   /* handled by vm_run_fn; in vm_run = stop */
-    L_RETURN_NIL: return 1;   /* same */
+    L_RETURN_VAL:
+        c->return_value = R[i_a];
+        c->did_return = 1;
+        return 1;
+    L_RETURN_NIL:
+        c->return_value = val_nil();
+        c->did_return = 1;
+        return 1;
     L_RETURN: return 1;
 
     #pragma GCC diagnostic pop
@@ -886,38 +1290,36 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
     while (ip < end) {
         Instruction *instr = ip++;
         switch (instr->op) {
-            case OP_LOADK: R[instr->a] = c->constants[instr->b]; break;
+            case OP_LOADK: vm_reg_copy(&R[instr->a], c->constants[instr->b]); break;
             case OP_MOVE:
                 /* Same slot=>pin GC invariant as the computed-goto L_MOVE. */
                 if (store_cb && instr->a < 128 &&
                     (R[instr->a].type == VAL_DYN || R[instr->b].type == VAL_DYN))
                     store_cb(rt_opaque, &R[instr->a], &R[instr->b]);
-                R[instr->a] = R[instr->b]; break;
+                vm_reg_copy(&R[instr->a], R[instr->b]); break;
             case OP_ADD: {
                 Value *l = &R[instr->b], *r = &R[instr->c];
                 if (l->type==VAL_INT && r->type==VAL_INT) {
-                    R[instr->a].type=VAL_INT;
-                    R[instr->a].as.integer=l->as.integer+r->as.integer;
-                } else R[instr->a] = vm_arith(*l, *r, OP_ADD);
+                    vm_reg_take(&R[instr->a], val_int(l->as.integer+r->as.integer));
+                } else vm_reg_take(&R[instr->a], vm_arith(*l, *r, OP_ADD));
                 break;
             }
-            case OP_SUB:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_SUB); break;
-            case OP_MUL:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_MUL); break;
-            case OP_DIV:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_DIV); break;
-            case OP_MOD:   R[instr->a] = vm_arith(R[instr->b], R[instr->c], OP_MOD); break;
-            case OP_EQ:    R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_EQ); break;
-            case OP_NEQ:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_NEQ); break;
+            case OP_SUB:   vm_reg_take(&R[instr->a], vm_arith(R[instr->b], R[instr->c], OP_SUB)); break;
+            case OP_MUL:   vm_reg_take(&R[instr->a], vm_arith(R[instr->b], R[instr->c], OP_MUL)); break;
+            case OP_DIV:   vm_reg_take(&R[instr->a], vm_arith(R[instr->b], R[instr->c], OP_DIV)); break;
+            case OP_MOD:   vm_reg_take(&R[instr->a], vm_arith(R[instr->b], R[instr->c], OP_MOD)); break;
+            case OP_EQ:    vm_reg_take(&R[instr->a], vm_compare(R[instr->b], R[instr->c], OP_EQ)); break;
+            case OP_NEQ:   vm_reg_take(&R[instr->a], vm_compare(R[instr->b], R[instr->c], OP_NEQ)); break;
             case OP_LT: {
                 Value *l=&R[instr->b], *r=&R[instr->c];
                 if (l->type==VAL_INT && r->type==VAL_INT) {
-                    R[instr->a].type=VAL_BOOL;
-                    R[instr->a].as.boolean=l->as.integer < r->as.integer;
-                } else R[instr->a] = vm_compare(*l, *r, OP_LT);
+                    vm_reg_take(&R[instr->a], val_bool(l->as.integer < r->as.integer));
+                } else vm_reg_take(&R[instr->a], vm_compare(*l, *r, OP_LT));
                 break;
             }
-            case OP_GT:    R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_GT); break;
-            case OP_LTE:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_LTE); break;
-            case OP_GTE:   R[instr->a] = vm_compare(R[instr->b], R[instr->c], OP_GTE); break;
+            case OP_GT:    vm_reg_take(&R[instr->a], vm_compare(R[instr->b], R[instr->c], OP_GT)); break;
+            case OP_LTE:   vm_reg_take(&R[instr->a], vm_compare(R[instr->b], R[instr->c], OP_LTE)); break;
+            case OP_GTE:   vm_reg_take(&R[instr->a], vm_compare(R[instr->b], R[instr->c], OP_GTE)); break;
             case OP_JUMP_IF_FALSE: {
                 Value *cond = &R[instr->a];
                 int truthy = 0;
@@ -934,25 +1336,43 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
             case OP_CALL_METHOD:
                 if (call_cb) {
                     const char *method = c->constants[instr->c].as.string;
-                    int first_arg = (instr->offset >> 8) & 0xFF;
-                    int argc      =  instr->offset       & 0xFF;
-                    R[instr->a] = call_cb(rt_opaque, &c->constants[instr->b],
-                                          method, &R[first_arg], argc);
-                } else { R[instr->a].type = VAL_NIL; }
+                    int first_arg = (instr->offset >> 16) & 0xFFFF;
+                    int argc      =  instr->offset        & 0xFFFF;
+                    vm_reg_take(&R[instr->a], call_cb(rt_opaque, &c->constants[instr->b],
+                                                      method, &R[first_arg], argc));
+                } else { vm_reg_take(&R[instr->a], val_nil()); }
                 break;
             case OP_CALL_FUNC:
                 if (call_cb) {
                     const char *fn = c->constants[instr->b].as.string;
-                    R[instr->a] = call_cb(rt_opaque, NULL, fn,
-                                          &R[instr->c], instr->offset);
-                } else { R[instr->a].type = VAL_NIL; }
+                    vm_reg_take(&R[instr->a], call_cb(rt_opaque, NULL, fn,
+                                                      &R[instr->c], instr->offset));
+                } else { vm_reg_take(&R[instr->a], val_nil()); }
                 break;
             case OP_GET_FIELD:
                 if (get_field_cb)
-                    R[instr->a] = get_field_cb(rt_opaque,
-                                               &c->constants[instr->b],
-                                               c->constants[instr->c].as.string);
-                else R[instr->a].type = VAL_NIL;
+                    vm_reg_take(&R[instr->a], get_field_cb(rt_opaque,
+                                                          &c->constants[instr->b],
+                                                          c->constants[instr->c].as.string));
+                else vm_reg_take(&R[instr->a], val_nil());
+                break;
+            case OP_GET_FIELD_V: {
+                Value v = get_field_cb
+                        ? get_field_cb(rt_opaque, &c->constants[instr->b],
+                                       c->constants[instr->c].as.string)
+                        : val_nil();
+                if (v.type > VAL_BOOL) {
+                    if (v.type == VAL_STRING && v.as.string) fxstr_release(v.as.string);
+                    v = val_nil();
+                }
+                vm_reg_take(&R[instr->a], v);
+                break;
+            }
+            case OP_NOT:
+                vm_reg_take(&R[instr->a], val_bool(!vm_truthy_not(R[instr->b])));
+                break;
+            case OP_TRUTHY:
+                vm_reg_take(&R[instr->a], val_bool(vm_truthy_logic(R[instr->b])));
                 break;
             case OP_SET_FIELD:
                 if (set_field_cb)
@@ -963,7 +1383,7 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
                 break;
             case OP_GET_INDEX: {
                 Value nil=val_nil();
-                if(index_cb)R[instr->a]=index_cb(rt_opaque,VM_INDEX_GET,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,instr->offset,R[instr->c],nil);else R[instr->a]=nil;
+                if(index_cb)vm_reg_take(&R[instr->a],index_cb(rt_opaque,VM_INDEX_GET,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,instr->offset,R[instr->c],nil));else vm_reg_take(&R[instr->a],nil);
                 if(index_cache[instr->b].failed)return 1;break;
             }
             case OP_PREP_INDEX: {
@@ -976,9 +1396,23 @@ int vm_run(Chunk *c, Scope *scope, Value *stack_ptr, int stack_size,
                 Value nil=val_nil();if(index_cb)(void)index_cb(rt_opaque,VM_INDEX_SET,&index_cache[instr->b],c->constants[instr->b].as.string,R,stack_size,instr->offset,R[instr->c],R[instr->a]);else(void)nil;
                 if(index_cache[instr->b].failed)return 1;break;
             }
-            case OP_RETURN_VAL: return 1;
-            case OP_RETURN_NIL:  return 1;
+            case OP_RETURN_VAL:
+                c->return_value = R[instr->a];
+                c->did_return = 1;
+                return 1;
+            case OP_RETURN_NIL:
+                c->return_value = val_nil();
+                c->did_return = 1;
+                return 1;
             case OP_RETURN: return 1;
+            case OP_LOADK_STR:
+                vm_reg_copy(&R[instr->a], c->constants[instr->b]); break;
+            case OP_MOVE_STR:
+                vm_reg_copy(&R[instr->a], R[instr->b]); break;
+            case OP_DROP_STR:
+                if (R[instr->a].type==VAL_STRING && R[instr->a].as.string)
+                    fxstr_release(R[instr->a].as.string);
+                R[instr->a]=val_nil(); break;
         }
     }
     return 1;

@@ -394,7 +394,7 @@ static inline void rt_set(Runtime *rt, ASTNode *node,
                 !(v.type == VAL_STRING && v.as.string == _old->as.string))
                 fxstr_release(_old->as.string);
             else if (_old->type == VAL_ARR && _old->as.arr.data &&
-                     _old->as.arr.owned &&
+                     fluxa_arr_is_owned(&_old->as.arr) &&
                      !(v.type == VAL_ARR && v.as.arr.data == _old->as.arr.data))
                 value_release_data(_old);
         }
@@ -431,6 +431,9 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
 static Value vm_get_field_callback(void *rt_opaque, Value *owner_kv, const char *field);
 static void  vm_set_field_callback(void *rt_opaque, Value *owner_kv, const char *field, Value val);
 static int   vm_indexable_callback(void *rt_opaque, const char *name, int resolved_offset);
+static const char *vm_probe_callback(void *rt_opaque, int kind,
+                                     const char *owner, const char *name,
+                                     int *flag);
 static Value vm_index_callback(void *rt_opaque, int action,
                                VMIndexCache *cache, const char *name,
                                Value *registers, int register_count,
@@ -628,7 +631,7 @@ static void frame_release_slots_from(Runtime *rt, int from, const Value *keep) {
             sv->type = VAL_NIL; sv->as.string = NULL;
             break;
         case VAL_ARR:
-            if (sv->as.arr.data && sv->as.arr.owned &&
+            if (sv->as.arr.data && fluxa_arr_is_owned(&sv->as.arr) &&
                 !(keep && keep->type == VAL_ARR &&
                   keep->as.arr.data == sv->as.arr.data))
                 value_release_data(sv);
@@ -721,7 +724,8 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
 
         for (int i = 0; i < param_count; i++) {
             if (args[i].type == VAL_ARR)
-                rt->stack[i] = val_arr_ref(args[i].as.arr.data, args[i].as.arr.size);
+                rt->stack[i] = val_arr_ref(args[i].as.arr.data, args[i].as.arr.size,
+                                           args[i].as.arr.owned);
             else
                 rt->stack[i] = args[i];
             if (rt->stack_size <= i) rt->stack_size = i + 1;
@@ -813,7 +817,7 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
      * The copy is owned by the caller; the scope entry is freed normally.
      * This is O(n) on arr size — negligible for typical arr returns.     */
     if (result.type == VAL_ARR && result.as.arr.data &&
-        result.as.arr.owned && result.as.arr.size > 0) {
+        fluxa_arr_is_owned(&result.as.arr) && result.as.arr.size > 0) {
         int n = result.as.arr.size;
         Value *copy = (Value *)malloc(sizeof(Value) * (size_t)n);
         if (copy) {
@@ -823,7 +827,7 @@ static Value call_function(Runtime *rt, ASTNode *fn_node,
                     copy[_i].as.string = fxstr_retain(copy[_i].as.string);
             }
             result.as.arr.data  = copy;
-            result.as.arr.owned = 1;
+            fluxa_arr_set_owned(&result.as.arr, 1);
         }
         /* If malloc fails: result.as.arr.data will be freed by scope_free
          * and become dangling. This is an OOM edge case — better than a
@@ -973,14 +977,14 @@ static Value *vm_index_slot(Runtime *rt, VMIndexCache *cache, const char *name,
 /* String reads require owned retains and dyn owns growth/GC behavior.  Until
  * VM temporaries have an explicit release protocol, only fixed primitive
  * arrays are eligible for this bytecode path. */
-static int vm_array_is_primitive(const Value *slot) {
+static int vm_array_is_primitive(Value *slot) {
     if (!slot || slot->type != VAL_ARR) return 0;
-    for (int i = 0; i < slot->as.arr.size; i++) {
-        ValType t = slot->as.arr.data[i].type;
-        if (t != VAL_NIL && t != VAL_INT && t != VAL_FLOAT && t != VAL_BOOL)
-            return 0;
-    }
-    return 1;
+    if (!fluxa_arr_has_cached_type(&slot->as.arr))
+        fluxa_arr_cache_type(&slot->as.arr,
+                             fluxa_arr_detect_type(slot->as.arr.data,
+                                                   slot->as.arr.size));
+    ValType t = fluxa_arr_cached_type(&slot->as.arr);
+    return t == VAL_NIL || t == VAL_INT || t == VAL_FLOAT || t == VAL_BOOL;
 }
 
 static int vm_indexable_callback(void *rt_opaque, const char *name,
@@ -991,6 +995,106 @@ static int vm_indexable_callback(void *rt_opaque, const char *name,
     Value *slot = vm_index_slot(rt, &cache, name, rt->stack,
                                 rt->stack_size, resolved_offset);
     return vm_array_is_primitive(slot);
+}
+
+/* Declared-type lookups over a Block's AST.  Used only while a chunk is being
+ * built, never while it runs. */
+static const char *block_decl_type(BlockDef *def, const char *name, int *is_fn) {
+    if (!def || !def->node || def->node->type != NODE_BLOCK_DECL) return NULL;
+    ASTNode *decl = def->node;
+    for (int i = 0; i < decl->as.block_decl.count; i++) {
+        ASTNode *m = decl->as.block_decl.members[i];
+        if (!m) continue;
+        if (m->type == NODE_VAR_DECL && m->as.var_decl.var_name &&
+            strcmp(m->as.var_decl.var_name, name) == 0) {
+            /* prst fields carry pool synchronisation and, in thread clones,
+             * locking that the field opcodes do not perform.  Report them as
+             * unknown so the loop keeps the evaluator's path. */
+            if (m->as.var_decl.persistent) return NULL;
+            if (is_fn) *is_fn = 0;
+            return m->as.var_decl.type_name;
+        }
+        if (m->type == NODE_FUNC_DECL && m->as.func_decl.name &&
+            strcmp(m->as.func_decl.name, name) == 0) {
+            if (is_fn) *is_fn = 1;
+            return m->as.func_decl.return_type;
+        }
+    }
+    return NULL;
+}
+
+/* int, float and bool never own heap data, so a register holding one needs no
+ * retain, no release and no drop. */
+static int type_name_is_value(const char *t) {
+    return t && (strcmp(t, "int") == 0 || strcmp(t, "float") == 0 ||
+                 strcmp(t, "bool") == 0);
+}
+
+/* A declared return type that can never produce a string.  "nil" included:
+ * those calls hand back VAL_NIL. */
+static int ret_type_never_string(const char *t) {
+    return t && (type_name_is_value(t) || strcmp(t, "nil") == 0);
+}
+
+/* Compile-time probe — see vm_probe_cb_t in bytecode.h.  Everything here runs
+ * while a chunk is being built; none of it is on the per-iteration path.
+ *
+ * Bare identifiers inside a Block method are the case that mattered: the
+ * resolver leaves them without a stack slot, which used to demote the whole
+ * enclosing loop to the tree walker even though rt_get/rt_set reach them
+ * through rt->current_instance.  prst names are refused so the pool keeps the
+ * precedence rt_get gives it, and the opcode carries the instance name rather
+ * than a pointer, so that name must resolve back to this same instance. */
+static const char *vm_probe_callback(void *rt_opaque, int kind,
+                                     const char *owner, const char *name,
+                                     int *flag) {
+    Runtime *rt = (Runtime *)rt_opaque;
+    if (flag) *flag = 0;
+    if (!rt || !name) return NULL;
+
+    if (kind == VM_PROBE_BARE_FIELD) {
+        BlockInstance *inst = rt->current_instance;
+        if (!inst || !inst->name[0]) return NULL;
+        if (prst_pool_has(RT_POOL(rt), name)) return NULL;
+        int is_fn = 0;
+        const char *t = block_decl_type(inst->def, name, &is_fn);
+        if (!t || is_fn || !type_name_is_value(t)) return NULL;
+        if (!scope_has(&inst->scope, name)) return NULL;
+        if (resolve_instance(rt, inst->name) != inst) return NULL;
+        if (flag) *flag = 1;
+        return inst->name;
+    }
+
+    if (kind == VM_PROBE_FIELD) {
+        if (!owner) return NULL;
+        BlockInstance *inst = block_inst_find(owner);
+        if (!inst) return NULL;
+        int is_fn = 0;
+        const char *t = block_decl_type(inst->def, name, &is_fn);
+        if (!t || is_fn) return NULL;
+        if (flag) *flag = type_name_is_value(t);
+        return owner;
+    }
+
+    /* VM_PROBE_RET — owner NULL means a plain function. */
+    if (owner) {
+        BlockInstance *inst = block_inst_find(owner);
+        BlockDef *def = inst ? inst->def : block_def_find(owner);
+        int is_fn = 0;
+        const char *t = block_decl_type(def, name, &is_fn);
+        if (!t || !is_fn) return NULL;   /* stdlib, FFI, unknown: stay owned */
+        if (flag) *flag = ret_type_never_string(t);
+        return owner;
+    }
+    Value fn_val; fn_val.type = VAL_NIL;
+    if ((!scope_get(&rt->scope, name, &fn_val) || fn_val.type != VAL_FUNC) &&
+        (!scope_table_get(rt->global_table, name, &fn_val) ||
+         fn_val.type != VAL_FUNC))
+        return NULL;
+    ASTNode *fn = fn_val.as.func;
+    if (!fn || fn->type != NODE_FUNC_DECL) return NULL;
+    if (flag) *flag = ret_type_never_string(fn->as.func_decl.return_type);
+    return name;
 }
 
 static Value vm_index_callback(void *rt_opaque, int action,
@@ -1246,6 +1350,9 @@ static inline BlockInstance *resolve_inst_cached(Runtime *rt, Value *owner_kv) {
     /* Cold path: resolve by name and cache */
     BlockInstance *inst = resolve_instance(rt, owner_kv->as.string);
     if (inst) {
+        /* The Chunk owns owner_kv's cached name.  Release that reference
+         * before replacing the constant with the resolved instance pointer. */
+        fxstr_release(owner_kv->as.string);
         owner_kv->type   = VAL_PTR;
         owner_kv->as.ptr = inst;
     }
@@ -1263,6 +1370,13 @@ static Value vm_get_field_callback(void *rt_opaque, Value *owner_kv, const char 
     }
     Value v; v.type = VAL_NIL;
     scope_get(&inst->scope, field, &v);
+    /* scope_get hands back a borrowed alias of the field's own storage, but
+     * every VM string register owns one reference and drops it at the end of
+     * the statement.  Without a retain here that drop frees the field itself:
+     * reading a str field inside a compiled loop was a use-after-free.  Same
+     * rule method_try_inline already applies to an inlined `return field`. */
+    if (v.type == VAL_STRING && v.as.string)
+        v.as.string = fxstr_retain(v.as.string);
     return v;
 }
 
@@ -1581,7 +1695,7 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         /* Parameters are not bound until fn_regs exists. Avoid inferring an
          * array parameter from an unrelated caller/global slot of same name;
          * its nested while can compile after the real binding exists. */
-        if (ch && chunk_compile_fn(ch, fn_node, NULL, NULL)) {
+        if (ch && chunk_compile_fn(ch, fn_node, NULL, NULL, NULL)) {
             fn_node->fn_chunk = ch;  /* cache on AST node — never freed */
         } else {
             free(ch);
@@ -1601,6 +1715,15 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
                                  vm_call_callback, vm_get_field_callback,
                                  vm_set_field_callback,
                                  vm_index_callback, rt);
+        /* VM string registers own one reference each.  Preserve one owned
+         * reference for the returned Value, then release locals/temporaries;
+         * parameter registers remain borrowed from the caller. */
+        if (result.type == VAL_STRING && result.as.string)
+            result.as.string = fxstr_retain(result.as.string);
+        for (int _i = param_count; _i < reg_count; _i++) {
+            if (fn_regs[_i].type == VAL_STRING && fn_regs[_i].as.string)
+                fxstr_release(fn_regs[_i].as.string);
+        }
         free(fn_regs);
         return result;
     }
@@ -1795,7 +1918,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                             if (chosen.type == VAL_STRING && chosen.as.string)
                                 chosen.as.string = fxstr_new(chosen.as.string); /* pool is plain malloc */
                             else if (chosen.type == VAL_ARR)
-                                chosen.as.arr.owned = 0;
+                                fluxa_arr_set_owned(&chosen.as.arr, 0);
                             else if (chosen.type == VAL_DYN && chosen.as.dyn &&
                                      !gc_find_slot(&rt->gc, chosen.as.dyn)) {
                                 /* The wrapper crossed the reload boundary owned
@@ -2085,7 +2208,8 @@ static Value eval(Runtime *rt, ASTNode *node) {
         case NODE_WHILE: {
             Chunk chunk;
             if (chunk_compile_loop(&chunk, node,
-                                   vm_indexable_callback, rt)) {
+                                   vm_indexable_callback,
+                                   vm_probe_callback, rt)) {
                 /* Thread clone: refresh stack from shared pool before VM so
                  * the loop starts with the latest prst values from any thread. */
                 if (rt->shared_prst_pool && rt->mode == FLUXA_MODE_PROJECT) {
@@ -2105,6 +2229,16 @@ static Value eval(Runtime *rt, ASTNode *node) {
                  * chunk.next_reg is the highest register index + 1 used. */
                 if (rt->stack_size < (int)chunk.next_reg)
                     rt->stack_size = (int)chunk.next_reg;
+                /* Temporary registers are reused across independently
+                 * compiled chunks.  Drop stale string ownership once here;
+                 * each instruction then sees a stable destination type on
+                 * loop back-edges, keeping arithmetic opcodes branch-free. */
+                for (int _ri = 128; _ri < (int)chunk.next_reg; _ri++) {
+                    if (rt->stack[_ri].type == VAL_STRING &&
+                        rt->stack[_ri].as.string)
+                        fxstr_release(rt->stack[_ri].as.string);
+                    rt->stack[_ri] = val_nil();
+                }
                 /* Pass tick_cb only when needed — avoids function call overhead
                  * at every back-edge for pure loops with no GC/mailbox work. */
                 vm_tick_cb_t tick = (rt->gc.count > 0 || rt->current_thread)
@@ -2113,6 +2247,10 @@ static Value eval(Runtime *rt, ASTNode *node) {
                        rt->cancel_flag, vm_call_callback, rt, tick,
                        vm_get_field_callback, vm_set_field_callback,
                        vm_store_callback, vm_index_callback);
+                if (chunk.did_return) {
+                    rt->ret.active = 1;
+                    rt->ret.value = chunk.return_value;
+                }
                 chunk_free(&chunk);
                 /* Sprint 7: after VM, sync prst vars from rt->stack back to
                  * pool and global_table. The VM writes rt->stack[offset]

@@ -85,7 +85,7 @@ static inline Value prst_value_deep_clone(const Value *src) {
             for (int i = 0; i < n; i++)
                 data[i] = prst_value_deep_clone(&src->as.arr.data[i]);
             dst.as.arr.data  = data;
-            dst.as.arr.owned = 1;
+            fluxa_arr_set_owned(&dst.as.arr, 1);
         } else {
             dst.as.arr.data  = NULL;
             dst.as.arr.size  = 0;
@@ -104,13 +104,14 @@ static inline void prst_value_free_clone(Value *v) {
     if (v->type == VAL_STRING && v->as.string) {
         free(v->as.string);
         v->as.string = NULL;
-    } else if (v->type == VAL_ARR && v->as.arr.data && v->as.arr.owned) {
+    } else if (v->type == VAL_ARR && v->as.arr.data &&
+               fluxa_arr_is_owned(&v->as.arr)) {
         for (int i = 0; i < v->as.arr.size; i++)
             prst_value_free_clone(&v->as.arr.data[i]);
         free(v->as.arr.data);
         v->as.arr.data  = NULL;
         v->as.arr.size  = 0;
-        v->as.arr.owned = 0;
+        fluxa_arr_set_owned(&v->as.arr, 0);
     }
     /* VAL_DYN, VAL_BLOCK_INST, primitives: not owned by the pool. */
 }
@@ -400,7 +401,9 @@ static inline const char *prst_deser_value(const char *r, const char *end,
         out->type         = VAL_ARR;
         out->as.arr.data  = data;
         out->as.arr.size  = (int)arr_count;
-        out->as.arr.owned = 1;
+        out->as.arr.owned = FLUXA_ARR_OWNED_MASK;
+        fluxa_arr_cache_type(&out->as.arr,
+                             fluxa_arr_detect_type(data, (int)arr_count));
     } else if (arr_count > 0) {
         /* non-ARR type: skip element blocks for forward compat. The skipped
          * values are not retained, so free everything they allocated.

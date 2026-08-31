@@ -9,7 +9,13 @@ fluxa.exe
 /.build-tmp/
 /.builder-validation-registry/
 fluxa_asan
+fluxa_asan_full
+fluxa_full_asan
 fluxa_debug
+
+# Simuladores de hardware (gerados por make test-all)
+fluxa_sim_rp2040
+fluxa_sim_esp32
 
 # Binários embedded (gerados por make build-rp2040 / build-esp32)
 fluxa-rp2040

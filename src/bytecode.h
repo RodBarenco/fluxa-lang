@@ -56,7 +56,23 @@ typedef enum {
      * OP_RETURN_NIL: return nil (void functions).
      * Both terminate vm_run_fn execution.                              */
     OP_RETURN_VAL,
-    OP_RETURN_NIL
+    OP_RETURN_NIL,
+    /* Ownership-aware variants. Numeric LOADK/MOVE stay branch-free. */
+    OP_LOADK_STR,
+    OP_MOVE_STR,
+    OP_DROP_STR,
+    /* Field read proven to be int/float/bool at compile time: the destination
+     * never holds or receives a string, so it stays off the string band and
+     * needs neither a release before the write nor a drop after it. */
+    OP_GET_FIELD_V,
+    /* Logical operators.  Two opcodes because the evaluator uses two
+     * different truthiness rules: `!` treats a 0.0 float as false, while
+     * `&&`/`||` treat every non-nil non-bool non-int value as true.  The VM
+     * has to reproduce each one exactly, not unify them.
+     *   OP_NOT     a = dst, b = src   — the `!` rule, negated
+     *   OP_TRUTHY  a = dst, b = src   — the `&&`/`||` rule                */
+    OP_NOT,
+    OP_TRUTHY
 } Opcode;
 
 /* ── Call callback — passed to vm_run; bridges back to runtime C ─────────── */
@@ -74,6 +90,34 @@ typedef Value (*vm_call_cb_t)(void       *rt_opaque,
 typedef int (*vm_indexable_cb_t)(void *rt, const char *name,
                                  int resolved_offset);
 
+/* Compile-time probe for a bare identifier the resolver could not map to a
+ * stack slot.  Returns the Block instance name to bake into OP_GET_FIELD /
+ * OP_SET_FIELD when the identifier is a primitive scalar field of the current
+ * instance, or NULL when it is not eligible and the caller must demote.
+ * Restricting this to int/float/bool fields keeps the existing field opcodes
+ * and their callbacks unchanged: no string, arr or dyn ownership crosses the
+ * VM boundary through this path. */
+/* Compile-time probe into the runtime.  Answers are read from the Block
+ * declaration's AST — the declared type, never the current value — so a chunk
+ * compiled once stays valid for the whole run.  All of it happens while
+ * building the chunk; nothing here is on the per-iteration path.
+ *
+ *   VM_PROBE_BARE_FIELD  name is a bare identifier; owner is ignored.
+ *                        Returns the current instance name to bake into the
+ *                        field opcode, or NULL to demote as before.
+ *   VM_PROBE_FIELD       owner.name; returns owner when the field exists.
+ *   VM_PROBE_RET         owner.name method (owner NULL = plain function);
+ *                        returns non-NULL when the declaration was found.
+ *
+ * *flag is set to 1 when the declared type can never be a string — an
+ * int/float/bool field for the field probes, or a non-str return type for
+ * VM_PROBE_RET.  Unknown owners (stdlib, FFI) report 0 and keep the
+ * ownership-aware encoding. */
+enum { VM_PROBE_BARE_FIELD = 0, VM_PROBE_FIELD, VM_PROBE_RET };
+
+typedef const char *(*vm_probe_cb_t)(void *rt, int kind, const char *owner,
+                                     const char *name, int *flag);
+
 /* ── Instruction (3-address register-based) ──────────────────────────────── */
 typedef struct {
     Opcode   op;
@@ -86,6 +130,7 @@ typedef struct {
 /* ── Chunk — compiled bytecode ───────────────────────────────────────────── */
 #define CHUNK_INIT_CAP  64
 #define CHUNK_MAX_CONST 128
+#define CHUNK_MAX_REG   512
 
 typedef struct {
     Instruction *code;
@@ -100,7 +145,12 @@ typedef struct {
     int          const_count;
     int          ok;
     uint16_t     next_reg;   /* Issue #33: uint16_t — starts at 128 */
+    uint16_t     peak_reg;   /* highest temporary register end, across resets */
+    unsigned char string_regs[CHUNK_MAX_REG / 8];
+    Value        return_value; /* vm_run loop-to-evaluator return channel */
+    int          did_return;
     vm_indexable_cb_t indexable_cb;
+    vm_probe_cb_t     probe_cb;
     void             *indexable_rt;
 } Chunk;
 
@@ -113,7 +163,12 @@ static inline void chunk_init(Chunk *c) {
     memset(c->owned_strings, 0, sizeof(c->owned_strings));
     c->ok    = 1;
     c->next_reg = 128;
+    c->peak_reg = 128;
+    memset(c->string_regs, 0, sizeof(c->string_regs));
+    c->return_value = val_nil();
+    c->did_return = 0;
     c->indexable_cb = NULL;
+    c->probe_cb = NULL;
     c->indexable_rt = NULL;
 }
 
@@ -164,8 +219,10 @@ static inline int chunk_add_const_bool(Chunk *c, int bval) {
 }
 static inline int chunk_add_const_str(Chunk *c, const char *sval) {
     if (c->const_count >= CHUNK_MAX_CONST) { c->ok = 0; return 0; }
-    c->constants[c->const_count] = val_string(sval);
-    return c->const_count++;
+    int index = c->const_count++;
+    c->constants[index] = val_string(sval);
+    c->owned_strings[index >> 3] |= (unsigned char)(1u << (index & 7));
+    return index;
 }
 
 /* ── Public API (implemented in bytecode.c) ──────────────────────────────── */
@@ -184,11 +241,13 @@ typedef Value (*vm_index_cb_t)(void *rt, int action,
                                Value incoming);
 
 int chunk_compile_loop(Chunk *c, ASTNode *loop_node,
-                       vm_indexable_cb_t indexable_cb, void *indexable_rt);
+                       vm_indexable_cb_t indexable_cb,
+                       vm_probe_cb_t probe_cb, void *indexable_rt);
 /* Compile a function body — uses OP_RETURN_VAL / OP_RETURN_NIL.
  * Params are at resolved_offset 0..param_count-1 in the register file. */
 int chunk_compile_fn(Chunk *c, ASTNode *fn_node,
-                     vm_indexable_cb_t indexable_cb, void *indexable_rt);
+                     vm_indexable_cb_t indexable_cb,
+                     vm_probe_cb_t probe_cb, void *indexable_rt);
 
 /* cancel_flag: NULL for normal; set *cancel_flag=1 to abort (used by -dev).
  * call_cb / rt_opaque: dispatch OP_CALL_METHOD / OP_CALL_FUNC to runtime C.

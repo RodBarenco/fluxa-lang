@@ -534,6 +534,50 @@ else
     ERRORS="$ERRORS\n  vm/array-index-bytecode"
 fi
 
+_out=$(bash "$SCRIPT_DIR/return_in_while.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "return_in_while: PASS"; then
+    echo "  PASS  vm/return-in-while"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/return-in-while"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/return-in-while"
+fi
+
+_out=$(bash "$SCRIPT_DIR/call_arg_in_loop.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "call_arg_in_loop: PASS"; then
+    echo "  PASS  vm/call-arg-in-loop"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/call-arg-in-loop"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/call-arg-in-loop"
+fi
+
+_out=$(bash "$SCRIPT_DIR/vm_value_semantics.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "vm_value_semantics: PASS"; then
+    echo "  PASS  vm/value-semantics"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/value-semantics"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/value-semantics"
+fi
+
+_out=$(bash "$SCRIPT_DIR/str_loop_field.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "str_loop_field: PASS"; then
+    echo "  PASS  vm/str-loop-field"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/str-loop-field"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/str-loop-field"
+fi
+
 printf "  %-56s" "sprint11/warm_path (warm tier, edge cases)"
 _out=$(bash "$SCRIPT_DIR/sprint11_warm_path.sh" --fluxa "$FLUXA" 2>&1)
 if echo "$_out" | grep -q "warm_path: PASS"; then

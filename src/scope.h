@@ -41,8 +41,7 @@ struct Value;  /* forward for FluxaArr */
 typedef struct {
     struct Value *data;
     int           size;
-    int           owned;  /* 1 = this scope owns data (free on scope_free) */
-                          /* 0 = reference, caller owns data               */
+    int           owned;  /* bit 0: owns data; upper bits: cached elem type */
 } FluxaArr;
 
 /* ── FluxaDyn — heterogeneous dynamic array ──────────────────────────────── */
@@ -84,22 +83,66 @@ static inline Value val_string(const char *s) {
     return v;
 }
 
+enum {
+    FLUXA_ARR_OWNED_MASK = 1,
+    FLUXA_ARR_TYPE_SHIFT = 8,
+    FLUXA_ARR_TYPE_MASK  = 0xFF << FLUXA_ARR_TYPE_SHIFT
+};
+
+static inline int fluxa_arr_is_owned(const FluxaArr *arr) {
+    return arr && (arr->owned & FLUXA_ARR_OWNED_MASK) != 0;
+}
+
+static inline void fluxa_arr_set_owned(FluxaArr *arr, int is_owned) {
+    if (!arr) return;
+    arr->owned = (arr->owned & ~FLUXA_ARR_OWNED_MASK) |
+                 (is_owned ? FLUXA_ARR_OWNED_MASK : 0);
+}
+
+static inline ValType fluxa_arr_detect_type(Value *data, int size) {
+    ValType found = VAL_NIL;
+    for (int i = 0; i < size; i++) {
+        ValType t = data[i].type;
+        if (t == VAL_NIL) continue;
+        if (found == VAL_NIL) found = t;
+        else if (found != t) return VAL_DYN; /* defensive mixed marker */
+    }
+    return found;
+}
+
+static inline int fluxa_arr_has_cached_type(const FluxaArr *arr) {
+    return arr && (arr->owned & FLUXA_ARR_TYPE_MASK) != 0;
+}
+
+static inline ValType fluxa_arr_cached_type(const FluxaArr *arr) {
+    unsigned encoded = ((unsigned)arr->owned & FLUXA_ARR_TYPE_MASK) >>
+                       FLUXA_ARR_TYPE_SHIFT;
+    return encoded ? (ValType)(encoded - 1u) : VAL_NIL;
+}
+
+static inline void fluxa_arr_cache_type(FluxaArr *arr, ValType type) {
+    if (!arr) return;
+    arr->owned = (arr->owned & ~FLUXA_ARR_TYPE_MASK) |
+                 (((int)type + 1) << FLUXA_ARR_TYPE_SHIFT);
+}
+
 static inline Value val_arr(Value *data, int size) {
     Value v;
     v.type         = VAL_ARR;
     v.as.arr.data  = data;
     v.as.arr.size  = size;
-    v.as.arr.owned = 1;   /* owner by default */
+    v.as.arr.owned = FLUXA_ARR_OWNED_MASK;
+    fluxa_arr_cache_type(&v.as.arr, fluxa_arr_detect_type(data, size));
     return v;
 }
 
 /* val_arr_ref: pass array by reference — caller retains ownership */
-static inline Value val_arr_ref(Value *data, int size) {
+static inline Value val_arr_ref(Value *data, int size, int source_flags) {
     Value v;
     v.type         = VAL_ARR;
     v.as.arr.data  = data;
     v.as.arr.size  = size;
-    v.as.arr.owned = 0;   /* reference — do NOT free data */
+    v.as.arr.owned = source_flags & ~FLUXA_ARR_OWNED_MASK;
     return v;
 }
 

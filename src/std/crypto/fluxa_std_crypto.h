@@ -64,7 +64,8 @@ static inline Value fluxa_crypto_bytes_to_arr(const unsigned char *buf, int len)
     v.type         = VAL_ARR;
     v.as.arr.data  = data;
     v.as.arr.size  = len;
-    v.as.arr.owned = 1;
+    v.as.arr.owned = FLUXA_ARR_OWNED_MASK;
+    fluxa_arr_cache_type(&v.as.arr, VAL_INT);
     return v;
 }
 

@@ -49,13 +49,13 @@ void value_free_data(Value *v) {
             if (v->as.string) { free(v->as.string); v->as.string = NULL; }
             break;
         case VAL_ARR:
-            if (v->as.arr.data && v->as.arr.owned) {
+            if (v->as.arr.data && fluxa_arr_is_owned(&v->as.arr)) {
                 for (int i = 0; i < v->as.arr.size; i++)
                     value_free_data(&v->as.arr.data[i]);
                 free(v->as.arr.data);
                 v->as.arr.data  = NULL;
                 v->as.arr.size  = 0;
-                v->as.arr.owned = 0;
+                fluxa_arr_set_owned(&v->as.arr, 0);
             }
             break;
         case VAL_DYN:
@@ -87,13 +87,13 @@ void value_release_data(Value *v) {
             if (v->as.string) { fxstr_release(v->as.string); v->as.string = NULL; }
             break;
         case VAL_ARR:
-            if (v->as.arr.data && v->as.arr.owned) {
+            if (v->as.arr.data && fluxa_arr_is_owned(&v->as.arr)) {
                 for (int i = 0; i < v->as.arr.size; i++)
                     value_release_data(&v->as.arr.data[i]);
                 free(v->as.arr.data);
                 v->as.arr.data  = NULL;
                 v->as.arr.size  = 0;
-                v->as.arr.owned = 0;
+                fluxa_arr_set_owned(&v->as.arr, 0);
             }
             break;
         case VAL_DYN:

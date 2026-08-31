@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.30.1 — Beta**
+**v0.30.2 — Beta**
 
-*Reflects runtime behavior shipped in v0.30.1.*
+*Reflects runtime behavior shipped in v0.30.2.*
 
 *Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 34 stdlib libs · Module System*
 
@@ -1401,6 +1401,38 @@ Observation runs until promotion — no cap, no cold-lock. Fluxa is strongly typ
 5. On type mismatch: QJL guard fires, `stable_runs` reset, function demoted to Tier 0
 
 **Tier 2 — Hot (bytecode VM):** `while` and `if` loops compiled to 3-address register bytecode. In v0.14, function bodies with `return expr` also compile to bytecode chunks via `vm_run_fn` with an isolated register file — no frame save/restore.
+
+A `return` executed by a hot `while` carries an explicit value-and-signal result
+from the loop VM to the owning evaluator frame. The evaluator sets the same
+`rt->ret` state used by cold execution, so the return crosses nested loops and
+leaves the function immediately. A normal loop termination carries no signal;
+`return nil` carries a return signal with a nil value. The presence of `return`
+does not demote an otherwise compilable loop.
+
+**Block fields.** A bare identifier inside a Block method names the instance's
+own field. Such a read or write compiles when the field's *declared* type is
+`int`, `float`, or `bool`; the instruction carries the instance name and the
+field name, never a pointer. `prst` fields are excluded — they carry pool
+synchronisation and, in thread clones, locking that the field instructions do
+not perform — and so are fields of any other declared type, which stay on the
+ownership-aware evaluator. Values crossing from a field into a VM register are
+handed over as owned references.
+
+**Logical operators.** `!`, `&&`, and `||` compile, with short-circuit
+evaluation preserved. The two truthiness rules the evaluator uses are
+reproduced separately and are not unified: under `!`, a `0.0` float is false;
+under `&&` and `||`, every non-nil value that is not a bool or an int is true.
+
+**Comparison.** Equality in a compiled loop answers exactly as the evaluator
+does: `nil` compares by identity, `int`, `float`, and `bool` compare by value,
+and strings compare by content. Ordering (`<`, `>`, `<=`, `>=`) is defined for
+`int` and `float` only.
+
+**What still demotes.** A loop containing `dyn` indexing, `dyn[i].field`,
+`for..in`, `danger`, `free()`, a direct FFI call, an array declaration, or a
+`str arr` element access runs entirely on the evaluator. Compilation is
+all-or-nothing per loop: one such construct in the body sends the whole loop
+back, whatever else it contains. A chunk is also limited to 128 constants.
 
 #### Key implementation details
 
