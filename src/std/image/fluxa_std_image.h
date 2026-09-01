@@ -31,7 +31,11 @@
  *   image.load(path)           → dyn   decode a file into an RGBA buffer
  *   image.resize(img, w, h)    → nil   scale in place (Bicubic on raylib, NN on stub)
  *   image.update_rgba(img, px) → nil   replace all RGBA bytes from an int arr
+ *   image.update_rgba_rect(img, px, x, y, w, h) → nil  replace one rectangle
  *   image.blit(dst,src,x,y[,m]) → nil   compose src onto dst; optional mask image
+ *   image.fill_tris(dst,depth,tris,n,tex,tw,th,ts,alpha,flags[,rgb]) → int
+ *   image.fill_rect(dst,x,y,w,h,rgb[,a]) → int   flat rectangle
+ *   image.fill_tri(dst,x0,y0,x1,y1,x2,y2,rgb[,a]) → int   flat triangle
  *   image.width(img)           → int
  *   image.height(img)          → int
  *   image.set_text(path,k,t[,c])→ bool  embed PNG iTXt metadata; optional compress
@@ -53,6 +57,50 @@
 #ifdef FLUXA_IMAGE_RAYLIB
 #include <raylib.h>
 #endif
+
+/* ── Triangle rasteriser ────────────────────────────────────────────
+ * Per-pixel work cannot live in Fluxa. A textured, depth-tested fill runs
+ * around thirty-five operations per written pixel; at the ~16 ns an iteration
+ * of a compiled loop costs, a 640x480 frame is a quarter of a second. The same
+ * work in C is single-digit milliseconds. The floor is the instruction count
+ * per pixel, so no amount of work on the language side closes it.
+ *
+ * The rules below are not new. They are the ones a real Fluxa rasteriser
+ * already settled on, reproduced here so this call is a drop-in replacement
+ * for that loop and its output can be compared against it bit for bit:
+ *
+ *   - vertices arrive in screen space; projection stays with the caller
+ *   - barycentric weights come from integer edge functions, and every
+ *     division truncates toward zero
+ *   - a texel coordinate wraps with %, and a negative result is corrected by
+ *     adding the dimension once
+ *   - the texel's own alpha multiplies the alpha argument
+ *   - a fully opaque pixel is written straight; anything else blends as
+ *     (src * a + dst * (255 - a)) / 255
+ *   - the destination alpha is set to 255
+ *   - depth is written only above a threshold, so a translucent texel does not
+ *     hide what is behind it
+ *
+ * Components read out of the texture are clamped to 0..255 rather than
+ * rejected: a batch draws as it goes, so failing midway would leave a half
+ * drawn frame with no way back. Sizes and handles are checked up front, where
+ * refusing still leaves the destination untouched. */
+
+#define FLUXA_TRI_STRIDE 15   /* x, y, z, u, v per vertex, three vertices */
+
+/* flags, as passed from Fluxa */
+#define FLUXA_TRI_FRONT      0x01  /* draw front faces (negative signed area) */
+#define FLUXA_TRI_BACK       0x02  /* draw back faces                          */
+#define FLUXA_TRI_DEPTH_LESS 0x04  /* keep the smaller z; default keeps larger */
+#define FLUXA_TRI_ZTHRESH(f) (((f) >> 8) & 0xFF)  /* write depth above this alpha */
+
+static inline long fluxa_tri_i(const Value *a, long i) {
+    return (a[i].type == VAL_INT) ? a[i].as.integer : 0;
+}
+static inline int fluxa_tri_u8(const Value *a, long i) {
+    long v = fluxa_tri_i(a, i);
+    return v < 0 ? 0 : (v > 255 ? 255 : (int)v);
+}
 
 /* ── PNG iTXt metadata (for image.set_text) ─────────────────────────
  * Raylib/stb writes a bare PNG with no text chunks, so to embed metadata we
@@ -369,17 +417,297 @@ static inline Value fluxa_std_image_call(const char *fn_name,
             *had_error=1;
             return image_nil();
         }
+        /* Two passes on purpose: the image is left untouched when any
+         * component is rejected, so a caller that catches the error in a
+         * danger block still sees the image it had. Both passes read through
+         * one hoisted pointer rather than copying each 24-byte Value. */
+        const Value *px=args[1].as.arr.data;
         for (size_t i=0; i<expected; i++) {
-            Value p=args[1].as.arr.data[i];
-            if (p.type!=VAL_INT)
+            if (px[i].type!=VAL_INT)
                 IMG_ERR("update_rgba: every component must be int");
-            if (p.as.integer<0 || p.as.integer>255)
+            if (px[i].as.integer<0 || px[i].as.integer>255)
                 IMG_ERR("update_rgba: components must be in the 0..255 range");
         }
         for (size_t i=0; i<expected; i++)
-            b->rgba[i]=(unsigned char)args[1].as.arr.data[i].as.integer;
+            b->rgba[i]=(unsigned char)px[i].as.integer;
         fluxa_imgbuf_touch(b);   /* stale cached texture uploads on next draw */
         return image_nil();
+    }
+
+    /* image.update_rgba_rect(img, pixels, x, y, w, h) → nil
+     * Replace one rectangle of the image from a w*h*4 int arr, so a caller
+     * that changes a corner pays for the corner rather than for the frame.
+     * Same rules as update_rgba: components are int in 0..255, the rectangle
+     * must lie inside the image, and nothing is written unless every
+     * component is accepted. */
+    if (strcmp(fn_name,"update_rgba_rect")==0) {
+        NEED(6); GET_IMG(0,b);
+        if (args[1].type!=VAL_ARR || !args[1].as.arr.data)
+            IMG_ERR("update_rgba_rect: pixels must be an int arr");
+        GET_INT(2,rx); GET_INT(3,ry); GET_INT(4,rw); GET_INT(5,rh);
+        if (rw<=0 || rh<=0)
+            IMG_ERR("update_rgba_rect: width and height must be positive");
+        if (rx<0 || ry<0 || rx+rw>(long)b->width || ry+rh>(long)b->height)
+            IMG_ERR("update_rgba_rect: rectangle falls outside the image");
+        size_t expected=(size_t)rw*(size_t)rh*4u;
+        if ((size_t)args[1].as.arr.size!=expected) {
+            snprintf(errbuf,sizeof(errbuf),
+                     "image.update_rgba_rect (line %d): expected %zu components, got %d",
+                     line,expected,args[1].as.arr.size);
+            errstack_push(err,ERR_FLUXA,errbuf,"image",line);
+            *had_error=1;
+            return image_nil();
+        }
+        const Value *px=args[1].as.arr.data;
+        for (size_t i=0; i<expected; i++) {
+            if (px[i].type!=VAL_INT)
+                IMG_ERR("update_rgba_rect: every component must be int");
+            if (px[i].as.integer<0 || px[i].as.integer>255)
+                IMG_ERR("update_rgba_rect: components must be in the 0..255 range");
+        }
+        for (long row=0; row<rh; row++) {
+            unsigned char *dst=b->rgba+(((size_t)(ry+row)*(size_t)b->width+(size_t)rx)*4u);
+            const Value *sp=px+((size_t)row*(size_t)rw*4u);
+            for (long i=0; i<rw*4; i++) dst[i]=(unsigned char)sp[i].as.integer;
+        }
+        fluxa_imgbuf_touch(b);
+        return image_nil();
+    }
+
+    /* image.fill_tris(dst, depth, tris, count,
+     *                 tex, tex_w, tex_h, tex_stride,
+     *                 alpha, flags [, rgb]) → int   pixels written
+     *
+     * One call per texture, not per triangle: the whole point is to leave the
+     * per-pixel loop in C, so a per-triangle call would put the cost straight
+     * back into the interpreter.
+     *
+     *   tris   int arr, 15 ints per triangle: x, y, z, u, v per vertex, in
+     *          screen space. u and v are 1/256 texel units, as the reference
+     *          rasteriser used them.
+     *   depth  int arr of width*height, or nil to draw with no depth test.
+     *   tex    int arr of RGBA components, or nil for a flat colour.
+     *   alpha  0..255, multiplied by the texel's own alpha.
+     *   flags  FRONT 0x01, BACK 0x02, DEPTH_LESS 0x04, and the depth-write
+     *          alpha threshold in bits 8..15.
+     *   rgb    optional packed 0xRRGGBB used when tex is nil; white by default.
+     */
+    if (strcmp(fn_name,"fill_tris")==0) {
+        NEED(10); GET_IMG(0,dst);
+
+        const Value *dep = NULL;
+        if (args[1].type == VAL_ARR && args[1].as.arr.data) {
+            if ((size_t)args[1].as.arr.size !=
+                (size_t)dst->width * (size_t)dst->height)
+                IMG_ERR("fill_tris: depth must hold width*height entries");
+            dep = args[1].as.arr.data;
+        } else if (args[1].type != VAL_NIL) {
+            IMG_ERR("fill_tris: depth must be an int arr or nil");
+        }
+
+        if (args[2].type != VAL_ARR || !args[2].as.arr.data)
+            IMG_ERR("fill_tris: tris must be an int arr");
+        GET_INT(3,tri_count);
+        if (tri_count < 0) IMG_ERR("fill_tris: count must not be negative");
+        if (tri_count > 0 &&
+            (size_t)args[2].as.arr.size <
+            (size_t)tri_count * (size_t)FLUXA_TRI_STRIDE)
+            IMG_ERR("fill_tris: tris holds fewer than count*15 entries");
+        const Value *tri = args[2].as.arr.data;
+
+        GET_INT(5,tex_w); GET_INT(6,tex_h); GET_INT(7,tex_stride);
+        const Value *tex = NULL;
+        if (args[4].type == VAL_ARR && args[4].as.arr.data) {
+            if (tex_w <= 0 || tex_h <= 0)
+                IMG_ERR("fill_tris: tex_w and tex_h must be positive");
+            if (tex_stride < tex_w)
+                IMG_ERR("fill_tris: tex_stride must be at least tex_w");
+            if ((size_t)args[4].as.arr.size <
+                (size_t)tex_stride * (size_t)tex_h * 4u)
+                IMG_ERR("fill_tris: tex holds fewer than tex_stride*tex_h*4 components");
+            tex = args[4].as.arr.data;
+        } else if (args[4].type != VAL_NIL) {
+            IMG_ERR("fill_tris: tex must be an int arr or nil");
+        }
+
+        GET_INT(8,mat_alpha); GET_INT(9,flags);
+        if (mat_alpha < 0 || mat_alpha > 255)
+            IMG_ERR("fill_tris: alpha must be in the 0..255 range");
+        long flat = 0xFFFFFF;
+        if (argc >= 11) { GET_INT(10,rgbv); flat = rgbv; }
+        const int flat_r = (int)((flat >> 16) & 0xFF);
+        const int flat_g = (int)((flat >>  8) & 0xFF);
+        const int flat_b = (int)( flat        & 0xFF);
+
+        const int draw_front = (flags & FLUXA_TRI_FRONT) != 0;
+        const int draw_back  = (flags & FLUXA_TRI_BACK)  != 0;
+        const int depth_less = (flags & FLUXA_TRI_DEPTH_LESS) != 0;
+        const long zthresh   = FLUXA_TRI_ZTHRESH(flags);
+
+        const int W = dst->width, H = dst->height;
+        unsigned char *fb = dst->rgba;
+        long written = 0;
+
+        for (long t = 0; t < tri_count; t++) {
+            const Value *v = tri + t * FLUXA_TRI_STRIDE;
+            long x0=fluxa_tri_i(v,0),  y0=fluxa_tri_i(v,1),  z0=fluxa_tri_i(v,2);
+            long u0=fluxa_tri_i(v,3),  v0=fluxa_tri_i(v,4);
+            long x1=fluxa_tri_i(v,5),  y1=fluxa_tri_i(v,6),  z1=fluxa_tri_i(v,7);
+            long u1=fluxa_tri_i(v,8),  v1=fluxa_tri_i(v,9);
+            long x2=fluxa_tri_i(v,10), y2=fluxa_tri_i(v,11), z2=fluxa_tri_i(v,12);
+            long u2=fluxa_tri_i(v,13), v2=fluxa_tri_i(v,14);
+
+            /* Screen y grows downward, so a negative signed area is the front
+             * face — the same convention the reference rasteriser used. */
+            long long area = (long long)(x1-x0)*(y2-y0) - (long long)(y1-y0)*(x2-x0);
+            if (area == 0) continue;                       /* degenerate */
+            if (area < 0 ? !draw_front : !draw_back) continue;
+
+            long lox = x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2);
+            long hix = x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2);
+            long loy = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
+            long hiy = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
+            if (lox < 0)   lox = 0;
+            if (loy < 0)   loy = 0;
+            if (hix > W-1) hix = W-1;
+            if (hiy > H-1) hiy = H-1;
+
+            for (long y = loy; y <= hiy; y++) {
+                for (long x = lox; x <= hix; x++) {
+                    long long w0 = (long long)(x2-x1)*(y-y1) - (long long)(y2-y1)*(x-x1);
+                    long long w1 = (long long)(x0-x2)*(y-y2) - (long long)(y0-y2)*(x-x2);
+                    long long w2 = (long long)(x1-x0)*(y-y0) - (long long)(y1-y0)*(x-x0);
+                    if (area < 0) { if (w0 > 0 || w1 > 0 || w2 > 0) continue; }
+                    else          { if (w0 < 0 || w1 < 0 || w2 < 0) continue; }
+
+                    long pi = y * (long)W + x;
+                    long zi = (long)(((long long)w0*z0 + (long long)w1*z1 +
+                                      (long long)w2*z2) / area);
+                    if (dep) {
+                        long prev = fluxa_tri_i(dep, pi);
+                        if (depth_less ? (zi >= prev) : (zi <= prev)) continue;
+                    }
+
+                    int sr, sg, sb, ta = 255;
+                    if (tex) {
+                        long ui = (long)(((long long)w0*u0 + (long long)w1*u1 +
+                                          (long long)w2*u2) / area);
+                        long vi = (long)(((long long)w0*v0 + (long long)w1*v1 +
+                                          (long long)w2*v2) / area);
+                        long tx = (ui / 256) % tex_w;  if (tx < 0) tx += tex_w;
+                        long ty = (vi / 256) % tex_h;  if (ty < 0) ty += tex_h;
+                        long src = (ty * tex_stride + tx) * 4;
+                        sr = fluxa_tri_u8(tex, src);
+                        sg = fluxa_tri_u8(tex, src+1);
+                        sb = fluxa_tri_u8(tex, src+2);
+                        ta = fluxa_tri_u8(tex, src+3);
+                    } else { sr = flat_r; sg = flat_g; sb = flat_b; }
+
+                    long a = (mat_alpha == 255) ? ta : (ta * mat_alpha / 255);
+                    if (a <= 0) continue;
+
+                    unsigned char *px = fb + pi * 4;
+                    if (a >= 255) {
+                        px[0]=(unsigned char)sr; px[1]=(unsigned char)sg;
+                        px[2]=(unsigned char)sb;
+                    } else {
+                        long inv = 255 - a;
+                        px[0]=(unsigned char)((sr*a + px[0]*inv) / 255);
+                        px[1]=(unsigned char)((sg*a + px[1]*inv) / 255);
+                        px[2]=(unsigned char)((sb*a + px[2]*inv) / 255);
+                    }
+                    px[3]=255;
+                    written++;
+
+                    if (dep && a > zthresh)
+                        ((Value *)dep)[pi] = image_int(zi);
+                }
+            }
+        }
+        fluxa_imgbuf_touch(dst);
+        return image_int(written);
+    }
+
+    /* image.fill_rect(dst, x, y, w, h, rgb [, alpha]) → int  pixels written
+     * The same blend and the same clipping as fill_tris, for the case that
+     * does not need a triangle. alpha defaults to opaque. */
+    if (strcmp(fn_name,"fill_rect")==0) {
+        NEED(6); GET_IMG(0,dst);
+        GET_INT(1,rx); GET_INT(2,ry); GET_INT(3,rw); GET_INT(4,rh); GET_INT(5,rgbv);
+        long a = 255;
+        if (argc >= 7) { GET_INT(6,av); a = av; }
+        if (a < 0 || a > 255) IMG_ERR("fill_rect: alpha must be in the 0..255 range");
+        if (a == 0 || rw <= 0 || rh <= 0) return image_int(0);
+        int sr=(int)((rgbv>>16)&0xFF), sg=(int)((rgbv>>8)&0xFF), sb=(int)(rgbv&0xFF);
+        long x0=rx<0?0:rx, y0=ry<0?0:ry;
+        long x1=rx+rw, y1=ry+rh;
+        if (x1 > dst->width)  x1 = dst->width;
+        if (y1 > dst->height) y1 = dst->height;
+        long written = 0;
+        for (long y=y0; y<y1; y++) {
+            for (long x=x0; x<x1; x++) {
+                unsigned char *px = dst->rgba + ((size_t)y*(size_t)dst->width+(size_t)x)*4u;
+                if (a >= 255) { px[0]=(unsigned char)sr; px[1]=(unsigned char)sg; px[2]=(unsigned char)sb; }
+                else {
+                    long inv = 255 - a;
+                    px[0]=(unsigned char)((sr*a + px[0]*inv)/255);
+                    px[1]=(unsigned char)((sg*a + px[1]*inv)/255);
+                    px[2]=(unsigned char)((sb*a + px[2]*inv)/255);
+                }
+                px[3]=255;
+                written++;
+            }
+        }
+        if (written) fluxa_imgbuf_touch(dst);
+        return image_int(written);
+    }
+
+    /* image.fill_tri(dst, x0,y0, x1,y1, x2,y2, rgb [, alpha]) → int
+     * One flat triangle, drawn whichever way it is wound — the winding rules
+     * of fill_tris exist for depth-sorted geometry, and a lone 2D triangle
+     * should not have to know about them. */
+    if (strcmp(fn_name,"fill_tri")==0) {
+        NEED(8); GET_IMG(0,dst);
+        GET_INT(1,ax); GET_INT(2,ay); GET_INT(3,bx); GET_INT(4,by);
+        GET_INT(5,cx); GET_INT(6,cy); GET_INT(7,rgbv);
+        long a = 255;
+        if (argc >= 9) { GET_INT(8,av); a = av; }
+        if (a < 0 || a > 255) IMG_ERR("fill_tri: alpha must be in the 0..255 range");
+        if (a == 0) return image_int(0);
+        int sr=(int)((rgbv>>16)&0xFF), sg=(int)((rgbv>>8)&0xFF), sb=(int)(rgbv&0xFF);
+
+        long long area = (long long)(bx-ax)*(cy-ay) - (long long)(by-ay)*(cx-ax);
+        if (area == 0) return image_int(0);
+        long lox = ax<bx?(ax<cx?ax:cx):(bx<cx?bx:cx);
+        long hix = ax>bx?(ax>cx?ax:cx):(bx>cx?bx:cx);
+        long loy = ay<by?(ay<cy?ay:cy):(by<cy?by:cy);
+        long hiy = ay>by?(ay>cy?ay:cy):(by>cy?by:cy);
+        if (lox < 0) lox = 0;
+        if (loy < 0) loy = 0;
+        if (hix > dst->width-1)  hix = dst->width-1;
+        if (hiy > dst->height-1) hiy = dst->height-1;
+        long written = 0;
+        for (long y=loy; y<=hiy; y++) {
+            for (long x=lox; x<=hix; x++) {
+                long long w0 = (long long)(cx-bx)*(y-by) - (long long)(cy-by)*(x-bx);
+                long long w1 = (long long)(ax-cx)*(y-cy) - (long long)(ay-cy)*(x-cx);
+                long long w2 = (long long)(bx-ax)*(y-ay) - (long long)(by-ay)*(x-ax);
+                if (area < 0) { if (w0 > 0 || w1 > 0 || w2 > 0) continue; }
+                else          { if (w0 < 0 || w1 < 0 || w2 < 0) continue; }
+                unsigned char *px = dst->rgba + ((size_t)y*(size_t)dst->width+(size_t)x)*4u;
+                if (a >= 255) { px[0]=(unsigned char)sr; px[1]=(unsigned char)sg; px[2]=(unsigned char)sb; }
+                else {
+                    long inv = 255 - a;
+                    px[0]=(unsigned char)((sr*a + px[0]*inv)/255);
+                    px[1]=(unsigned char)((sg*a + px[1]*inv)/255);
+                    px[2]=(unsigned char)((sb*a + px[2]*inv)/255);
+                }
+                px[3]=255;
+                written++;
+            }
+        }
+        if (written) fluxa_imgbuf_touch(dst);
+        return image_int(written);
     }
 
     /* image.blit(dst, src, x, y [, mask]) → nil

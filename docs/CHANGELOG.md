@@ -1,5 +1,80 @@
 # Fluxa-lang Changelog
 
+## v0.30.4 — a rasteriser for std.image, alpha, and the 3D door
+
+This release touches only the two graphics libraries. Nothing in the runtime
+changed, and no existing signature did: every argument added is optional, sits
+at the end, and defaults to what the function already did.
+
+### std.image can draw
+
+Until now a buffer could only be filled by blitting another whole image or
+element by element from Fluxa. There was no drawing primitive at all, which is
+what decided how much a program could do in real time.
+
+Per-pixel work cannot live in Fluxa. A textured, depth-tested fill runs around
+thirty-five operations per written pixel; at the cost of one iteration of a
+compiled loop that is a quarter of a second for a 640×480 frame, against
+single-digit milliseconds in C. The floor is the instruction count per pixel,
+so no amount of work on the language side closes it.
+
+`image.fill_tris` rasterises a batch of textured, depth-tested triangles in one
+call — one per texture, never one per triangle, since a call per triangle puts
+the cost back where it was. Vertices arrive in screen space; projection stays
+with the caller, which is where it belongs. `image.fill_rect` and
+`image.fill_tri` cover the flat cases on the same core.
+
+The rules it fixes are not new: they are the ones a real Fluxa rasteriser
+already settled on, so the call is a drop-in replacement for that loop and its
+output can be compared against it bit for bit. A negative signed area is the
+front face, every division truncates, a texel coordinate wraps and a negative
+result is corrected once, the texel's alpha multiplies the argument, and depth
+is written only above a threshold so a translucent texel does not hide what is
+behind it. They are written down in the standard library reference because
+callers depend on them exactly.
+
+### Partial image updates
+
+`image.update_rgba` required exactly `width * height * 4` components, so a
+program changing a corner paid for the whole buffer. `image.update_rgba_rect`
+replaces one rectangle instead.
+
+Both still validate every component before writing any of them. Folding the two
+passes into one would have been faster and would have broken a guarantee that
+already existed: a rejected update leaves the image untouched, which a caller
+that catches the error in a `danger` block can see. The passes stay; what went
+is the 24-byte copy each of them made per component.
+
+### Every primitive can draw translucent
+
+`draw_rect`, `draw_circle`, `draw_line`, `draw_triangle`, `draw_text`,
+`draw_text_font`, `draw_rect_lines`, `draw_circle_lines` and `draw_ring` fixed
+alpha at 255, so an overlay, a highlight or a shadow had to go through an
+intermediate image. Each now takes an optional alpha at the end. `graph.clear`
+does not: it paints the background.
+
+### Per-vertex colour and texture coordinates
+
+`draw_triangle` carries neither, and gaining them per triangle would have meant
+nine more arguments on a per-triangle call — the shape the batch exists to
+avoid. `graph.draw_tris` and `graph.draw_tris3d` take a batch with a bound
+texture, per-vertex texture coordinates and per-vertex RGBA, in screen space
+and in world space respectively.
+
+### The 3D pipeline has a door
+
+rmodels was compiled into the binary and no name reached it: no camera, no way
+into 3D mode, no mesh. There is now a camera that can be moved without being
+reallocated, a way in and out, a mesh uploaded once and drawn many times, and
+box, line and grid primitives. Cursors follow the discipline fonts and render
+targets already use, and a released one is refused rather than crashing.
+
+This is not a substitute for `image.fill_tris` and does not compete with it.
+The rasteriser keeps every pixel under the caller's control and produces the
+same bytes on every machine, which is what an image test, an emulator or an
+offline render needs; this hands the work to the GPU and takes the GPU's rules
+with it.
+
 ## v0.30.3 — frame sizing, one ownership contract, and function-body indexing
 
 Everything in this release except the last section is a defect that predated

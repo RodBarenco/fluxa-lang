@@ -30,6 +30,8 @@ version = "0.1.0"
 
 [libs]
 std.strings = "1.0"
+std.image = "1.0"
+std.graph = "1.0"
 TOML
 
 PASS=0; FAIL=0
@@ -160,6 +162,108 @@ Block B { str name = ""  fn build(int n) nil {
 Block b typeof B
 b.build(NNN)
 print("R", b.name)
+FLX
+
+# The graphics primitives added in this release: each one is called at two
+# iteration counts, so anything they hold on to per call shows up as growth.
+# graph.init is deliberately outside the loop — a window is a resource, not a
+# per-iteration allocation, and the case here is the drawing, not the window.
+run_case "image rasteriser called in a loop" << 'FLX'
+import std image
+dyn im = image.new(16, 16)
+int arr dep[256] = 0
+int arr tris[15] = [0,0,10,0,0,  0,15,10,0,0,  15,0,10,0,0]
+int arr tex[16] = [255,0,0,255, 0,255,0,255, 0,0,255,255, 9,9,9,128]
+int arr g[4] = 1
+int i = 0
+int total = 0
+while i < NNN {
+    total = total + image.fill_tris(im, dep, tris, 1, tex, 2,2,2, 200, 1)
+    total = total + image.fill_rect(im, 1, 1, 4, 4, 16711680, 128)
+    total = total + image.fill_tri(im, 0, 0, 8, 0, 0, 8, 255, 64)
+    i = i + g[0]
+}
+print("R", total)
+image.discard(im)
+FLX
+
+run_case "image.update_rgba_rect in a loop" << 'FLX'
+import std image
+dyn im = image.new(8, 8)
+int arr px[16] = [1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16]
+int arr g[4] = 1
+int i = 0
+while i < NNN { image.update_rgba_rect(im, px, 0, 0, 2, 2)  i = i + g[0] }
+print("R done")
+image.discard(im)
+FLX
+
+run_case "graph primitives with alpha in a loop" << 'FLX'
+import std graph
+dyn w = graph.init(32, 32, "leak")
+int arr g[4] = 1
+int i = 0
+while i < NNN {
+    graph.begin_frame(w)
+    graph.clear(w, 0, 0, 0)
+    graph.draw_rect(w, 0, 0, 4, 4, 255, 0, 0, 128)
+    graph.draw_circle(w, 2, 2, 1, 0, 255, 0, 64)
+    graph.draw_line(w, 0, 0, 4, 4, 0, 0, 255, 200)
+    graph.draw_text(w, "x", 0, 0, 8, 255, 255, 255, 90)
+    graph.draw_triangle(w, 0, 0, 4, 0, 0, 4, 255, 255, 0, 30)
+    graph.end_frame(w)
+    i = i + g[0]
+}
+print("R done")
+graph.close(w)
+FLX
+
+run_case "3D camera, mesh and batch in a loop" << 'FLX'
+import std graph
+dyn w = graph.init(32, 32, "leak3d")
+dyn cam = graph.camera3d(0.0, 2.0, 5.0, 0.0, 0.0, 0.0)
+float arr verts[9] = [0.0,0.0,0.0, 1.0,0.0,0.0, 0.0,1.0,0.0]
+float arr uv[6] = [0.0,0.0, 1.0,0.0, 0.0,1.0]
+int arr co[12] = [255,0,0,255, 0,255,0,255, 0,0,255,255]
+dyn mesh = graph.mesh_upload(verts, 1, uv, co)
+int arr g[4] = 1
+int i = 0
+while i < NNN {
+    graph.camera3d_set(cam, 0.0, 2.0, 5.0, 0.0, 0.0, 0.0)
+    graph.begin_frame(w)
+    graph.begin_3d(w, cam)
+    graph.draw_grid(w, 4, 1.0)
+    graph.draw_cube(w, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 255, 0, 0, 200)
+    graph.draw_line3d(w, 0.0,0.0,0.0, 1.0,1.0,1.0, 255,255,0)
+    graph.draw_mesh(w, mesh, 0.0, 0.0, 0.0)
+    graph.draw_tris3d(w, verts, 1, nil, uv, co)
+    graph.end_3d(w)
+    graph.end_frame(w)
+    i = i + g[0]
+}
+print("R done")
+graph.mesh_free(mesh)
+graph.camera3d_free(cam)
+graph.close(w)
+FLX
+
+# A handle created and released every iteration is the case most likely to
+# leak: it is the only one where the lib allocates per call.
+run_case "3D handles created and freed per iteration" << 'FLX'
+import std graph
+dyn w = graph.init(32, 32, "leakh")
+float arr verts[9] = [0.0,0.0,0.0, 1.0,0.0,0.0, 0.0,1.0,0.0]
+int arr g[4] = 1
+int i = 0
+while i < NNN {
+    dyn cam = graph.camera3d(0.0, 2.0, 5.0, 0.0, 0.0, 0.0)
+    dyn m = graph.mesh_upload(verts, 1)
+    graph.mesh_free(m)
+    graph.camera3d_free(cam)
+    i = i + g[0]
+}
+print("R done")
+graph.close(w)
 FLX
 
 echo "────────────────────────────────────────────────────────────────────"

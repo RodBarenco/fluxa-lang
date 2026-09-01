@@ -127,6 +127,7 @@ static inline int graph_launch_url(const char *url) {
 #ifdef FLUXA_GRAPH_RAYLIB
 
 #include <raylib.h>
+#include <rlgl.h>   /* the triangle batch draw_tris submits into */
 
 /* The GPU cache stored in FluxaImageBuf.gpu_cache is a heap Texture2D. This hook
  * lets the neutral image buffer unload it on free without knowing the type;
@@ -384,6 +385,86 @@ static inline GraphWin *graph_unwrap(const Value *v, ErrStack *err,
     return (GraphWin *)v->as.dyn->items[0].as.ptr;
 }
 
+/* ── 3D ─────────────────────────────────────────────────────────────
+ * rmodels is already linked; what was missing was a door. This is the
+ * smallest surface that is actually useful: a camera, a way in and out of 3D
+ * mode, and a mesh you can upload once and draw many times — plus a triangle
+ * batch for callers who already hold their own geometry.
+ *
+ * This is not a replacement for image.fill_tris and does not compete with it.
+ * fill_tris keeps every pixel under the caller's control and produces the same
+ * bytes on every machine, which is what an image test, an emulator or an
+ * offline render needs. What follows hands the work to the GPU and accepts the
+ * GPU's rules in exchange for speed. */
+typedef struct {
+    double px, py, pz;   /* eye     */
+    double tx, ty, tz;   /* target  */
+    double fovy;         /* vertical field of view, degrees */
+} GraphCam3;
+
+/* An uploaded mesh. The stub records the shape so a program can be written and
+ * its handle discipline exercised headless; only the raylib backend owns GPU
+ * buffers. */
+typedef struct {
+    long tri_count;
+    int  has_uv, has_color;
+    int  uploaded;
+#ifdef FLUXA_GRAPH_RAYLIB
+    Mesh     mesh;
+    Material mat;
+    int      has_mat;
+#endif
+} GraphMesh3;
+
+/* Fluxa arrays hold int or float per element; geometry is read through this so
+ * either is accepted without widening any existing parameter. */
+static inline float graph_arr_f(const Value *a, long i) {
+    if (a[i].type == VAL_INT)   return (float)a[i].as.integer;
+    if (a[i].type == VAL_FLOAT) return (float)a[i].as.real;
+    return 0.0f;
+}
+static inline int graph_arr_u8(const Value *a, long i) {
+    long v = (a[i].type == VAL_INT) ? a[i].as.integer
+           : (a[i].type == VAL_FLOAT) ? (long)a[i].as.real : 0;
+    return v < 0 ? 0 : (v > 255 ? 255 : (int)v);
+}
+
+static inline Value graph_wrap_cam3(GraphCam3 *c) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=c;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+}
+static inline GraphCam3 *graph_unwrap_cam3(const Value *v, ErrStack *err,
+                                           int *had_error, int line, const char *fn) {
+    char eb[280];
+    if (v->type!=VAL_DYN||!v->as.dyn||v->as.dyn->count<1||
+        v->as.dyn->items[0].type!=VAL_PTR||!v->as.dyn->items[0].as.ptr) {
+        snprintf(eb,sizeof(eb),
+            "graph.%s: invalid camera cursor — use graph.camera3d() to create one",fn);
+        errstack_push(err,ERR_FLUXA,eb,"graph",line); *had_error=1; return NULL; }
+    return (GraphCam3 *)v->as.dyn->items[0].as.ptr;
+}
+
+static inline Value graph_wrap_mesh3(GraphMesh3 *m) {
+    FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
+    d->items=(Value *)malloc(sizeof(Value));
+    d->items[0].type=VAL_PTR; d->items[0].as.ptr=m;
+    d->count=1; d->cap=1;
+    Value v; v.type=VAL_DYN; v.as.dyn=d; return v;
+}
+static inline GraphMesh3 *graph_unwrap_mesh3(const Value *v, ErrStack *err,
+                                             int *had_error, int line, const char *fn) {
+    char eb[280];
+    if (v->type!=VAL_DYN||!v->as.dyn||v->as.dyn->count<1||
+        v->as.dyn->items[0].type!=VAL_PTR||!v->as.dyn->items[0].as.ptr) {
+        snprintf(eb,sizeof(eb),
+            "graph.%s: invalid mesh cursor — use graph.mesh_upload() to create one",fn);
+        errstack_push(err,ERR_FLUXA,eb,"graph",line); *had_error=1; return NULL; }
+    return (GraphMesh3 *)v->as.dyn->items[0].as.ptr;
+}
+
 static inline Value graph_wrap_font(GraphFont *f) {
     FluxaDyn *d=(FluxaDyn *)malloc(sizeof(FluxaDyn)); memset(d,0,sizeof(*d));
     d->items=(Value *)malloc(sizeof(Value));
@@ -520,6 +601,14 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
     GraphWin *(var)=graph_unwrap(&args[(idx)],err,had_error,line,fn_name); \
     if(!(var)) return graph_nil();
 
+#define GET_CAM3(idx,var) \
+    GraphCam3 *(var)=graph_unwrap_cam3(&args[(idx)],err,had_error,line,fn_name); \
+    if(!(var)) return graph_nil();
+
+#define GET_MESH3(idx,var) \
+    GraphMesh3 *(var)=graph_unwrap_mesh3(&args[(idx)],err,had_error,line,fn_name); \
+    if(!(var)) return graph_nil();
+
 #define GET_FONT(idx,var) \
     GraphFont *(var)=graph_unwrap_font(&args[(idx)],err,had_error,line,fn_name); \
     if(!(var)) return graph_nil();
@@ -531,6 +620,17 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 #define GET_INT(idx,var) \
     if(args[(idx)].type!=VAL_INT) GRAPH_ERR("expected int"); \
     long (var)=args[(idx)].as.integer;
+
+/* Optional trailing alpha. Absent means opaque — which is exactly what every
+ * one of these primitives did before the argument existed, so adding it cannot
+ * change what any existing program draws. */
+#define GRAPH_ALPHA(idx,var) \
+    long (var)=255; \
+    if (argc > (idx)) { \
+        if(args[(idx)].type!=VAL_INT) GRAPH_ERR("expected int alpha"); \
+        (var)=args[(idx)].as.integer; \
+        if((var)<0||(var)>255) GRAPH_ERR("alpha must be in the 0..255 range"); \
+    }
 
 /* GRAPH_NUM accepts int or float and yields a double. It exists only for the
  * functions added after v0.29 — every pre-existing function keeps GET_INT and
@@ -851,10 +951,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(7); GET_WIN(0,win);
         GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,w); GRAPH_NUM(4,h);
         GET_INT(5,r); GET_INT(6,g); NEED(8); GET_INT(7,bl);
+        GRAPH_ALPHA(8,ca);
         (void)win;(void)x;(void)y;(void)w;(void)h;(void)r;(void)g;(void)bl;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawRectangleLines((int)x,(int)y,(int)w,(int)h,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -863,11 +964,12 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(6); GET_WIN(0,win);
         GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,rad);
         GET_INT(4,r); GET_INT(5,g); GET_INT(6,bl);
+        GRAPH_ALPHA(7,ca);
         if (rad < 0.0) GRAPH_ERR("draw_circle_lines: radius must not be negative");
         (void)win;(void)x;(void)y;(void)rad;(void)r;(void)g;(void)bl;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawCircleLines((int)x,(int)y,(float)rad,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -876,13 +978,14 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(7); GET_WIN(0,win);
         GRAPH_NUM(1,x); GRAPH_NUM(2,y); GRAPH_NUM(3,inner); GRAPH_NUM(4,outer);
         GET_INT(5,r); GET_INT(6,g); NEED(8); GET_INT(7,bl);
+        GRAPH_ALPHA(8,ca);
         if (inner < 0.0 || outer < inner)
             GRAPH_ERR("draw_ring: need 0 <= inner_radius <= outer_radius");
         (void)win;(void)x;(void)y;(void)inner;(void)outer;(void)r;(void)g;(void)bl;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawRing((Vector2){(float)x,(float)y},(float)inner,(float)outer,
                  0.0f,360.0f,64,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)bl,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -892,6 +995,7 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         GRAPH_NUM(1,x1); GRAPH_NUM(2,y1); GRAPH_NUM(3,x2); GRAPH_NUM(4,y2);
         GRAPH_NUM(5,x3); GRAPH_NUM(6,y3);
         GET_INT(7,r); GET_INT(8,g); NEED(10); GET_INT(9,bl);
+        GRAPH_ALPHA(10,ca);
         (void)win;(void)x1;(void)y1;(void)x2;(void)y2;(void)x3;(void)y3;
         (void)r;(void)g;(void)bl;
 #ifdef FLUXA_GRAPH_RAYLIB
@@ -1237,10 +1341,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(8); GET_WIN(0,win);
         GET_INT(1,x); GET_INT(2,y); GET_INT(3,w); GET_INT(4,h);
         GET_INT(5,r); GET_INT(6,g); GET_INT(7,b);
+        GRAPH_ALPHA(8,ca);
         (void)win; (void)x; (void)y; (void)w; (void)h; (void)r; (void)g; (void)b;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawRectangle((int)x,(int)y,(int)w,(int)h,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -1249,10 +1354,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(7); GET_WIN(0,win);
         GET_INT(1,x); GET_INT(2,y); GET_INT(3,radius);
         GET_INT(4,r); GET_INT(5,g); GET_INT(6,b);
+        GRAPH_ALPHA(7,ca);
         (void)win; (void)x; (void)y; (void)radius; (void)r; (void)g; (void)b;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawCircle((int)x,(int)y,(float)radius,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -1261,10 +1367,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(8); GET_WIN(0,win);
         GET_INT(1,x1); GET_INT(2,y1); GET_INT(3,x2); GET_INT(4,y2);
         GET_INT(5,r); GET_INT(6,g); GET_INT(7,b);
+        GRAPH_ALPHA(8,ca);
         (void)win; (void)x1; (void)y1; (void)x2; (void)y2; (void)r; (void)g; (void)b;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawLine((int)x1,(int)y1,(int)x2,(int)y2,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -1273,10 +1380,11 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(8); GET_WIN(0,win);
         GET_STR(1,text); GET_INT(2,x); GET_INT(3,y); GET_INT(4,size);
         GET_INT(5,r); GET_INT(6,g); GET_INT(7,b);
+        GRAPH_ALPHA(8,ca);
         (void)win; (void)text; (void)x; (void)y; (void)size; (void)r; (void)g; (void)b;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawText(text,(int)x,(int)y,(int)size,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -1302,13 +1410,14 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
         NEED(9); GET_WIN(0,win); GET_FONT(1,fnt);
         GET_STR(2,text); GET_INT(3,x); GET_INT(4,y); GET_INT(5,size);
         GET_INT(6,r); GET_INT(7,g); GET_INT(8,b);
+        GRAPH_ALPHA(9,ca);
         (void)win; (void)fnt; (void)text; (void)x; (void)y; (void)size;
         (void)r; (void)g; (void)b;
 #ifdef FLUXA_GRAPH_RAYLIB
         DrawTextEx(fnt->font, text,
             (Vector2){(float)x,(float)y}, (float)size,
             (float)size / 10.0f,
-            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,255});
+            (Color){(unsigned char)r,(unsigned char)g,(unsigned char)b,(unsigned char)ca});
 #endif
         return graph_nil();
     }
@@ -1426,10 +1535,331 @@ static inline Value fluxa_std_graph_call(const char *fn_name,
 #endif
     }
 
+    /* ── graph.draw_tris(win, verts, count [, img] [, uvs] [, colors]) → int
+     * ── graph.draw_tris3d(win, verts, count [, img] [, uvs] [, colors]) → int
+     *
+     * A batch of triangles with an optional bound texture, per-vertex texture
+     * coordinates and per-vertex colour — what draw_triangle cannot express,
+     * and deliberately not offered per triangle: one call per triangle would
+     * put the cost straight back into the interpreter, which is the thing the
+     * batch shape exists to avoid.
+     *
+     *   verts   2D: 6 numbers per triangle (x, y per vertex), screen space.
+     *           3D: 9 numbers per triangle (x, y, z), world space — call it
+     *           between graph.begin_3d and graph.end_3d.
+     *   img     an image handle to bind as texture, or nil for untextured.
+     *   uvs     6 numbers per triangle (u, v per vertex, 0..1), or nil.
+     *   colors  12 numbers per triangle (r, g, b, a per vertex), or nil for
+     *           opaque white.
+     *
+     * Returns the number of triangles submitted. */
+    if (!strcmp(fn_name,"draw_tris") || !strcmp(fn_name,"draw_tris3d")) {
+        const int dim = (fn_name[9] == '3') ? 3 : 2;   /* draw_tris3d vs draw_tris */
+        NEED(3); GET_WIN(0,win);
+        if (args[1].type!=VAL_ARR || !args[1].as.arr.data)
+            GRAPH_ERR("draw_tris: verts must be an arr");
+        GET_INT(2,tri_count);
+        if (tri_count < 0) GRAPH_ERR("draw_tris: count must not be negative");
+        if (tri_count == 0) return graph_int(0);
+        if ((long)args[1].as.arr.size < tri_count*3*dim)
+            GRAPH_ERR("draw_tris: verts holds fewer numbers than the count needs");
+        const Value *vp = args[1].as.arr.data;
+
+        FluxaImageBuf *img = NULL;
+        if (argc >= 4 && args[3].type != VAL_NIL) {
+            img = (args[3].type==VAL_DYN && args[3].as.dyn &&
+                   args[3].as.dyn->count>0 &&
+                   args[3].as.dyn->items[0].type==VAL_PTR)
+                  ? (FluxaImageBuf *)args[3].as.dyn->items[0].as.ptr : NULL;
+            if (!fluxa_imgbuf_valid(img))
+                GRAPH_ERR("draw_tris: img must be a live image handle or nil");
+        }
+        const Value *uv = NULL;
+        if (argc >= 5 && args[4].type == VAL_ARR && args[4].as.arr.data) {
+            if ((long)args[4].as.arr.size < tri_count*6)
+                GRAPH_ERR("draw_tris: uvs holds fewer than count*6 numbers");
+            uv = args[4].as.arr.data;
+        } else if (argc >= 5 && args[4].type != VAL_NIL) {
+            GRAPH_ERR("draw_tris: uvs must be an arr or nil");
+        }
+        const Value *co = NULL;
+        if (argc >= 6 && args[5].type == VAL_ARR && args[5].as.arr.data) {
+            if ((long)args[5].as.arr.size < tri_count*12)
+                GRAPH_ERR("draw_tris: colors holds fewer than count*12 numbers");
+            co = args[5].as.arr.data;
+        } else if (argc >= 6 && args[5].type != VAL_NIL) {
+            GRAPH_ERR("draw_tris: colors must be an arr or nil");
+        }
+        (void)win; (void)vp; (void)uv; (void)co; (void)img;
+#ifdef FLUXA_GRAPH_RAYLIB
+        Texture2D *tex = NULL;
+        if (img) {
+            tex = graph_img_texture(img);
+            if (!tex) GRAPH_ERR("draw_tris: out of memory uploading the texture");
+        }
+        /* rlgl batches in runs of RL_TRIANGLES; rlCheckRenderBatchLimit gives
+         * the batch a chance to flush before a run would overflow it. */
+        rlSetTexture(tex ? tex->id : 0);
+        for (long t = 0; t < tri_count; t++) {
+            rlBegin(RL_TRIANGLES);
+            for (int k = 0; k < 3; k++) {
+                long vi = (t*3 + k);
+                if (co) {
+                    long c = vi*4;
+                    rlColor4ub((unsigned char)graph_arr_u8(co,c),
+                               (unsigned char)graph_arr_u8(co,c+1),
+                               (unsigned char)graph_arr_u8(co,c+2),
+                               (unsigned char)graph_arr_u8(co,c+3));
+                } else {
+                    rlColor4ub(255,255,255,255);
+                }
+                if (uv) rlTexCoord2f(graph_arr_f(uv,vi*2), graph_arr_f(uv,vi*2+1));
+                else    rlTexCoord2f(0.0f, 0.0f);
+                if (dim == 3)
+                    rlVertex3f(graph_arr_f(vp,vi*3), graph_arr_f(vp,vi*3+1),
+                               graph_arr_f(vp,vi*3+2));
+                else
+                    rlVertex2f(graph_arr_f(vp,vi*2), graph_arr_f(vp,vi*2+1));
+            }
+            rlEnd();
+        }
+        rlSetTexture(0);
+#endif
+        return graph_int(tri_count);
+    }
+
+    /* ── graph.camera3d(px,py,pz, tx,ty,tz [, fovy]) → dyn ────────── */
+    if (!strcmp(fn_name,"camera3d")) {
+        NEED(6);
+        GRAPH_NUM(0,px); GRAPH_NUM(1,py); GRAPH_NUM(2,pz);
+        GRAPH_NUM(3,tx); GRAPH_NUM(4,ty); GRAPH_NUM(5,tz);
+        double fovy = 45.0;
+        if (argc >= 7) { GRAPH_NUM(6,f); fovy = f; }
+        if (fovy <= 0.0 || fovy >= 180.0)
+            GRAPH_ERR("camera3d: fovy must be between 0 and 180 degrees");
+        GraphCam3 *c = (GraphCam3 *)calloc(1,sizeof(GraphCam3));
+        if (!c) GRAPH_ERR("camera3d: out of memory");
+        c->px=px; c->py=py; c->pz=pz;
+        c->tx=tx; c->ty=ty; c->tz=tz; c->fovy=fovy;
+        return graph_wrap_cam3(c);
+    }
+
+    /* ── graph.camera3d_set(cam, px,py,pz, tx,ty,tz [, fovy]) → nil ─
+     * Moving a camera every frame should not allocate one every frame. */
+    if (!strcmp(fn_name,"camera3d_set")) {
+        NEED(7); GET_CAM3(0,c);
+        GRAPH_NUM(1,px); GRAPH_NUM(2,py); GRAPH_NUM(3,pz);
+        GRAPH_NUM(4,tx); GRAPH_NUM(5,ty); GRAPH_NUM(6,tz);
+        if (argc >= 8) {
+            GRAPH_NUM(7,f);
+            if (f <= 0.0 || f >= 180.0)
+                GRAPH_ERR("camera3d_set: fovy must be between 0 and 180 degrees");
+            c->fovy = f;
+        }
+        c->px=px; c->py=py; c->pz=pz;
+        c->tx=tx; c->ty=ty; c->tz=tz;
+        return graph_nil();
+    }
+
+    /* ── graph.camera3d_free(cam) → nil ───────────────────────────── */
+    if (!strcmp(fn_name,"camera3d_free")) {
+        NEED(1); GET_CAM3(0,c);
+        free(c);
+        args[0].as.dyn->items[0].as.ptr = NULL;   /* a second free is caught */
+        return graph_nil();
+    }
+
+    /* ── graph.begin_3d(win, cam) / graph.end_3d(win) → nil ────────
+     * Everything drawn between the two is in world space. */
+    if (!strcmp(fn_name,"begin_3d")) {
+        NEED(2); GET_WIN(0,win); GET_CAM3(1,c);
+        (void)win; (void)c;
+#ifdef FLUXA_GRAPH_RAYLIB
+        Camera3D cam;
+        cam.position   = (Vector3){(float)c->px,(float)c->py,(float)c->pz};
+        cam.target     = (Vector3){(float)c->tx,(float)c->ty,(float)c->tz};
+        cam.up         = (Vector3){0.0f,1.0f,0.0f};
+        cam.fovy       = (float)c->fovy;
+        cam.projection = CAMERA_PERSPECTIVE;
+        BeginMode3D(cam);
+#endif
+        return graph_nil();
+    }
+    if (!strcmp(fn_name,"end_3d")) {
+        NEED(1); GET_WIN(0,win);
+        (void)win;
+#ifdef FLUXA_GRAPH_RAYLIB
+        EndMode3D();
+#endif
+        return graph_nil();
+    }
+
+    /* ── graph.mesh_upload(verts, tri_count [, uvs] [, colors]) → dyn
+     *   verts   9 numbers per triangle: x, y, z for each of three vertices
+     *   uvs     6 per triangle, or nil
+     *   colors  12 per triangle — r, g, b, a per vertex — or nil
+     * Uploaded once and drawn many times; that is the whole point of holding
+     * a handle instead of passing geometry on every call. */
+    if (!strcmp(fn_name,"mesh_upload")) {
+        NEED(2);
+        if (args[0].type!=VAL_ARR || !args[0].as.arr.data)
+            GRAPH_ERR("mesh_upload: verts must be an arr");
+        GET_INT(1,tri_count);
+        if (tri_count <= 0) GRAPH_ERR("mesh_upload: count must be positive");
+        if ((long)args[0].as.arr.size < tri_count*9)
+            GRAPH_ERR("mesh_upload: verts holds fewer than count*9 numbers");
+        const Value *vp = args[0].as.arr.data;
+
+        const Value *uv = NULL;
+        if (argc >= 3 && args[2].type == VAL_ARR && args[2].as.arr.data) {
+            if ((long)args[2].as.arr.size < tri_count*6)
+                GRAPH_ERR("mesh_upload: uvs holds fewer than count*6 numbers");
+            uv = args[2].as.arr.data;
+        } else if (argc >= 3 && args[2].type != VAL_NIL) {
+            GRAPH_ERR("mesh_upload: uvs must be an arr or nil");
+        }
+
+        const Value *co = NULL;
+        if (argc >= 4 && args[3].type == VAL_ARR && args[3].as.arr.data) {
+            if ((long)args[3].as.arr.size < tri_count*12)
+                GRAPH_ERR("mesh_upload: colors holds fewer than count*12 numbers");
+            co = args[3].as.arr.data;
+        } else if (argc >= 4 && args[3].type != VAL_NIL) {
+            GRAPH_ERR("mesh_upload: colors must be an arr or nil");
+        }
+
+        (void)vp; (void)uv; (void)co;   /* the stub records shape, not data */
+        GraphMesh3 *m = (GraphMesh3 *)calloc(1,sizeof(GraphMesh3));
+        if (!m) GRAPH_ERR("mesh_upload: out of memory");
+        m->tri_count = tri_count;
+        m->has_uv    = uv != NULL;
+        m->has_color = co != NULL;
+#ifdef FLUXA_GRAPH_RAYLIB
+        long vcount = tri_count*3;
+        memset(&m->mesh, 0, sizeof(m->mesh));
+        m->mesh.vertexCount   = (int)vcount;
+        m->mesh.triangleCount = (int)tri_count;
+        m->mesh.vertices  = (float *)MemAlloc((unsigned int)(vcount*3*sizeof(float)));
+        m->mesh.texcoords = (float *)MemAlloc((unsigned int)(vcount*2*sizeof(float)));
+        m->mesh.colors    = (unsigned char *)MemAlloc((unsigned int)(vcount*4));
+        if (!m->mesh.vertices || !m->mesh.texcoords || !m->mesh.colors) {
+            MemFree(m->mesh.vertices); MemFree(m->mesh.texcoords);
+            MemFree(m->mesh.colors); free(m);
+            GRAPH_ERR("mesh_upload: out of memory");
+        }
+        for (long i = 0; i < vcount*3; i++) m->mesh.vertices[i] = graph_arr_f(vp,i);
+        for (long i = 0; i < vcount*2; i++)
+            m->mesh.texcoords[i] = uv ? graph_arr_f(uv,i) : 0.0f;
+        for (long i = 0; i < vcount*4; i++)
+            m->mesh.colors[i] = co ? (unsigned char)graph_arr_u8(co,i) : 255;
+        UploadMesh(&m->mesh, false);
+        m->mat = LoadMaterialDefault();
+        m->has_mat = 1;
+#endif
+        m->uploaded = 1;
+        return graph_wrap_mesh3(m);
+    }
+
+    /* ── graph.draw_mesh(win, mesh, x, y, z [, scale] [, r,g,b[,a]]) → nil */
+    if (!strcmp(fn_name,"draw_mesh")) {
+        NEED(5); GET_WIN(0,win); GET_MESH3(1,m);
+        GRAPH_NUM(2,mx); GRAPH_NUM(3,my); GRAPH_NUM(4,mz);
+        double scale = 1.0;
+        if (argc >= 6) { GRAPH_NUM(5,sc); scale = sc; }
+        long cr=255,cg=255,cb=255;
+        if (argc >= 9) { GET_INT(6,rr); GET_INT(7,gg); GET_INT(8,bb);
+                         cr=rr; cg=gg; cb=bb; }
+        GRAPH_ALPHA(9,ca);
+        (void)win; (void)m; (void)mx; (void)my; (void)mz; (void)scale;
+        (void)cr; (void)cg; (void)cb; (void)ca;
+        if (!m->uploaded) GRAPH_ERR("draw_mesh: mesh has been freed");
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (m->has_mat) {
+            m->mat.maps[MATERIAL_MAP_DIFFUSE].color =
+                (Color){(unsigned char)cr,(unsigned char)cg,
+                        (unsigned char)cb,(unsigned char)ca};
+        }
+        /* Scale then translate, built by hand: raylib keeps the matrix
+         * helpers in raymath.h, and one uniform scale with a translation is
+         * not worth pulling a second header in for. Translation sits in
+         * m12..m14 of raylib's layout. */
+        Matrix t;
+        memset(&t, 0, sizeof(t));
+        t.m0 = (float)scale; t.m5 = (float)scale; t.m10 = (float)scale;
+        t.m12 = (float)mx;   t.m13 = (float)my;   t.m14 = (float)mz;
+        t.m15 = 1.0f;
+        DrawMesh(m->mesh, m->mat, t);
+#endif
+        return graph_nil();
+    }
+
+    /* ── graph.mesh_free(mesh) → nil ──────────────────────────────── */
+    if (!strcmp(fn_name,"mesh_free")) {
+        NEED(1); GET_MESH3(0,m);
+#ifdef FLUXA_GRAPH_RAYLIB
+        if (m->uploaded) UnloadMesh(m->mesh);
+        if (m->has_mat)  UnloadMaterial(m->mat);
+#endif
+        m->uploaded = 0;
+        free(m);
+        args[0].as.dyn->items[0].as.ptr = NULL;
+        return graph_nil();
+    }
+
+    /* ── graph.draw_cube(win, x,y,z, w,h,l, r,g,b [,a]) → nil ─────── */
+    if (!strcmp(fn_name,"draw_cube")) {
+        NEED(10); GET_WIN(0,win);
+        GRAPH_NUM(1,cx); GRAPH_NUM(2,cy); GRAPH_NUM(3,cz);
+        GRAPH_NUM(4,cw); GRAPH_NUM(5,ch); GRAPH_NUM(6,cl);
+        GET_INT(7,r); GET_INT(8,g); GET_INT(9,b);
+        GRAPH_ALPHA(10,ca);
+        (void)win;(void)cx;(void)cy;(void)cz;(void)cw;(void)ch;(void)cl;
+        (void)r;(void)g;(void)b;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawCube((Vector3){(float)cx,(float)cy,(float)cz},
+                 (float)cw,(float)ch,(float)cl,
+                 (Color){(unsigned char)r,(unsigned char)g,
+                         (unsigned char)b,(unsigned char)ca});
+#endif
+        return graph_nil();
+    }
+
+    /* ── graph.draw_line3d(win, x1,y1,z1, x2,y2,z2, r,g,b [,a]) → nil */
+    if (!strcmp(fn_name,"draw_line3d")) {
+        NEED(10); GET_WIN(0,win);
+        GRAPH_NUM(1,ax); GRAPH_NUM(2,ay); GRAPH_NUM(3,az);
+        GRAPH_NUM(4,bx); GRAPH_NUM(5,by); GRAPH_NUM(6,bz);
+        GET_INT(7,r); GET_INT(8,g); GET_INT(9,b);
+        GRAPH_ALPHA(10,ca);
+        (void)win;(void)ax;(void)ay;(void)az;(void)bx;(void)by;(void)bz;
+        (void)r;(void)g;(void)b;
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawLine3D((Vector3){(float)ax,(float)ay,(float)az},
+                   (Vector3){(float)bx,(float)by,(float)bz},
+                   (Color){(unsigned char)r,(unsigned char)g,
+                           (unsigned char)b,(unsigned char)ca});
+#endif
+        return graph_nil();
+    }
+
+    /* ── graph.draw_grid(win, slices, spacing) → nil ──────────────── */
+    if (!strcmp(fn_name,"draw_grid")) {
+        NEED(3); GET_WIN(0,win); GET_INT(1,slices); GRAPH_NUM(2,spacing);
+        (void)win; (void)slices; (void)spacing;
+        if (slices < 1 || slices > 4096)
+            GRAPH_ERR("draw_grid: slices must be between 1 and 4096");
+#ifdef FLUXA_GRAPH_RAYLIB
+        DrawGrid((int)slices, (float)spacing);
+#endif
+        return graph_nil();
+    }
+
 #undef GRAPH_ERR
 #undef NEED
 #undef GET_WIN
 #undef GET_FONT
+#undef GET_CAM3
+#undef GET_MESH3
 #undef GET_INT
 #undef GET_STR
 

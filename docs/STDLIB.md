@@ -1,5 +1,5 @@
 # Fluxa Standard Library
-**v0.30.3**
+**v0.30.4**
 
 Reference documentation for all 34 stdlib libs: `std.math`, `std.csv`, `std.json`, `std.json2`, `std.strings`, `std.time`, `std.video`, `std.fs`, `std.zlib`, `std.flxthread`, `std.cabi`, `std.cache`, `std.pid`, `std.libv`, `std.libdsp`, `std.crypto`, `std.sqlite`, `std.serial`, `std.i2c`, `std.httpc`, `std.https`, `std.mqtt`, `std.mcpc`, `std.mcps`, `std.websocket`, `std.http`, `std.mcp`, `std.graph`, `std.compute`, `std.image`, `std.infer`, `std.wserver`, `std.pg`, `std.sound`.
 
@@ -1491,6 +1491,56 @@ parameters marked *num* accept either `int` or `float`.
 | `graph.draw_ring(win, x, y, inner, outer, r, g, b)` | `nil` | Filled ring. Requires `0 <= inner <= outer`. |
 | `graph.draw_triangle(win, x1, y1, x2, y2, x3, y3, r, g, b)` | `nil` | Filled triangle. Either winding order draws — the vertices are reordered when needed. |
 
+**Alpha**
+
+`draw_rect`, `draw_circle`, `draw_line`, `draw_triangle`, `draw_text`,
+`draw_text_font`, `draw_rect_lines`, `draw_circle_lines` and `draw_ring` all
+accept one further argument: an alpha in `0..255`, at the end. Leaving it out
+means opaque, which is exactly what each of them did before the argument
+existed — every call written against the old arity keeps drawing the same
+thing. `graph.clear` has no alpha: it paints the background.
+
+**Triangle batches**
+
+Per-vertex colour and texture coordinates, which `draw_triangle` cannot
+express. Offered as a batch on purpose — a call per triangle would put the cost
+back in the interpreter, which is what the batch shape exists to avoid.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.draw_tris(win, verts, count[, img[, uvs[, colors]]])` | `int` | 2D batch in screen space: `verts` holds 6 numbers per triangle (`x, y` per vertex). |
+| `graph.draw_tris3d(win, verts, count[, img[, uvs[, colors]]])` | `int` | 3D batch in world space: 9 numbers per triangle (`x, y, z`). Call between `begin_3d` and `end_3d`. |
+
+`img` is an image handle bound as the texture, or `nil` for untextured. `uvs`
+holds 6 numbers per triangle (`u, v` per vertex, `0..1`) or `nil`. `colors`
+holds 12 per triangle (`r, g, b, a` per vertex) or `nil` for opaque white.
+Both return the number of triangles submitted.
+
+For a result that is identical on every machine — an image test, an emulator,
+an offline render — use `image.fill_tris` instead. These hand the work to the
+GPU and take the GPU's rules with it.
+
+**3D**
+
+The smallest surface that is actually useful: a camera, a way in and out of 3D
+mode, and a mesh uploaded once and drawn many times. Cursors follow the same
+discipline as fonts and render targets — create, use, release — and a released
+cursor is refused with a clear error rather than crashing.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `graph.camera3d(px, py, pz, tx, ty, tz[, fovy])` | `dyn` | Camera at `p` looking at `t`; `fovy` in degrees, 45 by default, and must be strictly between 0 and 180. |
+| `graph.camera3d_set(cam, px, py, pz, tx, ty, tz[, fovy])` | `nil` | Move an existing camera. Moving one every frame should not allocate one every frame. |
+| `graph.camera3d_free(cam)` | `nil` | Release the camera cursor. |
+| `graph.begin_3d(win, cam)` | `nil` | Everything drawn until `end_3d` is in world space. |
+| `graph.end_3d(win)` | `nil` | Leave 3D mode. |
+| `graph.mesh_upload(verts, count[, uvs[, colors]])` | `dyn` | Upload a mesh: `verts` holds 9 numbers per triangle, `uvs` 6, `colors` 12. Upload once, draw many times. |
+| `graph.draw_mesh(win, mesh, x, y, z[, scale[, r, g, b[, a]]])` | `nil` | Draw an uploaded mesh, uniformly scaled and translated, tinted by the colour when given. |
+| `graph.mesh_free(mesh)` | `nil` | Release the mesh and its GPU buffers. |
+| `graph.draw_cube(win, x, y, z, w, h, l, r, g, b[, a])` | `nil` | Axis-aligned box. |
+| `graph.draw_line3d(win, x1, y1, z1, x2, y2, z2, r, g, b[, a])` | `nil` | Line in world space. |
+| `graph.draw_grid(win, slices, spacing)` | `nil` | Reference grid on the XZ plane; `slices` is 1–4096. |
+
 **Off-screen render targets**
 
 An extra draw surface, for post-processing or for composing a layer once and
@@ -1687,13 +1737,57 @@ validate/re-encode untrusted images server-side before redistributing them.
 | `image.sload(path[, max_bytes[, max_edge]])` | `dyn` | **Secure** decode of an untrusted file: validates size, magic bytes (PNG or QOI only), and dimensions around the decode, to shrink the attack surface of hostile images. Defaults: ≤24 MB, ≤8192 px per edge. Pass `max_bytes` / `max_edge` to tighten the bounds to what your own images should never exceed (e.g. `sload(p, 262144, 1200)` for game cards). Same result as `load` for a valid file within limits. **Needs `danger`.** |
 | `image.resize(img, w, h)` | `nil` | Scale in place (Bicubic on the codec backend, nearest-neighbour on stub) |
 | `image.update_rgba(img, pixels)` | `nil` | Replace every pixel from a tightly packed row-major `int arr` of RGBA components. Requires exactly `width * height * 4` values in `0..255`; invalid input leaves the image unchanged. The next graph draw refreshes its cached texture. |
+| `image.update_rgba_rect(img, pixels, x, y, w, h)` | `nil` | Replace one rectangle instead of the whole image, so a caller that changes a corner pays for the corner. Requires exactly `w * h * 4` values in `0..255` and the rectangle inside the image; invalid input leaves the image unchanged. |
 | `image.blit(dst, src, x, y[, mask])` | `nil` | Compose `src` onto `dst` at (x,y), alpha-blended and clipped. Optional `mask` image gates the source by the mask's alpha (for clipped/rounded frames). Pure RGBA — both backends. |
+| `image.fill_tris(dst, depth, tris, count, tex, tex_w, tex_h, tex_stride, alpha, flags[, rgb])` | `int` | Rasterise a batch of textured, depth-tested triangles; returns pixels written. See the rules below. |
+| `image.fill_rect(dst, x, y, w, h, rgb[, alpha])` | `int` | Flat rectangle, alpha-blended and clipped; returns pixels written. |
+| `image.fill_tri(dst, x0, y0, x1, y1, x2, y2, rgb[, alpha])` | `int` | One flat triangle, drawn whichever way it is wound; returns pixels written. |
 | `image.width(img)` | `int` | Width in pixels |
 | `image.height(img)` | `int` | Height in pixels |
 | `image.set_text(path, key, text[, compress])` | `bool` | Embed a text field in an existing PNG as an `iTXt` chunk. `key` is a 1–79 char Latin-1 keyword, `text` is UTF-8. Without the 4th arg the text is stored uncompressed; pass a 4th arg to deflate it. **PNG only. Needs `danger`.** |
 | `image.get_text(path, key)` | `str` | Read the UTF-8 text from the **first** PNG `iTXt` chunk whose keyword equals `key`. Transparently reads both uncompressed and deflate-compressed iTXt. Returns `""` when the keyword does not exist. Does **not** decode pixels — only scans PNG chunks. `key` follows the same 1–79 char Latin-1 rule as `set_text`. **PNG only. Needs `danger`.** |
 | `image.discard(img)` | `nil` | Release the buffer (idempotent; also releases a `graph.capture` handle) |
 | `image.version()` | `str` | Backend version (reports whether the codec is present) |
+
+**Rasterising with `image.fill_tris`**
+
+Per-pixel work cannot live in Fluxa. A textured, depth-tested fill runs around
+thirty-five operations per written pixel; at the cost of one iteration of a
+compiled loop, a 640×480 frame is a quarter of a second, against single-digit
+milliseconds for the same work in C. The floor is the instruction count per
+pixel, so no amount of work on the language side closes that gap. The call is
+therefore a **batch** — one per texture, never one per triangle, because a call
+per triangle puts the cost straight back where it was.
+
+| Argument | Meaning |
+|---|---|
+| `tris` | `int arr`, 15 values per triangle: `x, y, z, u, v` for each of three vertices, in **screen space** — projection stays with the caller. `u` and `v` are in 1/256 texel units. |
+| `depth` | `int arr` of `width * height`, or `nil` to draw with no depth test. |
+| `tex` | `int arr` of RGBA components, or `nil` to draw the flat colour `rgb`. |
+| `tex_stride` | Row stride of the texture in texels; equals `tex_w` for a tightly packed texture. |
+| `alpha` | `0..255`, multiplied by the texel's own alpha. |
+| `flags` | `1` front faces, `2` back faces, `4` keep the smaller z instead of the larger, and the **depth-write alpha threshold** in bits 8..15 (e.g. `1 + (200 << 8)`). |
+| `rgb` | Optional packed `0xRRGGBB` used when `tex` is `nil`; white by default. |
+
+These are fixed and will not drift, because callers depend on them bit for bit:
+
+- Screen `y` grows downward, so a **negative signed area is the front face**.
+  The triangle `(0,0) (7,0) (0,7)` is a *back* face; reversing the vertex order
+  makes it a front face. Prefer flipping the flag over reordering geometry.
+- Barycentric weights come from integer edge functions, and **every division
+  truncates toward zero**.
+- A texel coordinate wraps with `%`, and a negative result is corrected by
+  adding the dimension once.
+- The **texel's own alpha multiplies** the `alpha` argument.
+- A fully opaque pixel is written straight; anything else blends as
+  `(src * a + dst * (255 - a)) / 255`. The destination alpha is set to 255.
+- Depth is written **only above the threshold**, so a translucent texel does
+  not hide what is behind it.
+- A degenerate (zero-area) triangle draws nothing.
+- Sizes and handles are checked before anything is drawn, so a rejected call
+  leaves the destination untouched. Texture components outside `0..255` are
+  **clamped rather than rejected** — a batch draws as it goes, and failing
+  midway would leave a half-drawn frame with no way back.
 
 **Reading metadata is bounded.** `get_text` streams the PNG chunk by chunk
 rather than loading the file into memory, and validates the container as it

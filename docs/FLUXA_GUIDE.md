@@ -1,6 +1,6 @@
 # How to Program in Fluxa
 
-**v0.30.3**
+**v0.30.4**
 
 A step-by-step reference for writing correct Fluxa programs. Read this before writing
 any Fluxa code — especially the Block section (§8), the `danger` rules (§9), and the

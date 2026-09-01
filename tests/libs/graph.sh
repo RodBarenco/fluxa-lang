@@ -15,6 +15,10 @@ fail() { printf "  FAIL  libs/graph/%s\n    expected: %s\n    got:      %s\n" "$
 
 toml() { printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\n' > "$P/fluxa.toml"; }
 run()  { toml; cat > "$P/main.flx"; timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true; }
+# The triangle batch binds an image as its texture, so that block needs both
+# libs declared; every other case keeps the graph-only manifest above.
+toml2() { printf '[project]\nname="t"\nentry="main.flx"\n[libs]\nstd.graph="1.0"\nstd.image="1.0"\n' > "$P/fluxa.toml"; }
+run2() { toml2; cat > "$P/main.flx"; timeout 5s "$FLUXA" run "$P/main.flx" -proj "$P" 2>&1 || true; }
 
 echo "── std.graph ────────────────────────────────────────────────────"
 
@@ -914,5 +918,157 @@ echo "$out" | grep -qi "scale must be positive" && pass "draw_image_tint_scale_v
     || fail "draw_image_tint_scale_validated" "scale must be positive" "$out"
 
 echo "────────────────────────────────────────────────────────────────"
+# ── optional alpha on the drawing primitives ─────────────────────
+# The argument is added at the end and defaults to opaque, which is exactly
+# what these primitives did before it existed — every call written against the
+# old arity has to keep working unchanged.
+out=$(run << 'FLX'
+import std graph
+dyn w = graph.init(64, 48, "t")
+graph.begin_frame(w)
+graph.clear(w, 0, 0, 0)
+graph.draw_rect(w, 0, 0, 10, 10, 255, 0, 0)
+graph.draw_circle(w, 5, 5, 3, 0, 255, 0)
+graph.draw_line(w, 0, 0, 10, 10, 0, 0, 255)
+graph.draw_text(w, "hi", 1, 1, 8, 255, 255, 255)
+graph.draw_triangle(w, 0, 0, 5, 0, 0, 5, 255, 255, 0)
+graph.draw_rect_lines(w, 0, 0, 4, 4, 1, 2, 3)
+graph.draw_circle_lines(w, 5, 5, 2, 1, 2, 3)
+graph.draw_ring(w, 5, 5, 1, 2, 1, 2, 3)
+print("OLDARITY")
+graph.draw_rect(w, 0, 0, 10, 10, 255, 0, 0, 128)
+graph.draw_circle(w, 5, 5, 3, 0, 255, 0, 64)
+graph.draw_line(w, 0, 0, 10, 10, 0, 0, 255, 200)
+graph.draw_text(w, "hi", 1, 1, 8, 255, 255, 255, 90)
+graph.draw_triangle(w, 0, 0, 5, 0, 0, 5, 255, 255, 0, 30)
+graph.draw_rect_lines(w, 0, 0, 4, 4, 1, 2, 3, 10)
+graph.draw_circle_lines(w, 5, 5, 2, 1, 2, 3, 10)
+graph.draw_ring(w, 5, 5, 1, 2, 1, 2, 3, 10)
+print("NEWARITY")
+graph.end_frame(w)
+danger { graph.draw_rect(w, 0, 0, 1, 1, 1, 1, 1, 300) }
+if err != nil { print("RANGE") }
+graph.close(w)
+FLX
+)
+echo "$out" | grep -q "OLDARITY" && pass "alpha_old_arity_unchanged" \
+    || fail "alpha_old_arity_unchanged" "OLDARITY" "$out"
+echo "$out" | grep -q "NEWARITY" && pass "alpha_new_arity_accepted" \
+    || fail "alpha_new_arity_accepted" "NEWARITY" "$out"
+echo "$out" | grep -q "RANGE" && pass "alpha_range_validated" \
+    || fail "alpha_range_validated" "RANGE" "$out"
+
+# ── 3D ───────────────────────────────────────────────────────────
+# The handle discipline is what the stub can prove: create, use, release, and
+# a clear error when a released cursor is used again.
+out=$(run << 'FLX'
+import std graph
+dyn w = graph.init(64, 48, "t")
+dyn cam = graph.camera3d(0.0, 2.0, 5.0, 0.0, 0.0, 0.0)
+graph.camera3d_set(cam, 0.0, 3.0, 6.0, 0.0, 0.0, 0.0, 60.0)
+float arr verts[9] = [0.0,0.0,0.0, 1.0,0.0,0.0, 0.0,1.0,0.0]
+float arr uvs[6] = [0.0,0.0, 1.0,0.0, 0.0,1.0]
+int arr cols[12] = [255,0,0,255, 0,255,0,255, 0,0,255,255]
+dyn mesh = graph.mesh_upload(verts, 1, uvs, cols)
+dyn plain = graph.mesh_upload(verts, 1)
+graph.begin_frame(w)
+graph.clear(w, 0, 0, 0)
+graph.begin_3d(w, cam)
+graph.draw_grid(w, 10, 1.0)
+graph.draw_cube(w, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 255, 0, 0)
+graph.draw_cube(w, 2.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0, 255, 0, 128)
+graph.draw_line3d(w, 0.0,0.0,0.0, 1.0,1.0,1.0, 255,255,0)
+graph.draw_mesh(w, mesh, 0.0, 0.0, 0.0)
+graph.draw_mesh(w, plain, 1.0, 0.0, 0.0, 2.0, 255, 0, 255, 200)
+graph.end_3d(w)
+graph.end_frame(w)
+print("DREW3D")
+graph.mesh_free(mesh)
+danger { graph.draw_mesh(w, mesh, 0.0, 0.0, 0.0) }
+if err != nil { print("MESHFREED") }
+graph.camera3d_free(cam)
+danger { graph.begin_3d(w, cam) }
+if err != nil { print("CAMFREED") }
+graph.mesh_free(plain)
+graph.close(w)
+FLX
+)
+echo "$out" | grep -q "DREW3D" && pass "3d_camera_mesh_and_shapes" \
+    || fail "3d_camera_mesh_and_shapes" "DREW3D" "$out"
+echo "$out" | grep -q "MESHFREED" && pass "3d_released_mesh_cursor_rejected" \
+    || fail "3d_released_mesh_cursor_rejected" "MESHFREED" "$out"
+echo "$out" | grep -q "CAMFREED" && pass "3d_released_camera_cursor_rejected" \
+    || fail "3d_released_camera_cursor_rejected" "CAMFREED" "$out"
+
+out=$(run << 'FLX'
+import std graph
+dyn w = graph.init(64, 48, "t")
+float arr verts[9] = [0.0,0.0,0.0, 1.0,0.0,0.0, 0.0,1.0,0.0]
+danger { graph.mesh_upload(verts, 2) }
+if err != nil { print("VERTSHORT") }
+danger { graph.mesh_upload(verts, 0) }
+if err != nil { print("COUNT") }
+float arr shortuv[2] = [0.0, 0.0]
+danger { graph.mesh_upload(verts, 1, shortuv) }
+if err != nil { print("UVSHORT") }
+danger { graph.camera3d(0.0,0.0,0.0, 0.0,0.0,0.0, 400.0) }
+if err != nil { print("FOVY") }
+graph.close(w)
+FLX
+)
+for k in VERTSHORT COUNT UVSHORT FOVY; do
+    echo "$out" | grep -q "$k" && pass "3d_rejects_$k" \
+        || fail "3d_rejects_$k" "$k" "$out"
+done
+
+# ── triangle batch ───────────────────────────────────────────────
+# Per-vertex colour and texture coordinates, which draw_triangle cannot
+# express. Offered as a batch on purpose: one call per triangle would put the
+# cost back in the interpreter, which is what the batch shape exists to avoid.
+out=$(run2 << 'FLX'
+import std graph
+import std image
+dyn w = graph.init(64, 48, "t")
+dyn img = image.new(2, 2)
+int arr px[16] = [255,0,0,255, 0,255,0,255, 0,0,255,255, 255,255,0,255]
+image.update_rgba(img, px)
+float arr v2[6] = [0.0,0.0, 10.0,0.0, 0.0,10.0]
+float arr v3[9] = [0.0,0.0,0.0, 1.0,0.0,0.0, 0.0,1.0,0.0]
+float arr uv[6] = [0.0,0.0, 1.0,0.0, 0.0,1.0]
+int arr co[12] = [255,0,0,255, 0,255,0,255, 0,0,255,128]
+dyn cam = graph.camera3d(0.0,2.0,5.0, 0.0,0.0,0.0)
+graph.begin_frame(w)
+graph.clear(w, 0,0,0)
+print("B2", graph.draw_tris(w, v2, 1))
+print("B2TEX", graph.draw_tris(w, v2, 1, img, uv))
+print("B2COL", graph.draw_tris(w, v2, 1, nil, nil, co))
+print("B0", graph.draw_tris(w, v2, 0))
+graph.begin_3d(w, cam)
+print("B3", graph.draw_tris3d(w, v3, 1, img, uv, co))
+graph.end_3d(w)
+graph.end_frame(w)
+danger { graph.draw_tris(w, v2, 5) }
+if err != nil { print("VSHORT") }
+float arr shortuv[2] = [0.0, 0.0]
+danger { graph.draw_tris(w, v2, 1, nil, shortuv) }
+if err != nil { print("USHORT") }
+int arr shortco[4] = [1,2,3,4]
+danger { graph.draw_tris(w, v2, 1, nil, nil, shortco) }
+if err != nil { print("CSHORT") }
+image.discard(img)
+graph.camera3d_free(cam)
+graph.close(w)
+FLX
+)
+echo "$out" | grep -q "B2 1"    && pass "batch_2d_plain"   || fail "batch_2d_plain" "B2 1" "$out"
+echo "$out" | grep -q "B2TEX 1" && pass "batch_2d_texture" || fail "batch_2d_texture" "B2TEX 1" "$out"
+echo "$out" | grep -q "B2COL 1" && pass "batch_2d_colors"  || fail "batch_2d_colors" "B2COL 1" "$out"
+echo "$out" | grep -q "B0 0"    && pass "batch_zero_count" || fail "batch_zero_count" "B0 0" "$out"
+echo "$out" | grep -q "B3 1"    && pass "batch_3d"         || fail "batch_3d" "B3 1" "$out"
+for k in VSHORT USHORT CSHORT; do
+    echo "$out" | grep -q "$k" && pass "batch_rejects_$k" \
+        || fail "batch_rejects_$k" "$k" "$out"
+done
+
 echo "  → std.graph: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.graph: PASS" && exit 0 || exit 1

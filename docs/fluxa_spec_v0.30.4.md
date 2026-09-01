@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.30.3 — Beta**
+**v0.30.4 — Beta**
 
-*Reflects runtime behavior shipped in v0.30.3.*
+*Reflects runtime behavior shipped in v0.30.4.*
 
 *Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 34 stdlib libs · Module System*
 

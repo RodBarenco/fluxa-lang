@@ -637,5 +637,149 @@ FLX
 echo "$out" | grep -qi "0..255" && pass "update_rgba_range_validated" \
     || fail "update_rgba_range_validated" "0..255 range" "$out"
 
+# ── update_rgba_rect ─────────────────────────────────────────────
+# Same rules as update_rgba over a named rectangle: inside the image, exactly
+# w*h*4 components, every one an int in 0..255, and nothing written unless all
+# of them are accepted.
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(4, 2)
+int arr full[32] = 0
+image.update_rgba(im, full)
+int arr px[8] = [9,9,9,255, 8,8,8,255]
+image.update_rgba_rect(im, px, 1, 0, 2, 1)
+print("RECT ok")
+danger { image.update_rgba_rect(im, px, 3, 0, 2, 1) }
+if err != nil { print("outside") }
+danger { image.update_rgba_rect(im, px, 0, 0, 1, 1) }
+if err != nil { print("size") }
+int arr bad[8] = [1,2,3,4, 5,6,999,8]
+danger { image.update_rgba_rect(im, bad, 0, 0, 2, 1) }
+if err != nil { print("range") }
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "RECT ok" && pass "update_rgba_rect_writes" \
+    || fail "update_rgba_rect_writes" "RECT ok" "$out"
+echo "$out" | grep -q "outside" && pass "update_rgba_rect_bounds" \
+    || fail "update_rgba_rect_bounds" "outside" "$out"
+echo "$out" | grep -q "size" && pass "update_rgba_rect_size" \
+    || fail "update_rgba_rect_size" "size" "$out"
+echo "$out" | grep -q "range" && pass "update_rgba_rect_range" \
+    || fail "update_rgba_rect_range" "range" "$out"
+
+# ── fill_tris ────────────────────────────────────────────────────
+# The rules a caller depends on bit for bit: which winding is a front face,
+# that depth keeps the larger z by default, that a degenerate triangle draws
+# nothing, and that the depth-write threshold keeps a translucent texel from
+# hiding what is behind it.
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(8, 8)
+int arr dep[64] = 0
+// screen y grows downward, so a positive signed area is the back face
+int arr back[15]  = [0,0,10,0,0,  7,0,10,0,0,  0,7,10,0,0]
+int arr front[15] = [0,0,10,0,0,  0,7,10,0,0,  7,0,10,0,0]
+print("FRONTFLAG", image.fill_tris(im, nil, front, 1, nil,0,0,0, 255, 1, 255),
+      image.fill_tris(im, nil, back, 1, nil,0,0,0, 255, 1, 255))
+print("BACKFLAG", image.fill_tris(im, nil, back, 1, nil,0,0,0, 255, 2, 255),
+      image.fill_tris(im, nil, front, 1, nil,0,0,0, 255, 2, 255))
+print("NOFLAG", image.fill_tris(im, nil, front, 1, nil,0,0,0, 255, 0, 255))
+int arr degen[15] = [0,0,1,0,0,  0,0,1,0,0,  0,0,1,0,0]
+print("DEGEN", image.fill_tris(im, nil, degen, 1, nil,0,0,0, 255, 3, 255))
+// depth: larger z wins, so the same shape drawn deeper writes nothing
+int arr near[15] = [0,0,20,0,0,  0,7,20,0,0,  7,0,20,0,0]
+int arr far[15]  = [0,0,5,0,0,   0,7,5,0,0,   7,0,5,0,0]
+print("DEPTH", image.fill_tris(im, dep, near, 1, nil,0,0,0, 255, 1, 255),
+      image.fill_tris(im, dep, far, 1, nil,0,0,0, 255, 1, 255))
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "FRONTFLAG 36 0" && pass "fill_tris_front_winding" \
+    || fail "fill_tris_front_winding" "FRONTFLAG 36 0" "$out"
+echo "$out" | grep -q "BACKFLAG 36 0" && pass "fill_tris_back_winding" \
+    || fail "fill_tris_back_winding" "BACKFLAG 36 0" "$out"
+echo "$out" | grep -q "NOFLAG 0" && pass "fill_tris_no_face_flag_draws_nothing" \
+    || fail "fill_tris_no_face_flag_draws_nothing" "NOFLAG 0" "$out"
+echo "$out" | grep -q "DEGEN 0" && pass "fill_tris_degenerate_skipped" \
+    || fail "fill_tris_degenerate_skipped" "DEGEN 0" "$out"
+echo "$out" | grep -q "DEPTH 36 0" && pass "fill_tris_depth_keeps_larger_z" \
+    || fail "fill_tris_depth_keeps_larger_z" "DEPTH 36 0" "$out"
+
+# The texel's alpha multiplies the argument, and depth is written only above
+# the threshold in the high byte of flags — a translucent texel must not hide
+# what is behind it.
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(2, 1)
+int arr bg[8] = [0,0,0,255, 0,0,0,255]
+image.update_rgba(im, bg)
+int arr opaque[4] = [200, 100, 50, 255]
+int arr half[4]   = [0, 0, 0, 128]
+int arr t[15] = [0,0,50,0,0,  0,1,50,0,0,  2,0,50,0,0]
+int arr dep[2] = 0
+int thr = 1 + 51200            // FRONT, depth-write threshold 200
+print("TRANS", image.fill_tris(im, dep, t, 1, half, 1,1,1, 255, thr), dep[0])
+print("OPAQUE", image.fill_tris(im, dep, t, 1, opaque, 1,1,1, 255, thr), dep[0])
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "TRANS 2 0" && pass "fill_tris_translucent_skips_depth" \
+    || fail "fill_tris_translucent_skips_depth" "TRANS 2 0" "$out"
+echo "$out" | grep -q "OPAQUE 2 50" && pass "fill_tris_opaque_writes_depth" \
+    || fail "fill_tris_opaque_writes_depth" "OPAQUE 2 50" "$out"
+
+# Sizes and handles are refused before anything is drawn, so the destination
+# survives a rejected call intact.
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(4, 4)
+int arr t[15] = [0,0,1,0,0,  0,3,1,0,0,  3,0,1,0,0]
+int arr shortd[4] = 0
+danger { image.fill_tris(im, shortd, t, 1, nil,0,0,0, 255, 1) }
+if err != nil { print("depthsize") }
+danger { image.fill_tris(im, nil, t, 2, nil,0,0,0, 255, 1) }
+if err != nil { print("trissize") }
+int arr tex[4] = [1,2,3,4]
+danger { image.fill_tris(im, nil, t, 1, tex, 4,4,4, 255, 1) }
+if err != nil { print("texsize") }
+danger { image.fill_tris(im, nil, t, 1, nil,0,0,0, 300, 1) }
+if err != nil { print("alpha") }
+image.discard(im)
+FLX
+)
+for k in depthsize trissize texsize alpha; do
+    echo "$out" | grep -q "$k" && pass "fill_tris_rejects_$k" \
+        || fail "fill_tris_rejects_$k" "$k" "$out"
+done
+
+# ── fill_rect and fill_tri ───────────────────────────────────────
+out=$(run << 'FLX'
+import std image
+dyn im = image.new(8, 8)
+print("RECT", image.fill_rect(im, 1, 1, 3, 2, 16711680))
+print("CLIP", image.fill_rect(im, 6, 6, 10, 10, 255))
+print("ALPHA0", image.fill_rect(im, 0, 0, 4, 4, 255, 0))
+print("TRI", image.fill_tri(im, 0, 0, 7, 0, 0, 7, 255))
+print("TRIREV", image.fill_tri(im, 0, 0, 0, 7, 7, 0, 255))
+print("TRIDEGEN", image.fill_tri(im, 1, 1, 1, 1, 1, 1, 255))
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "RECT 6" && pass "fill_rect_area" \
+    || fail "fill_rect_area" "RECT 6" "$out"
+echo "$out" | grep -q "CLIP 4" && pass "fill_rect_clips_to_image" \
+    || fail "fill_rect_clips_to_image" "CLIP 4" "$out"
+echo "$out" | grep -q "ALPHA0 0" && pass "fill_rect_alpha_zero_draws_nothing" \
+    || fail "fill_rect_alpha_zero_draws_nothing" "ALPHA0 0" "$out"
+# fill_tri draws either winding — a lone 2D triangle should not have to know
+# about the face rules fill_tris needs for depth-sorted geometry
+echo "$out" | grep -q "TRI 36" && pass "fill_tri_draws" \
+    || fail "fill_tri_draws" "TRI 36" "$out"
+echo "$out" | grep -q "TRIREV 36" && pass "fill_tri_either_winding" \
+    || fail "fill_tri_either_winding" "TRIREV 36" "$out"
+echo "$out" | grep -q "TRIDEGEN 0" && pass "fill_tri_degenerate_skipped" \
+    || fail "fill_tri_degenerate_skipped" "TRIDEGEN 0" "$out"
+
 echo "  → std.image: $PASS passed, $FAILS failed"
 [ "$FAILS" -eq 0 ] && echo "  → std.image: PASS" && exit 0 || exit 1
