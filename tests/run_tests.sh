@@ -556,6 +556,17 @@ else
     ERRORS="$ERRORS\n  vm/call-arg-in-loop"
 fi
 
+_out=$(bash "$SCRIPT_DIR/vm_fn_chunk.sh" --fluxa "$FLUXA" 2>&1)
+if echo "$_out" | grep -q "vm_fn_chunk: PASS"; then
+    echo "  PASS  vm/fn-chunk-indexing"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL  vm/fn-chunk-indexing"
+    echo "$_out" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+    ERRORS="$ERRORS\n  vm/fn-chunk-indexing"
+fi
+
 _out=$(bash "$SCRIPT_DIR/vm_value_semantics.sh" --fluxa "$FLUXA" 2>&1)
 if echo "$_out" | grep -q "vm_value_semantics: PASS"; then
     echo "  PASS  vm/value-semantics"

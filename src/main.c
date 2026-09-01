@@ -156,7 +156,7 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
 
     pool_init(pool);
 
-    typedef struct { char ns[64]; char *src; } ModEntry;
+    typedef struct { char ns[64]; char *src; int src_id; } ModEntry;
     /* Fluxa targets small systems, so allocate exactly module_cap slots rather
      * than reserving a large fixed array. Default cap is 32 (see config). */
     if (module_cap < 1) module_cap = 32;
@@ -206,6 +206,9 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
                     snprintf(mods[mod_count].ns, sizeof(mods[mod_count].ns),
                              "%.63s", ns);
                     mods[mod_count].src = mod_src;
+                    /* Register the path while it is still in scope; the entry
+                     * then carries an id instead of a 640-byte buffer. */
+                    mods[mod_count].src_id = fluxa_src_id(fpath);
                     mod_count++;
                 }
             }
@@ -224,6 +227,7 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
 
     /* Pass 2: parse all modules then main into a single program node */
     Parser main_p = parser_new(main_src, pool);
+    main_p.src_id = (uint8_t)fluxa_src_id(path);
 
     ASTNode *program = pool_alloc_node(pool);
     program->type             = NODE_PROGRAM;
@@ -232,7 +236,8 @@ static ASTNode *parse_file_ex(const char *path, ASTPool *pool,
 
     for (int i = 0; i < mod_count; i++) {
         int err = parser_parse_module(&main_p, program,
-                                       mods[i].ns, mods[i].src);
+                                       mods[i].ns, mods[i].src,
+                                       mods[i].src_id);
         free(mods[i].src);
         if (err != 0) {
             fprintf(stderr, "[fluxa] error in module '%s'\n", mods[i].ns);

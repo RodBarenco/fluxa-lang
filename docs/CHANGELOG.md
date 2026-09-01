@@ -1,5 +1,79 @@
 # Fluxa-lang Changelog
 
+## v0.30.3 — frame sizing, one ownership contract, and function-body indexing
+
+Everything in this release except the last section is a defect that predated
+the bytecode work and only became reachable once loops started compiling.
+
+### A call inside a compiled loop destroyed the caller's locals
+
+The frame a nested call saves and restores is bounded by `rt->stack_size`. The
+evaluator raises that bound whenever it writes a local, but the VM writes
+locals straight into `stack[resolved_offset]` and never did — so a loop body
+with more locals than the temporary watermark had slots above the bound zeroed
+by the callee and never restored. A caller's live local came back nil and the
+callee's own parameter went unbound; in one real program a 247-declaration
+loop body reported `undefined variable` from a function three frames away.
+
+A chunk now records the highest param/local slot it names and the runtime
+sizes the frame by it. The work is done while compiling; nothing is added to
+the per-iteration path.
+
+### A stdlib call that failed printed nothing at all
+
+Libraries report by pushing onto the error stack and setting `had_error`, which
+is what a `danger` block reads. Outside one nobody read it: a misspelled
+library function ended the process with a non-zero status and no diagnostic,
+which reads exactly like a silently returned nil. Both dispatch sites now
+surface what the call pushed.
+
+### Errors name the file they came from
+
+Modules are parsed one at a time and each numbers its own lines from 1, so a
+line number alone could not say which file it belonged to once several were
+imported. Every AST node now carries a one-byte source id — it fits in existing
+padding, `sizeof(ASTNode)` is unchanged — and errors read `nitro.flx:415`
+rather than `line 415`.
+
+### One ownership contract for inlined method bodies
+
+`eval_simple_expr` returned an owned reference for a string literal and a
+borrowed alias for a parameter or field, so each of its four consumers had to
+know which branch it had reached. The inline-call bridge retained
+unconditionally, correct for a borrowed alias and one reference too many for a
+literal: every method inlining `return "..."` leaked a string per call. Every
+branch now hands back an owned reference, as §13.6 already specified, and the
+consumers release or adopt accordingly.
+
+`scope_set` released the old entry before reading the incoming value, so
+`obj.f = obj.f` was a use-after-free unless the caller happened to hold an
+independent reference. It now copies before releasing and carries the same
+same-pointer guards `scope_set_owned` has, behind one comparison so an int
+store still walks past them.
+
+### str Block fields reach the bytecode path
+
+The field probe admitted `int`, `float` and `bool` only, so one assignment to a
+`str` field sent its whole enclosing loop back to the evaluator — in the
+reference project a single field accounted for 96,835 of those. `str` crosses
+as an owned reference through the field opcodes that already existed. Every
+`while` loop in that project now compiles.
+
+### Indexing inside function-body chunks
+
+A function body compiles to a chunk cached on its AST node and reused by every
+instance, so it could not consult the live array and refused all indexing —
+which excluded exactly the small helpers that are called millions of times.
+Eligibility is now decided from declarations alone; see the execution contract
+in the specification for the table. Measured on the shape of one such helper,
+the cost of a call falls from 362 ns to 157 ns.
+
+Element types are revalidated on every indexed read and write, so the
+compile-time decision is a performance boundary and not the thing safety rests
+on. `make build-asan` no longer hand-rolls a second flag set that omitted
+`_POSIX_C_SOURCE` and every std lib define, and `make test-leaks` runs the leak
+cases at two iteration counts and fails only when the allocation count grows.
+
 ## v0.30.2 — Block fields, logical operators and value semantics in the VM
 
 This is the first release whose public documentation and build manifest use the

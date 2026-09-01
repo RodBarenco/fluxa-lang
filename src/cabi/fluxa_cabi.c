@@ -162,7 +162,7 @@ static ASTNode *cabi_parse_file_ex(
     const char *path, ASTPool *pool,
     const char *mod_root, int module_cap)
 {
-    typedef struct { char ns[64]; char *src; } ModEntry;
+    typedef struct { char ns[64]; char *src; int src_id; } ModEntry;
     char *main_src = cabi_load_file(path);
     ModEntry *mods = NULL;
     int mod_count = 0;
@@ -213,6 +213,7 @@ static ASTNode *cabi_parse_file_ex(
                             return NULL;
                         }
                         snprintf(mods[mod_count].ns, sizeof(mods[mod_count].ns), "%.63s", ns);
+                        mods[mod_count].src_id = fluxa_src_id(fpath);
                         mod_count++;
                     }
                 }
@@ -230,6 +231,7 @@ static ASTNode *cabi_parse_file_ex(
     }
 
     main_p = parser_new(main_src, pool);
+    main_p.src_id = (uint8_t)fluxa_src_id(path);
     program = pool_alloc_node(pool);
     if (!program) {
         parser_free(&main_p); free(mods); free(main_src); pool_free(pool); return NULL;
@@ -241,7 +243,8 @@ static ASTNode *cabi_parse_file_ex(
     {
         int i;
         for (i = 0; i < mod_count; i++) {
-            int rc = parser_parse_module(&main_p, program, mods[i].ns, mods[i].src);
+            int rc = parser_parse_module(&main_p, program, mods[i].ns,
+                                         mods[i].src, mods[i].src_id);
             free(mods[i].src);
             if (rc != 0) {
                 int j;

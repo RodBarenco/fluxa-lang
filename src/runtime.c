@@ -135,6 +135,17 @@ void runtime_prst_headstone_resources(PrstPool *pool) {
 /* ── Error helpers ────────────────────────────────────────────────────────── */
 /* Sprint 8: rt_error_line includes line number in message and ErrEntry.
  * rt_error kept for compatibility — calls rt_error_line with line=0. */
+/* Where an error happened, as "file:line" when the file is known.  Modules are
+ * parsed one at a time and each numbers its own lines from 1, so a bare line
+ * number cannot be traced back to a file once several are imported. */
+static void rt_error_where(Runtime *rt, int line, char *out, size_t outsz) {
+    const char *src = fluxa_src_name(rt->current_src);
+    if (line > 0 && src) snprintf(out, outsz, " (%s:%d)", src, line);
+    else if (line > 0)   snprintf(out, outsz, " (line %d)", line);
+    else if (src)        snprintf(out, outsz, " (%s)", src);
+    else                 out[0] = '\0';
+}
+
 static void rt_error_line(Runtime *rt, const char *msg, int line) {
     /* If no explicit line given, use the last tracked line */
     int eff_line = (line > 0) ? line : rt->current_line;
@@ -144,12 +155,31 @@ static void rt_error_line(Runtime *rt, const char *msg, int line) {
                         : "<global>";
         errstack_push(&rt->err_stack, ERR_FLUXA, msg, ctx, eff_line);
     } else {
-        if (eff_line > 0)
-            fprintf(stderr, "[fluxa] Runtime error (line %d): %s\n", eff_line, msg);
-        else
-            fprintf(stderr, "[fluxa] Runtime error: %s\n", msg);
+        char where[192];
+        rt_error_where(rt, eff_line, where, sizeof(where));
+        fprintf(stderr, "[fluxa] Runtime error%s: %s\n", where, msg);
         rt->had_error = 1;
     }
+}
+
+/* A stdlib or FFI call reports by pushing onto the error stack and setting
+ * had_error, which is what a `danger` block reads.  Outside one, nobody reads
+ * it: the process used to exit non-zero having printed nothing at all, so a
+ * misspelled library function looked like a silent nil.  Surface whatever the
+ * call pushed, in the same shape rt_error_line prints. */
+static void rt_surface_lib_errors(Runtime *rt, int before) {
+    if (rt->danger_depth > 0) return;
+    if (rt->err_stack.count <= before) return;
+    char where[192];
+    rt_error_where(rt, rt->current_line, where, sizeof(where));
+    /* errstack_get indexes from the most recent, so walk the new entries from
+     * the oldest of them to report them in the order they were raised. */
+    for (int i = rt->err_stack.count - before - 1; i >= 0; i--) {
+        const ErrEntry *e = errstack_get(&rt->err_stack, i);
+        if (e) fprintf(stderr, "[fluxa] Runtime error%s: %s\n", where, e->message);
+    }
+    rt->err_stack.count = before;
+    rt->had_error = 1;
 }
 
 static void rt_error(Runtime *rt, const char *msg) {
@@ -430,7 +460,8 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
 /* v0.14: field access callbacks — Value* owner_kv for inline cache */
 static Value vm_get_field_callback(void *rt_opaque, Value *owner_kv, const char *field);
 static void  vm_set_field_callback(void *rt_opaque, Value *owner_kv, const char *field, Value val);
-static int   vm_indexable_callback(void *rt_opaque, const char *name, int resolved_offset);
+static int   vm_indexable_callback(void *rt_opaque, const ASTNode *fn_node,
+                                  const char *name, int resolved_offset);
 static const char *vm_probe_callback(void *rt_opaque, int kind,
                                      const char *owner, const char *name,
                                      int *flag);
@@ -987,10 +1018,88 @@ static int vm_array_is_primitive(Value *slot) {
     return t == VAL_NIL || t == VAL_INT || t == VAL_FLOAT || t == VAL_BOOL;
 }
 
-static int vm_indexable_callback(void *rt_opaque, const char *name,
-                                 int resolved_offset) {
+/* "int arr", "float arr", "bool arr" — a declared element type the compiled
+ * path can carry.  A bare "arr" parameter is untyped and "str arr" owns its
+ * elements, so neither qualifies. */
+static int arr_decl_type_is_value(const char *t) {
+    if (!t) return 0;
+    return strncmp(t, "int ",   4) == 0 ||
+           strncmp(t, "float ", 6) == 0 ||
+           strncmp(t, "bool ",  5) == 0 ||
+           strcmp(t, "int") == 0 || strcmp(t, "float") == 0 ||
+           strcmp(t, "bool") == 0;
+}
+
+/* Does this Block declaration own `fn_node` as one of its methods?  Only then
+ * do its field declarations describe what that function's body will see. */
+static int block_owns_fn(BlockDef *def, const ASTNode *fn_node) {
+    if (!def || !def->node || def->node->type != NODE_BLOCK_DECL) return 0;
+    for (int i = 0; i < def->node->as.block_decl.count; i++)
+        if (def->node->as.block_decl.members[i] == fn_node) return 1;
+    return 0;
+}
+
+/* Declared element type of an array named `name` in a Block declaration. */
+static const char *block_arr_decl_type(BlockDef *def, const char *name) {
+    if (!def || !def->node || def->node->type != NODE_BLOCK_DECL) return NULL;
+    for (int i = 0; i < def->node->as.block_decl.count; i++) {
+        ASTNode *m = def->node->as.block_decl.members[i];
+        if (m && m->type == NODE_ARR_DECL && m->as.arr_decl.arr_name &&
+            strcmp(m->as.arr_decl.arr_name, name) == 0) {
+            if (m->as.arr_decl.persistent) return NULL;  /* prst: pool rules */
+            return m->as.arr_decl.type_name;
+        }
+    }
+    return NULL;
+}
+
+/* Declared element type of an array local to a function body. */
+static const char *fn_local_arr_decl_type(const ASTNode *body, const char *name) {
+    if (!body || body->type != NODE_BLOCK_STMT) return NULL;
+    for (int i = 0; i < body->as.list.count; i++) {
+        ASTNode *st = body->as.list.children[i];
+        if (st && st->type == NODE_ARR_DECL && st->as.arr_decl.arr_name &&
+            strcmp(st->as.arr_decl.arr_name, name) == 0) {
+            if (st->as.arr_decl.persistent) return NULL;
+            return st->as.arr_decl.type_name;
+        }
+    }
+    return NULL;
+}
+
+/* A function-body chunk is cached on its AST node and reused for every later
+ * call, from any instance, so this answers only from declarations: the
+ * function's own parameters and array locals, and — when the function really
+ * is a method of the current instance's Block — that Block's array fields.
+ * The runtime revalidates the element type on every read and write, so this
+ * decides whether to emit the opcode, not whether it is safe. */
+static int vm_fn_indexable(Runtime *rt, const ASTNode *fn_node,
+                           const char *name) {
+    if (!fn_node || fn_node->type != NODE_FUNC_DECL) return 0;
+    for (int i = 0; i < fn_node->as.func_decl.param_count; i++) {
+        const char *pn = fn_node->as.func_decl.param_names[i];
+        if (pn && strcmp(pn, name) == 0)
+            return arr_decl_type_is_value(fn_node->as.func_decl.param_types[i]);
+    }
+    const char *t = fn_local_arr_decl_type(fn_node->as.func_decl.body, name);
+    if (t) return arr_decl_type_is_value(t);
+    if (rt->current_instance && block_owns_fn(rt->current_instance->def, fn_node)) {
+        t = block_arr_decl_type(rt->current_instance->def, name);
+        if (t) return arr_decl_type_is_value(t);
+    }
+    return 0;
+}
+
+static int vm_indexable_callback(void *rt_opaque, const ASTNode *fn_node,
+                                 const char *name, int resolved_offset) {
     Runtime *rt = (Runtime *)rt_opaque;
     if (!rt || !name || strcmp(name, "err") == 0) return 0;
+    if (prst_pool_has(RT_POOL(rt), name)) {
+        /* prst arrays carry pool synchronisation; a loop chunk mirrors writes
+         * to the pool, but only after resolving the entry for this run. */
+        if (fn_node) return 0;
+    }
+    if (fn_node) return vm_fn_indexable(rt, fn_node, name);
     VMIndexCache cache = { NULL, -2, 0 };
     Value *slot = vm_index_slot(rt, &cache, name, rt->stack,
                                 rt->stack_size, resolved_offset);
@@ -1133,7 +1242,24 @@ static Value vm_index_callback(void *rt_opaque, int action,
         return action == VM_INDEX_PREP ? val_bool(0) : val_nil();
     }
     if (action == VM_INDEX_PREP) return val_bool(1);
-    if (action == VM_INDEX_GET) return slot->as.arr.data[idx];
+    if (action == VM_INDEX_GET) {
+        /* int, float and bool lead the ValType enum and own nothing, so the
+         * register can hold one with no retain and no drop.  Compilation is
+         * supposed to admit only those, but a chunk cached on a function's AST
+         * node is compiled once and reused for every later call, so that gate
+         * cannot be the thing safety rests on.  Refuse here rather than let a
+         * borrowed string or array reach a register that will not release it. */
+        const Value *elem = &slot->as.arr.data[idx];
+        if (elem->type > VAL_BOOL) {
+            char buf[300];
+            snprintf(buf, sizeof(buf),
+                     "%s[%ld] holds %s, which the compiled path does not carry",
+                     name, idx, val_type_name(elem->type));
+            rt_error(rt, buf); cache->failed = 1;
+            return val_nil();
+        }
+        return *elem;
+    }
 
     ValType old_type = slot->as.arr.data[idx].type;
     if (old_type != VAL_NIL && old_type != incoming.type) {
@@ -1141,6 +1267,19 @@ static Value vm_index_callback(void *rt_opaque, int action,
         snprintf(buf, sizeof(buf),
                  "type error: %s[%ld] is %s, cannot assign %s", name, idx,
                  val_type_name(old_type), val_type_name(incoming.type));
+        rt_error(rt, buf); cache->failed = 1;
+        return val_nil();
+    }
+    /* Same reasoning as the read side, for what the homogeneity check above
+     * cannot catch: an element that is still nil accepts any type, and two
+     * strings match each other.  Only value types may be stored through this
+     * path, so a chunk cached on an AST node can never adopt owned data into
+     * an element without the ownership the evaluator would have applied. */
+    if (old_type > VAL_BOOL || incoming.type > VAL_BOOL) {
+        char buf[300];
+        snprintf(buf, sizeof(buf),
+                 "%s[%ld]: the compiled path stores only int, float and bool",
+                 name, idx);
         rt_error(rt, buf); cache->failed = 1;
         return val_nil();
     }
@@ -1336,14 +1475,12 @@ static int method_try_inline(Runtime *rt, ASTNode *fn_node,
                 if (!fi) { return 0; }
                 Value v = eval_simple_expr(s->as.member_assign.value,
                                            args, param_count, inst, rt);
-                /* Copy in, then release.  Adopting would be cheaper but would
-                 * let two Blocks share one buffer, and a Block's state is
-                 * specified as independent of every other Block's (§7.4); the
-                 * copy is what materialises that.  v is owned, so it has to be
-                 * released here rather than abandoned. */
-                scope_set(&fi->scope, s->as.member_assign.field, v);
-                if (v.type == VAL_STRING && v.as.string)
-                    fxstr_release(v.as.string);
+                /* Spec §13.6: every producer hands over its own reference and
+                 * every store adopts it.  Sharing an immutable refcounted
+                 * buffer between two Blocks does not weaken the independence
+                 * §7.4 requires — a string cannot be changed in place, so
+                 * neither Block can observe the other through it. */
+                scope_set_owned(&fi->scope, s->as.member_assign.field, v);
                 break;
             }
             case NODE_ASSIGN:
@@ -1614,6 +1751,7 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
             if (!fluxa_std_lib_enabled(&rt->config.std_libs, _e->name)) continue;
             if (strcmp(owner_str, _e->owner) != 0) continue;
             Value _ret;
+            int _err_before = rt->err_stack.count;
             if (_e->cfg_aware && _e->call_cfg)
                 _ret = _e->call_cfg(method_or_func, args, argc,
                                     &rt->err_stack, &rt->had_error,
@@ -1627,6 +1765,7 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
                                 &rt->err_stack, &rt->had_error,
                                 rt->current_line);
             else continue;
+            rt_surface_lib_errors(rt, _err_before);
             if (_ret.type == VAL_DYN && _ret.as.dyn) {
                 GCEntry *_gce = gc_find_slot(&rt->gc, _ret.as.dyn);
                 if (!_gce) {
@@ -1725,7 +1864,8 @@ static Value vm_call_callback(void *rt_opaque, Value *owner_kv,
         /* Parameters are not bound until fn_regs exists. Avoid inferring an
          * array parameter from an unrelated caller/global slot of same name;
          * its nested while can compile after the real binding exists. */
-        if (ch && chunk_compile_fn(ch, fn_node, NULL, NULL, NULL)) {
+        if (ch && chunk_compile_fn(ch, fn_node, vm_indexable_callback,
+                                  vm_probe_callback, rt)) {
             fn_node->fn_chunk = ch;  /* cache on AST node — never freed */
         } else {
             free(ch);
@@ -1784,7 +1924,8 @@ static inline void rt_scope_free(Runtime *rt, Scope *s) {
 static Value eval(Runtime *rt, ASTNode *node) {
     if (!node || rt->had_error) return val_nil();
     /* Sprint 8: update current line for precise error messages */
-    if (node->line > 0) rt->current_line = node->line;
+    if (node->line > 0) { rt->current_line = node->line;
+                          rt->current_src  = node->src_id; }
 
     switch (node->type) {
         case NODE_STRING_LIT: return val_string(node->as.str.value);
@@ -2257,8 +2398,16 @@ static Value eval(Runtime *rt, ASTNode *node) {
                 /* Tell nested calls (via vm_call_callback) how many stack
                  * slots the VM uses — so call_function saves/restores correctly.
                  * chunk.next_reg is the highest register index + 1 used. */
+                /* The frame a nested call saves and restores is bounded by
+                 * rt->stack_size.  Temporaries are covered by next_reg, but
+                 * locals the VM writes straight into stack[resolved_offset]
+                 * never raise it — only the evaluator's rt_set does — so a
+                 * loop body with more locals than the temporary watermark had
+                 * its caller slots zeroed by the callee and never restored. */
                 if (rt->stack_size < (int)chunk.next_reg)
                     rt->stack_size = (int)chunk.next_reg;
+                if (rt->stack_size < (int)chunk.max_slot)
+                    rt->stack_size = (int)chunk.max_slot;
                 /* Temporary registers are reused across independently
                  * compiled chunks.  Drop stale string ownership once here;
                  * each instruction then sees a stable destination type on
@@ -3423,6 +3572,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                         continue;
                     if (strcmp(owner, _e->owner) != 0) continue;
 
+                    int _err_before = rt->err_stack.count;
                     if (_e->cfg_aware && _e->call_cfg) {
                         _ret = _e->call_cfg(method, _args, _argc,
                                             &rt->err_stack, &rt->had_error,
@@ -3436,6 +3586,7 @@ static Value eval(Runtime *rt, ASTNode *node) {
                                         &rt->err_stack, &rt->had_error,
                                         rt->current_line);
                     }
+                    rt_surface_lib_errors(rt, _err_before);
                     _hit = 1;
                     break;
                 }

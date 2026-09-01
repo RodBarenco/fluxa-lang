@@ -87,8 +87,13 @@ typedef Value (*vm_call_cb_t)(void       *rt_opaque,
                                Value      *args,
                                int         argc);
 
-typedef int (*vm_indexable_cb_t)(void *rt, const char *name,
-                                 int resolved_offset);
+/* May indexing on `name` be compiled here?  fn_node is NULL for a loop chunk,
+ * which is compiled fresh on every execution and may therefore answer from the
+ * live array.  A function-body chunk is cached on its AST node and reused for
+ * every later call from any instance, so it passes its own node and the answer
+ * must come from declarations alone. */
+typedef int (*vm_indexable_cb_t)(void *rt, const ASTNode *fn_node,
+                                 const char *name, int resolved_offset);
 
 /* Compile-time probe for a bare identifier the resolver could not map to a
  * stack slot.  Returns the Block instance name to bake into OP_GET_FIELD /
@@ -146,11 +151,20 @@ typedef struct {
     int          ok;
     uint16_t     next_reg;   /* Issue #33: uint16_t — starts at 128 */
     uint16_t     peak_reg;   /* highest temporary register end, across resets */
+    /* Highest param/local slot this chunk names, +1.  The VM writes locals
+     * straight into stack[resolved_offset] and never raises rt->stack_size,
+     * which is what the frame save/restore in a nested call uses as its
+     * bound — so without this a caller local above that bound is overwritten
+     * by the callee and never restored. */
+    uint16_t     max_slot;
     unsigned char string_regs[CHUNK_MAX_REG / 8];
     Value        return_value; /* vm_run loop-to-evaluator return channel */
     int          did_return;
     vm_indexable_cb_t indexable_cb;
     vm_probe_cb_t     probe_cb;
+    /* Non-NULL while compiling a function body: the chunk outlives the call
+     * that built it, so nothing instance-specific may be baked into it. */
+    const ASTNode    *owner_fn;
     void             *indexable_rt;
 } Chunk;
 
@@ -164,11 +178,13 @@ static inline void chunk_init(Chunk *c) {
     c->ok    = 1;
     c->next_reg = 128;
     c->peak_reg = 128;
+    c->max_slot = 0;
     memset(c->string_regs, 0, sizeof(c->string_regs));
     c->return_value = val_nil();
     c->did_return = 0;
     c->indexable_cb = NULL;
     c->probe_cb = NULL;
+    c->owner_fn = NULL;
     c->indexable_rt = NULL;
 }
 

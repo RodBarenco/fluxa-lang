@@ -60,6 +60,12 @@ typedef enum {
 typedef struct ASTNode ASTNode;
 #endif
 
+/* Source registry — one entry per parsed file, so an error can name the file a
+ * line number belongs to. Ids are 1-based; 0 means the entry file. */
+#define FLUXA_SRC_MAX 33
+int         fluxa_src_id(const char *name);   /* register or find; 0 if full */
+const char *fluxa_src_name(int id);           /* NULL when unknown */
+
 struct ASTNode {
     NodeType type;
     int      resolved_offset;  /* set by resolver — -1 = unresolved */
@@ -67,6 +73,12 @@ struct ASTNode {
     uint8_t  warm_local;       /* warm path: 1 = confirmed function-local,
                                 * never prst — skip prst_pool_has in rt_get.
                                 * Set by resolver. 0 = unknown (safe default). */
+    uint8_t  src_id;           /* which source file this node was parsed from;
+                                * 0 = the entry file. Modules are parsed one at
+                                * a time and each keeps its own line numbering,
+                                * so a line number alone cannot say which file
+                                * it belongs to. Sits in existing padding —
+                                * sizeof(ASTNode) is unchanged. */
     void    *fn_chunk;         /* Chunk* — compiled bytecode body for NODE_FUNC_DECL.
                                 * NULL = not yet compiled. Compiled on first call
                                 * after warm promotion. Never freed (fn_node stable). */

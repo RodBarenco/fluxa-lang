@@ -9,7 +9,37 @@
 #include "lib_registry_gen.h"
 
 /* ── Pool wrappers ───────────────────────────────────────────────────────── */
-#define P_NODE()   pool_alloc_node(p->pool)
+/* Source registry (declared in ast.h). Names are strdup'd once per file and
+ * live for the process — bounded by FLUXA_SRC_MAX, so no growth over a run. */
+static char *g_src_names[FLUXA_SRC_MAX];
+static int   g_src_count = 0;
+
+int fluxa_src_id(const char *name) {
+    if (!name || !*name) return 0;
+    for (int i = 0; i < g_src_count; i++)
+        if (strcmp(g_src_names[i], name) == 0) return i + 1;
+    if (g_src_count >= FLUXA_SRC_MAX) return 0;
+    char *copy = (char *)malloc(strlen(name) + 1);
+    if (!copy) return 0;
+    strcpy(copy, name);
+    g_src_names[g_src_count++] = copy;
+    return g_src_count;
+}
+
+const char *fluxa_src_name(int id) {
+    if (id <= 0 || id > g_src_count) return NULL;
+    return g_src_names[id - 1];
+}
+
+/* Every node records the file it came from, so P_NODE stamps it rather than
+ * every call site remembering to. */
+static inline ASTNode *p_node_src(ASTPool *pool, uint8_t src) {
+    ASTNode *n = pool_alloc_node(pool);
+    if (n) n->src_id = src;
+    return n;
+}
+
+#define P_NODE()   p_node_src(p->pool, p->src_id)
 #define P_STR(s)   pool_strdup(p->pool, s)
 
 /* ── v0.15: namespace/module helpers ─────────────────────────────────────── */
@@ -1464,6 +1494,7 @@ Parser parser_new(const char *source, ASTPool *pool) {
     p.imported        = (char (*)[64])calloc((size_t)p.imported_cap, 64);
     p.imported_count  = 0;
     p.module_decl_count = 0;
+    p.src_id            = 0;
     p.expr_depth = 0;
     p.stmt_depth = 0;
     p.fn_body_depth = 0;
@@ -1486,8 +1517,9 @@ ASTNode *parser_parse(Parser *p) {
  * parser so that sensor.fn() resolves correctly in main.
  * Returns 0 on success, -1 on parse error. */
 int parser_parse_module(Parser *main_p, ASTNode *program,
-                        const char *ns, const char *source) {
+                        const char *ns, const char *source, int src_id) {
     Parser mp = parser_new(source, main_p->pool);
+    mp.src_id = (uint8_t)src_id;
     strncpy(mp.ns, ns, sizeof(mp.ns) - 1);
     mp.ns[sizeof(mp.ns) - 1] = '\0';
     /* Propagate already-known namespaces so module can reference them. Both

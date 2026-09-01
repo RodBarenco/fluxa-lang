@@ -79,6 +79,9 @@ typedef struct Runtime {
     int            dry_run;       /* 1 = suppress all output (print, FFI)   */
     volatile int  *cancel_flag;   /* non-NULL in -dev: set to 1 to abort VM */
     int            current_line;  /* Sprint 8: current line being executed  */
+    int            current_src;   /* source registry id for that line — every
+                                   * module numbers its own lines from 1, so
+                                   * the line alone cannot name a file        */
 
     /* Sprint 11 — warm path */
     WarmProfile    warm;          /* compact execution profile (WHT + QJL)

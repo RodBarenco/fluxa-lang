@@ -2,9 +2,9 @@
 
 **Technical Specification**
 
-**v0.30.2 — Beta**
+**v0.30.3 — Beta**
 
-*Reflects runtime behavior shipped in v0.30.2.*
+*Reflects runtime behavior shipped in v0.30.3.*
 
 *Runtime · Hot Reload · Atomic Handover · Runtime Update Protocol · 34 stdlib libs · Module System*
 
@@ -1433,6 +1433,40 @@ and strings compare by content. Ordering (`<`, `>`, `<=`, `>=`) is defined for
 `str arr` element access runs entirely on the evaluator. Compilation is
 all-or-nothing per loop: one such construct in the body sends the whole loop
 back, whatever else it contains. A chunk is also limited to 128 constants.
+
+#### Function bodies
+
+A whole function body may also compile to a chunk, executed by `vm_run_fn`
+with its own register file and no frame save or restore. Only calls made from
+already-compiled bytecode take this path; a call from the evaluator does not.
+
+That chunk is cached on the function's AST node and reused for every later
+call, from every instance, so nothing observed at the moment it was built may
+be baked into it. Eligibility is therefore decided from **declarations only**,
+never from whichever array or instance happened to be live:
+
+| Named in a function body | Compiles |
+|---|---|
+| a parameter declared `int arr`, `float arr` or `bool arr` | yes |
+| an array local to that function, declared `int`, `float` or `bool` | yes |
+| an array field of the Block the function is a method of | yes |
+| a parameter declared plain `arr` (no element type) | no |
+| `str arr`, in any position | no |
+| a `prst` array | no |
+| a Block field named without its instance (`total`, not `obj.total`) | no |
+
+The last row is the reason the rule is about caching rather than about types:
+the instruction would carry the instance the chunk was built under, and the
+chunk outlives that call.
+
+A loop chunk is compiled fresh on every execution and so is not bound by any
+of this — it reads the live array and admits a Block field by name.
+
+**The compiler decides what to emit, not what is safe.** Element types are
+revalidated on every indexed read and write, so a value the compiled path
+cannot carry raises an error rather than reaching a register that would not
+release it. The table above is a performance boundary; crossing it changes
+which tier runs a function, never what the program computes.
 
 #### Key implementation details
 

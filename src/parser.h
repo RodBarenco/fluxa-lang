@@ -39,6 +39,8 @@ typedef struct {
      * locals, private to the call, and mangling their name desynchronizes a
      * dyn's type/identity binding from its later index read (bug J). */
     int   fn_body_depth;
+    /* File this parse pass reads, as an index into the source registry. */
+    uint8_t src_id;
 } Parser;
 
 Parser   parser_new(const char *source, ASTPool *pool);
@@ -46,7 +48,7 @@ Parser   parser_new(const char *source, ASTPool *pool);
  * top-level declarations (mangled) into `program`.
  * Returns 0 on success, -1 on parse error. */
 int      parser_parse_module(Parser *main_p, ASTNode *program,
-                              const char *ns, const char *source);
+                              const char *ns, const char *source, int src_id);
 ASTNode *parser_parse(Parser *p);
 void     parser_free(Parser *p);
 

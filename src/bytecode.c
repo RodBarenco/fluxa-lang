@@ -69,6 +69,12 @@ static int compile_literal_into(Chunk *c, ASTNode *node, uint16_t dst) {
     return 1;
 }
 
+/* Record a param/local slot the chunk names, so the runtime can size the
+ * frame the nested calls save and restore. */
+static void note_slot(Chunk *c, int off) {
+    if (off >= 0 && off + 1 > (int)c->max_slot) c->max_slot = (uint16_t)(off + 1);
+}
+
 static uint16_t alloc_reg(Chunk *c) {
     if (c->next_reg >= CHUNK_MAX_REG) {
         c->ok = 0;
@@ -143,14 +149,18 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
             chunk_emit(c, i); return dst;
         }
         case NODE_IDENTIFIER: {
-            if (node->resolved_offset >= 0)
+            if (node->resolved_offset >= 0) {
+                note_slot(c, node->resolved_offset);
                 return (uint16_t)node->resolved_offset;
+            }
             /* Bare name the resolver left unmapped.  Inside a Block method
              * this is the instance's own field; the tree walker reaches it
              * via rt->current_instance.  Compile it to the existing field
              * opcode instead of demoting the whole loop. */
             int prim = 0;
-            const char *owner = c->probe_cb
+            /* The instance name would be baked into the instruction, and a
+             * function chunk is reused by every instance — refuse there. */
+            const char *owner = (c->probe_cb && !c->owner_fn)
                 ? c->probe_cb(c->indexable_rt, VM_PROBE_BARE_FIELD, NULL,
                               node->as.str.value, &prim)
                 : NULL;
@@ -170,11 +180,12 @@ static uint16_t compile_expr(Chunk *c, ASTNode *node) {
         case NODE_ARR_ACCESS: {
             const char *name = node->as.arr_access.arr_name;
             if (!strcmp(name, "err") || !c->indexable_cb ||
-                !c->indexable_cb(c->indexable_rt, name,
+                !c->indexable_cb(c->indexable_rt, c->owner_fn, name,
                                  node->resolved_offset)) {
                 c->ok = 0;
                 return 0;
             }
+            note_slot(c, node->resolved_offset);
             uint16_t index_reg = compile_expr(c, node->as.arr_access.index);
             if (!c->ok) return 0;
             int name_k = chunk_add_index_name(c, name);
@@ -387,6 +398,7 @@ static void compile_node(Chunk *c, ASTNode *node) {
             uint16_t src = compile_expr(c, val);
             if (!c->ok) break;
             if (node->resolved_offset >= 0) {
+                note_slot(c, node->resolved_offset);
                 Instruction i;
                 i.op=expr_may_string(val) ? OP_MOVE_STR : OP_MOVE;
                 i.a=(uint16_t)node->resolved_offset;
@@ -400,7 +412,7 @@ static void compile_node(Chunk *c, ASTNode *node) {
                               ? node->as.var_decl.var_name
                               : node->as.assign.var_name;
             int vprim = 0;
-            const char *owner = c->probe_cb
+            const char *owner = (c->probe_cb && !c->owner_fn)
                 ? c->probe_cb(c->indexable_rt, VM_PROBE_BARE_FIELD, NULL,
                               vname, &vprim)
                 : NULL;
@@ -526,11 +538,12 @@ static void compile_node(Chunk *c, ASTNode *node) {
         case NODE_ARR_ASSIGN: {
             const char *name = node->as.arr_assign.arr_name;
             if (!c->indexable_cb ||
-                !c->indexable_cb(c->indexable_rt, name,
+                !c->indexable_cb(c->indexable_rt, c->owner_fn, name,
                                  node->resolved_offset)) {
                 c->ok = 0;
                 break;
             }
+            note_slot(c, node->resolved_offset);
             uint16_t index_reg = compile_expr(c, node->as.arr_assign.index);
             if (!c->ok) break;
             int name_k = chunk_add_index_name(c, name);
@@ -641,6 +654,7 @@ int chunk_compile_fn(Chunk *c, ASTNode *fn_node,
     c->indexable_cb = indexable_cb;
     c->probe_cb = probe_cb;
     c->indexable_rt = indexable_rt;
+    c->owner_fn = fn_node;
     ASTNode *body = fn_node->as.func_decl.body;
     /* Params are pre-bound at resolved_offset 0..param_count-1 by caller.
      * next_reg starts at 128 to avoid collision with param/local slots. */
