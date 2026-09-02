@@ -33,6 +33,15 @@ is written only above a threshold so a translucent texel does not hide what is
 behind it. They are written down in the standard library reference because
 callers depend on them exactly.
 
+### One array can hold several textures
+
+`image.fill_tris` fetched its texel from the start of `tex`, so drawing from an
+atlas meant slicing a copy out of the array first. An optional `tex_at` says
+where this texture begins inside it; everything else about the fetch is
+unchanged. It sits after `rgb` rather than after `tex` because moving it
+earlier would renumber every argument a caller already passes, and the default
+of `0` is the behaviour that was already there.
+
 ### Partial image updates
 
 `image.update_rgba` required exactly `width * height * 4` components, so a

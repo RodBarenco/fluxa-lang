@@ -753,6 +753,36 @@ for k in depthsize trissize texsize alpha; do
         || fail "fill_tris_rejects_$k" "$k" "$out"
 done
 
+# tex_at: where the texture starts inside the array, so one array can hold
+# several. There is no pixel readback in the API, so the proof runs through
+# alpha instead: a fully transparent texel writes nothing, an opaque one writes
+# every pixel, and the same call with only the offset changed returns both.
+out=$(run << 'FLX'
+import std image
+int arr atlas[8] = [9,9,9,0,  9,9,9,255]
+int arr t[15] = [0,0,10,0,0,  0,1,10,0,0,  2,0,10,0,0]
+dyn im = image.new(2, 1)
+print("AT0", image.fill_tris(im, nil, t, 1, atlas, 1,1,1, 255, 1))
+print("AT4", image.fill_tris(im, nil, t, 1, atlas, 1,1,1, 255, 1, 16777215, 4))
+print("EXACT", image.fill_tris(im, nil, t, 1, atlas, 1,1,1, 255, 1, 16777215, 4))
+danger { image.fill_tris(im, nil, t, 1, atlas, 1,1,1, 255, 1, 16777215, 0-1) }
+if err != nil { print("NEG") }
+danger { image.fill_tris(im, nil, t, 1, atlas, 1,1,1, 255, 1, 16777215, 5) }
+if err != nil { print("PAST") }
+image.discard(im)
+FLX
+)
+echo "$out" | grep -q "AT0 0" && pass "fill_tris_tex_at_defaults_to_zero" \
+    || fail "fill_tris_tex_at_defaults_to_zero" "AT0 0" "$out"
+echo "$out" | grep -q "AT4 2" && pass "fill_tris_tex_at_selects_texel" \
+    || fail "fill_tris_tex_at_selects_texel" "AT4 2" "$out"
+echo "$out" | grep -q "EXACT 2" && pass "fill_tris_tex_at_exact_fit_accepted" \
+    || fail "fill_tris_tex_at_exact_fit_accepted" "EXACT 2" "$out"
+echo "$out" | grep -q "NEG" && pass "fill_tris_tex_at_rejects_negative" \
+    || fail "fill_tris_tex_at_rejects_negative" "NEG" "$out"
+echo "$out" | grep -q "PAST" && pass "fill_tris_tex_at_rejects_past_end" \
+    || fail "fill_tris_tex_at_rejects_past_end" "PAST" "$out"
+
 # ── fill_rect and fill_tri ───────────────────────────────────────
 out=$(run << 'FLX'
 import std image

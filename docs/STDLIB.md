@@ -1739,7 +1739,7 @@ validate/re-encode untrusted images server-side before redistributing them.
 | `image.update_rgba(img, pixels)` | `nil` | Replace every pixel from a tightly packed row-major `int arr` of RGBA components. Requires exactly `width * height * 4` values in `0..255`; invalid input leaves the image unchanged. The next graph draw refreshes its cached texture. |
 | `image.update_rgba_rect(img, pixels, x, y, w, h)` | `nil` | Replace one rectangle instead of the whole image, so a caller that changes a corner pays for the corner. Requires exactly `w * h * 4` values in `0..255` and the rectangle inside the image; invalid input leaves the image unchanged. |
 | `image.blit(dst, src, x, y[, mask])` | `nil` | Compose `src` onto `dst` at (x,y), alpha-blended and clipped. Optional `mask` image gates the source by the mask's alpha (for clipped/rounded frames). Pure RGBA — both backends. |
-| `image.fill_tris(dst, depth, tris, count, tex, tex_w, tex_h, tex_stride, alpha, flags[, rgb])` | `int` | Rasterise a batch of textured, depth-tested triangles; returns pixels written. See the rules below. |
+| `image.fill_tris(dst, depth, tris, count, tex, tex_w, tex_h, tex_stride, alpha, flags[, rgb[, tex_at]])` | `int` | Rasterise a batch of textured, depth-tested triangles; returns pixels written. See the rules below. |
 | `image.fill_rect(dst, x, y, w, h, rgb[, alpha])` | `int` | Flat rectangle, alpha-blended and clipped; returns pixels written. |
 | `image.fill_tri(dst, x0, y0, x1, y1, x2, y2, rgb[, alpha])` | `int` | One flat triangle, drawn whichever way it is wound; returns pixels written. |
 | `image.width(img)` | `int` | Width in pixels |
@@ -1768,6 +1768,7 @@ per triangle puts the cost straight back where it was.
 | `alpha` | `0..255`, multiplied by the texel's own alpha. |
 | `flags` | `1` front faces, `2` back faces, `4` keep the smaller z instead of the larger, and the **depth-write alpha threshold** in bits 8..15 (e.g. `1 + (200 << 8)`). |
 | `rgb` | Optional packed `0xRRGGBB` used when `tex` is `nil`; white by default. |
+| `tex_at` | Optional index of the texture's first component inside `tex`, `0` by default — so one array can hold several textures and each is drawn without slicing a copy out of it first. It sits after `rgb` because moving it earlier would renumber every argument a caller already passes; to use only the offset, pass `rgb` explicitly. Rejected when negative or when `tex_at + tex_stride * tex_h * 4` runs past the end of `tex`. |
 
 These are fixed and will not drift, because callers depend on them bit for bit:
 

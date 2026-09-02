@@ -33,7 +33,7 @@
  *   image.update_rgba(img, px) → nil   replace all RGBA bytes from an int arr
  *   image.update_rgba_rect(img, px, x, y, w, h) → nil  replace one rectangle
  *   image.blit(dst,src,x,y[,m]) → nil   compose src onto dst; optional mask image
- *   image.fill_tris(dst,depth,tris,n,tex,tw,th,ts,alpha,flags[,rgb]) → int
+ *   image.fill_tris(dst,depth,tris,n,tex,tw,th,ts,alpha,flags[,rgb[,tex_at]]) → int
  *   image.fill_rect(dst,x,y,w,h,rgb[,a]) → int   flat rectangle
  *   image.fill_tri(dst,x0,y0,x1,y1,x2,y2,rgb[,a]) → int   flat triangle
  *   image.width(img)           → int
@@ -491,6 +491,8 @@ static inline Value fluxa_std_image_call(const char *fn_name,
      *   flags  FRONT 0x01, BACK 0x02, DEPTH_LESS 0x04, and the depth-write
      *          alpha threshold in bits 8..15.
      *   rgb    optional packed 0xRRGGBB used when tex is nil; white by default.
+     *   tex_at optional index of the texture's first component inside tex,
+     *          0 by default. Lets one array hold several textures.
      */
     if (strcmp(fn_name,"fill_tris")==0) {
         NEED(10); GET_IMG(0,dst);
@@ -516,15 +518,23 @@ static inline Value fluxa_std_image_call(const char *fn_name,
         const Value *tri = args[2].as.arr.data;
 
         GET_INT(5,tex_w); GET_INT(6,tex_h); GET_INT(7,tex_stride);
+        /* Where this texture starts inside tex, so several textures can share
+         * one array and be drawn without copying a slice out of it first.
+         * It sits after rgb rather than after tex because moving it earlier
+         * would renumber every argument a caller already passes. */
+        long tex_at = 0;
+        if (argc >= 12) { GET_INT(11,at); tex_at = at; }
         const Value *tex = NULL;
         if (args[4].type == VAL_ARR && args[4].as.arr.data) {
             if (tex_w <= 0 || tex_h <= 0)
                 IMG_ERR("fill_tris: tex_w and tex_h must be positive");
             if (tex_stride < tex_w)
                 IMG_ERR("fill_tris: tex_stride must be at least tex_w");
-            if ((size_t)args[4].as.arr.size <
-                (size_t)tex_stride * (size_t)tex_h * 4u)
-                IMG_ERR("fill_tris: tex holds fewer than tex_stride*tex_h*4 components");
+            if (tex_at < 0)
+                IMG_ERR("fill_tris: tex_at must not be negative");
+            if ((size_t)tex_at + (size_t)tex_stride * (size_t)tex_h * 4u >
+                (size_t)args[4].as.arr.size)
+                IMG_ERR("fill_tris: tex_at plus tex_stride*tex_h*4 runs past the end of tex");
             tex = args[4].as.arr.data;
         } else if (args[4].type != VAL_NIL) {
             IMG_ERR("fill_tris: tex must be an int arr or nil");
@@ -596,7 +606,7 @@ static inline Value fluxa_std_image_call(const char *fn_name,
                                           (long long)w2*v2) / area);
                         long tx = (ui / 256) % tex_w;  if (tx < 0) tx += tex_w;
                         long ty = (vi / 256) % tex_h;  if (ty < 0) ty += tex_h;
-                        long src = (ty * tex_stride + tx) * 4;
+                        long src = tex_at + (ty * tex_stride + tx) * 4;
                         sr = fluxa_tri_u8(tex, src);
                         sg = fluxa_tri_u8(tex, src+1);
                         sb = fluxa_tri_u8(tex, src+2);
